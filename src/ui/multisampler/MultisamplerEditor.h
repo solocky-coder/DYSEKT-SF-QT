@@ -1,0 +1,594 @@
+#pragma once
+// =============================================================================
+//  MultisamplerEditor.h — Top-level multisampler panel
+//  ─────────────────────────────────────────────────────────────────────────
+//  Implementation-plan §6/§14 "first development slice": owns the native
+//  MultisamplerInstrument, shows it on a ZoneMapView, lets a single selected
+//  zone's key/velocity/gain/pan be edited via a compact inline inspector
+//  strip, and keeps sfzPlayer2 in sync via the plan's §5 "Playback
+//  synchronization" path — debounce edits, export the model to a cache-
+//  directory SFZ on the UI thread, then hand that file to SfzPlayer::loadFile()
+//  on the existing async fileLoadPool path (SfzPlayer itself performs the
+//  safe swap at a block boundary; nothing here touches the audio thread).
+//
+//  A dedicated ZoneInspector.h component is the natural next split once this
+//  strip grows past a handful of fields (per the plan's §6 file list) — kept
+//  inline here for now to keep the first slice small.
+//
+//  This is the sole SFZ-PLAYER zone editor (the older raw-SFZ ZONES
+//  workflow has been fully retired). Like that former component, this one
+//  draws its own complete frame and does not rely on PluginEditor's
+//  paintOverChildren() bezel.
+// =============================================================================
+
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_audio_processors/juce_audio_processors.h>
+#include "ZoneMapView.h"
+#include "DrumPadView.h"
+#include "MultisamplerZoneLcd.h"
+#include "MultisamplerZoneField.h"
+#include "../AddZoneOverlay.h"
+#include "AddZoneTrimOverlay.h"
+#include "../KeysPanel.h"
+#include "../UIHelpers.h"
+#include "../../audio/multisampler/MultisamplerInstrument.h"
+#include "../../audio/multisampler/SfzImporter.h"
+
+class DysektProcessor;
+
+class MultisamplerEditor : public juce::Component,
+                            private juce::Timer
+{
+public:
+    explicit MultisamplerEditor (DysektProcessor& processorToUse);
+    ~MultisamplerEditor() override;
+
+    void paint   (juce::Graphics&) override;
+    void resized() override;
+
+    /** Forwards the app's current host-window scale factor (DysektEditor::
+        resized()'s `sf`) down to zoneLcd and zoneMapView, so their text
+        keeps pace with the rest of the UI instead of staying pinned at
+        design-time pixel sizes — see ZoneMapView::setUiScale() and
+        MultisamplerZoneLcd::setUiScale() for why they needed this. Cheap
+        to call every resized() — only repaints, no layout change. */
+    void setUiScale (float newScale)
+    {
+        zoneMapView.setUiScale (newScale);
+        zoneLcd.setUiScale (newScale);
+        drumPads.setUiScale (newScale);
+    }
+
+    /** PluginEditor calls this every layout pass with the x-centre of the
+        DualLcdControlFrame directly above this panel, converted into this
+        component's own coordinate space (i.e. already offset by this
+        panel's left edge / kFrameX). zoneTagLabel centres itself under
+        that point instead of under whatever header space is left over
+        from the toolbar buttons — see resized()'s comment on why those
+        two aren't the same x once the button cluster on the right isn't
+        symmetric with titleLabel on the left. */
+    void setControlFrameCentreX (int xInOwnCoords)
+    {
+        if (controlFrameCentreX != xInOwnCoords)
+        {
+            controlFrameCentreX = xInOwnCoords;
+            resized();
+        }
+    }
+
+    /** Replaces the instrument outright (e.g. loading a .metrokit — Phase 4).
+        Triggers an immediate (non-debounced) engine resync by default. Pass
+        syncEngine=false when the caller already knows the live engine is
+        correctly pointed at the source (e.g. a background sync from a load
+        path that already called sfzPlayer2.loadFile() on the original file
+        directly) — resyncing in that case would just reload a redundant,
+        lossily round-tripped copy for no benefit. */
+    void setInstrument (MultisamplerInstrument newInstrument, bool syncEngine = true);
+
+    const MultisamplerInstrument& getInstrument() const noexcept { return instrument; }
+
+    // ── Drum-kit mode (DRUM PADS view) ───────────────────────────────────
+    /** Turns drum-kit mode on/off (MultisamplerInstrument::drumKit). Enabling
+        opens the 128-pad view immediately -- a kit's default view is PADS, not
+        the zone map -- and auto-selects the bank holding the kit (note 36's
+        bank if populated). Disabling returns to ZONES.
+        `userInitiated` (the AS KIT button / pad menu) additionally marks the
+        instrument dirty, since the flag is saved with it; the load-time
+        classifier passes false so merely opening a file never prompts "unsaved
+        changes". setInstrument() re-applies the view from the new instrument's
+        own flag, so a previous kit's PADS view can never stick to a new load. */
+    void setKitMode (bool enabled, bool userInitiated = false);
+
+    /** Switches between PADS and ZONES. No-op (stays on ZONES) when not in kit
+        mode. The choice lasts until the next instrument load, which re-opens
+        kits in PADS. */
+    void showPads (bool show);
+
+    bool isKitMode()   const noexcept { return instrument.drumKit; }
+    bool isPadsShown() const noexcept { return padsShown; }
+
+    /** The same keyboard-highlight data SfzPlayerDropdownPanel::
+        parseSfzZones() derives from raw SFZ text, derived instead from a
+        MultisamplerInstrument — so sfzPlayerDropdown.keysPanel can be
+        repointed at whichever .sfz is currently loaded via MULTISAMPLER.
+        Static/free of
+        `this` so PluginEditor can call it on any instrument snapshot it
+        already has (e.g. getInstrument()) without needing a live
+        MultisamplerEditor edit in flight. Colour indexing matches
+        parseSfzZones()/SfzZoneColours exactly (same palette, same
+        top-to-bottom zones[] order) so a file's zone colours don't change
+        depending on which editor most recently produced them. Disabled
+        (muted) zones are skipped, matching what SfzExporter actually
+        writes to the engine — a disabled zone was never in the exported
+        SFZ ZONES would have parsed either. */
+    static std::vector<KeysPanel::Keyzone> toKeyzones (const MultisamplerInstrument& instrument);
+
+    /** Imports an .sfz directly, no file picker — the shared body behind
+        importSfzClicked() (after the user picks a file) and also callable by
+        whoever owns the app's other .sfz load paths (browser, drag-and-drop),
+        so this panel's model stays in sync with whatever .sfz is loaded
+        elsewhere instead of only ever changing via its own IMPORT SFZ button.
+        Fires onImportWarnings on failure or partial success, same contract as
+        clicking IMPORT SFZ; silent on a clean import. Returns true on success
+        (even with warnings). Pass syncEngine=false when the caller already
+        pointed the live engine at `file` directly — see setInstrument(). */
+    bool importFromFile (const juce::File& file, bool syncEngine = true);
+
+    /** True once at least one committed edit has happened since the last
+        save/load — drives the SCB's SAVE button and any future
+        unsaved-changes prompts around instrument-replacing actions (New,
+        Import, browser/drop loads — see Phase 2 of the METRO-UI
+        Multisampler Implementation Plan). */
+    bool isDirty() const noexcept { return dirty; }
+    void clearDirtyFlag() noexcept { dirty = false; }
+
+    /** SAVE half of the save/discard pair. Writes the
+        current instrument back to whichever file it was last imported from
+        or exported to (silent overwrite, no picker) and clears the dirty
+        flag on success. If this instrument has never been pointed at a
+        file (e.g. built from scratch via NEW), falls back to the same
+        Save-As file picker as clicking EXPORT SFZ — there's nothing to
+        overwrite yet. */
+    void saveInPlace();
+
+    /** DISCARD half of the save/discard pair. Throws away edits since the
+        last import/save by reloading the instrument from whichever file
+        saveInPlace()/importFromFile() last pointed it at, or resetting to
+        a blank instrument if there is no such file. Always leaves the
+        dirty flag clear. */
+    void discardPendingEdits();
+
+    /** The file saveInPlace() would overwrite, or an invalid File() if
+        this instrument has never been imported from / saved to one. Lets
+        PluginEditor phrase its unsaved-changes prompt accurately (e.g.
+        offering "Save" only when there's somewhere to save to). */
+    const juce::File& getLastSavedFile() const noexcept { return lastSavedFile; }
+
+    /** Cancels any pending debounced performEngineSync() (see
+        scheduleEngineSync()/timerCallback()) without firing it. Available
+        for instrument-replacing operations (New/Import/discard) that need
+        to stop a stale in-flight sync from landing after a model swap —
+        see setInstrument()'s isFreshLoad path and discardPendingEdits().
+        Safe to call even when no sync is pending (stopTimer() on an
+        inactive Timer is a no-op). */
+    void cancelPendingEngineSync() noexcept { stopTimer(); }
+
+    /** -1 if zero or multiple zones are selected in the zone map; otherwise
+        the index into getInstrument().zones for the single selected zone.
+        Lets PluginEditor drive sliceLcd's and multisamplerWaveformLcd's
+        waveform displays, keyed off this index — see
+        onZoneSelectionOrEditChanged. The zone LCD's own readout (zoneLcd)
+        no longer goes through this index at all — see
+        getSelectedZoneCount()'s doc comment for why. */
+    int getSelectedZoneIndex() const noexcept;
+
+    /** Number of zones currently selected in the zone map — 0, 1, or 2+.
+        Exists specifically so callers with their own "nothing selected" vs.
+        "multiple selected" fallback logic (PluginEditor::
+        syncMultisamplerDisplay, for its sliceLcd/multisamplerWaveformLcd
+        waveform displays) can tell those two states apart, since
+        getSelectedZoneIndex() collapses both to -1 by design — this was
+        the root cause of the old LCD/SCB desync during a multi-select. */
+    int getSelectedZoneCount() const noexcept;
+
+    /** Fired whenever the selected zone (per getSelectedZoneIndex()) or its
+        data changes — a selection click, a live drag, a drag commit, or a
+        zoneLcd field edit applied via applyZoneFieldEdit(). PluginEditor
+        hooks this to keep sliceLcd's and multisamplerWaveformLcd's waveform
+        displays in sync (via getSelectedZoneIndex()/getSelectedZoneCount()/
+        getInstrument()); zoneLcd's own readout refreshes itself internally
+        via refreshZoneLcdDisplay() and doesn't need this callback at all. */
+    std::function<void()> onZoneSelectionOrEditChanged;
+
+    /** -1 if the cursor isn't currently over a zone in the zone map (or has
+        left the map entirely); otherwise the index into getInstrument().zones
+        for the zone currently shown for read-only hover/inspection purposes.
+        Mirrors getSelectedZoneIndex()'s id-to-index resolution, but sourced
+        from ZoneMapView::onZoneHovered rather than the click-selection —
+        see onZoneHoverChanged. */
+    int getHoveredZoneIndex() const noexcept;
+
+    /** Fired whenever getHoveredZoneIndex() changes — either a new zone is
+        hovered, the cursor leaves the map (back to -1), or the wheel is used
+        to cycle a stack under a stationary cursor. Read-only preview: takes
+        priority over the selection-driven display while non-null, matching
+        ZoneMapView::onZoneHovered's own contract. PluginEditor hooks this to
+        re-run syncMultisamplerDisplay(). */
+    std::function<void()> onZoneHoverChanged;
+
+    /** Applies one SliceControlBar field edit (see SliceControlBar::
+        SfzZoneField) to the zone at `zoneIndex` (as returned by
+        getSelectedZoneIndex()). The SCB itself no longer has any
+        MULTISAMPLER-facing role (zoneLcd replaced it — see
+        applyZoneFieldEdit() below), but multisamplerWaveformLcd's envelope-
+        node dragging still speaks this same SliceControlBar::SfzZoneField
+        vocabulary (Attack/Decay/Sustain/Release only) and still forwards
+        here unconditionally — see its onZoneParamEdited wiring in
+        PluginEditor.cpp. No-op if zoneIndex is out of range. */
+    void applySliceControlBarFieldEdit (int zoneIndex, int field, float value);
+
+    /** Applies one zoneLcd field edit (see MultisamplerZoneField) to the
+        currently-editable zone (resolved by inspectedZoneId, not index —
+        see MultisamplerZoneLcd.h's onFieldEdited doc comment for why: the
+        LCD reports edits by field identity, not a vector index, so this is
+        the one place both the id resolution and the value clamping happen).
+        `isCommit` is false on every intermediate drag frame and true
+        exactly once at gesture end; only a commit marks dirty, schedules
+        the debounced engine sync, and fires onInstrumentChanged — matching
+        ZoneMapView's own onZoneEditing (live) vs. onZoneEditCommitted
+        (commit) split. No-op if nothing is currently selected/editable. */
+    void applyZoneFieldEdit (MultisamplerZoneField field, float value, bool isCommit);
+    void showDrumPadContextMenu (int note, juce::Point<int> screenPosition);
+
+    /** Shows the right-click "Learn MIDI CC" / "Clear" popup for one
+        zoneLcd field cell — hooked to zoneLcd.onFieldLearnMenuRequested in
+        the constructor. Mirrors SliceControlBar::showMidiLearnMenu, minus
+        its "Open MIDI Learn Dialog..." item (that dialog lists every
+        mapped field across the whole plugin already, including these —
+        see gSlotParamNames in MidiLearnDialog.cpp — so it isn't specific
+        to this menu the way Learn/Clear are). */
+    void showMidiLearnMenu (MultisamplerZoneField field, juce::Point<int> screenPos);
+
+    /** Auto-assigns output buses 1-15 (round-robin, top-to-bottom zones[]
+        order) to the first `numZones` zones — used by the drum-kit
+        auto-routing confirm prompt (PluginEditor::offerDrumKitAutoRouting)
+        right after import. Writes SampleZone::outputBus directly so the
+        assignment round-trips through save/reload and performEngineSync(),
+        unlike the old SfzDrumKitBusApplier path it replaces (see .cpp for
+        the full history). No-op if numZones <= 0. */
+    void autoAssignOutputBuses (int numZones);
+
+    /** Fired after every committed model edit (drag-commit, inspector apply,
+        import, New) — after the debounced resync has been scheduled, not
+        after it completes. Lets PluginEditor update window chrome / the
+        SAVE-prompt-on-close logic without polling. */
+    std::function<void()> onInstrumentChanged;
+
+    /** Fired once after an importSfzClicked() attempt IF there's anything
+        worth telling the user about: either a hard failure (importSucceeded
+        == false, warnings holds a single synthetic entry carrying
+        Result::errorMessage) or a successful import that still produced
+        SfzImporter::Result::warnings (unsupported opcodes, missing samples,
+        malformed lines, etc.). Not fired on a clean, warning-free import.
+        `sourceFileName` is the imported SFZ's display name, for use in
+        whatever dialog title the owner shows. MultisamplerEditor has no
+        overlay/dialog machinery of its own (see the plan's §3 "let the UI
+        edit that model" — this panel only owns the model and its own inline
+        controls), so surfacing these to the user is left to whoever owns the
+        surrounding chrome, same as PluginEditor's existing
+        MessageOverlay/ConfirmOverlay pattern elsewhere in the plugin. */
+    std::function<void (const juce::String& sourceFileName,
+                         bool importSucceeded,
+                         const std::vector<SfzImporter::Warning>& warnings)> onImportWarnings;
+
+    /** Fired when the NEW or IMPORT SFZ button is clicked (a file already
+        chosen, in IMPORT's case) while isDirty() is true — about to discard
+        unsaved edits. MultisamplerEditor has no overlay/dialog machinery of
+        its own (see onImportWarnings' comment above) so, same as that
+        callback, confirming is left to whoever owns the surrounding chrome.
+        The receiver must call `proceed()` to actually go ahead with the
+        replacement — synchronously, or later once an async ConfirmOverlay
+        resolves — and must not call it more than once per firing; declining
+        simply means never calling it. Only fires when isDirty() is true: a
+        clean NEW/IMPORT proceeds immediately without going through this
+        callback at all, so a disconnected handler only blocks the dirty
+        case (see METRO-UI Multisampler Implementation Plan §5.6–5.7) rather
+        than breaking the feature outright — same fallback shape as
+        onImportWarnings being optional. Not used for browser/drag-drop
+        loads, which PluginEditor already knows about directly and guards
+        with its own ConfirmOverlay before ever calling importFromFile() —
+        see loadSfzIntoMultisampler() in PluginEditor.cpp (plan §5.5/§5.8). */
+    std::function<void (std::function<void()> proceed)> onConfirmDiscardIfDirty;
+
+private:
+    void timerCallback() override;   // fires once, kEngineSyncDebounceMs after the last edit
+
+    // ── MIDI Learn CC application (Multisampler) ────────────────────────
+    // processMidi() (PluginProcessor.cpp) can't call applyZoneFieldEdit()
+    // directly from the audio thread — that method mutates instrument.zones,
+    // calls std::function callbacks, and arms a juce::Timer, none of which
+    // are real-time-safe. So it stages the computed CC value into
+    // processor.msMidiLearnRelDelta/msMidiLearnAbsValue/msMidiLearnAbsDirty
+    // (lock-free atomics), and this editor drains them on a steady
+    // message-thread poll instead. Same split SliceControlBar's own
+    // always-on 30 Hz timer uses for CC-driven marker repaints, just with
+    // an apply step added since Multisampler fields, unlike a Slicer
+    // marker, have no atomic-only representation to poll for display alone.
+
+    /** Drains processor's msMidiLearn* staging arrays (one entry per
+        MultisamplerZoneField) and applies whatever changed via
+        applyMidiLearnCc(). Also repaints zoneLcd unconditionally so its
+        CC-label overlay reflects an armed->mapped transition or a manual
+        clear even on a tick where nothing else changed — same "always
+        poll, cheap to repaint" reasoning SliceControlBar's own timer uses.
+        Runs on the message thread via midiLearnPoller (30 Hz, started in
+        the constructor / stopped in the destructor). */
+    void pollMidiLearnCc();
+
+    /** Applies one field's learned CC to the currently-inspected zone.
+        ccValue is a normalised 0..1 absolute value when isRelative is
+        false, or a raw signed step count (same convention PluginProcessor's
+        own relative-encoder decode uses elsewhere) when isRelative is true.
+        No-op if nothing is currently selected/editable — mirrors
+        applyZoneFieldEdit()'s own guard, since this ultimately calls that. */
+    void applyMidiLearnCc (MultisamplerZoneField field, float ccValue, bool isRelative);
+
+    /** Reads a field's current native value directly from the live model
+        (instrument.zones, keyed by inspectedZoneId) rather than zoneLcd's
+        display snapshot, which can lag until its next repaint. Used by
+        applyMidiLearnCc() as the base value for relative-encoder deltas.
+        Returns 0.0f if nothing is currently selected/editable. */
+    float getLiveFieldValue (MultisamplerZoneField field) const;
+
+    /** Pushes PluginProcessor::trimAuditionPlayheadFrame into
+        zoneTrimOverlay->setPlayheadFrame(), or no-ops if zoneTrimOverlay is
+        currently null (see trimAuditionPlayheadPoller's doc comment below
+        for when that can happen). Defined in the .cpp rather than inline in
+        trimAuditionPlayheadPoller::timerCallback() below because that would
+        need DysektProcessor's complete type (to reach
+        trimAuditionPlayheadFrame through `processor`) right here in the
+        header, where it's only forward-declared — same reason
+        pollMidiLearnCc() above is a declared-here/defined-in-.cpp method
+        rather than inline in MidiLearnPoller::timerCallback(). Runs on the
+        message thread via trimAuditionPlayheadPoller (30 Hz). */
+    void pollTrimAuditionPlayhead();
+
+    // Separate nested Timer, not a second base-class inheritance — a class
+    // can only privately inherit juce::Timer once, and this needs its own
+    // fixed 30 Hz poll independent of the debounced one-shot engine-sync
+    // Timer this class already privately inherits above.
+    struct MidiLearnPoller : private juce::Timer
+    {
+        explicit MidiLearnPoller (MultisamplerEditor& ownerToUse) : owner (ownerToUse) {}
+        void start() { startTimerHz (30); }
+        void stop()  { stopTimer(); }
+        void timerCallback() override { owner.pollMidiLearnCc(); }
+        MultisamplerEditor& owner;
+    } midiLearnPoller { *this };
+
+    // Same shape as MidiLearnPoller above, its own separate nested Timer —
+    // pushes PluginProcessor::trimAuditionPlayheadFrame into
+    // zoneTrimOverlay->setPlayheadFrame() at 30 Hz while the overlay is
+    // open, so the trim-audition playhead moves smoothly without
+    // AddZoneTrimOverlay ever touching the processor directly (see that
+    // class's design comment). Started in wireZoneTrimOverlayAudition();
+    // stopped wherever the overlay closes (both onResult lambdas,
+    // alongside processor.resetTrimAudition()) and in the destructor as a
+    // safety net. No-ops harmlessly if zoneTrimOverlay is null on a given
+    // tick — can happen for one tick right after start() if the overlay's
+    // deferred-reset callAsync from a previous close hasn't run yet.
+    struct TrimAuditionPlayheadPoller : private juce::Timer
+    {
+        explicit TrimAuditionPlayheadPoller (MultisamplerEditor& ownerToUse) : owner (ownerToUse) {}
+        void start() { startTimerHz (30); }
+        void stop()  { stopTimer(); }
+        void timerCallback() override { owner.pollTrimAuditionPlayhead(); }
+        MultisamplerEditor& owner;
+    } trimAuditionPlayheadPoller { *this };
+
+    void scheduleEngineSync();       // (re)start the debounce timer
+    // isFreshLoad: true when called right after setInstrument() wholesale-swapped
+    // the model (import/New/discard) — sliceManager2 should wipe every slice
+    // clean, same as any other fresh file load. false (the debounced-timer
+    // path) means this is a genuine in-place zone edit and per-slice
+    // DYSEKT-only fields (custom ADSR/EQ/filter/mute group/etc.) should
+    // survive the rebuild instead — see zoneBuilderReloadPending's
+    // declaration in PluginProcessor.h and performEngineSync()'s own comment.
+    void performEngineSync (bool isFreshLoad);
+
+    // Bumped once per performEngineSync() call, UI-thread-only (written and
+    // read only from the UI thread — the background export job that reads
+    // it does so only after hopping back via MessageManager::callAsync, see
+    // performEngineSync()'s definition). Lets a stale background export
+    // that finishes after a newer one was already dispatched discard
+    // itself instead of overwriting sfzPlayer2 with outdated data — same
+    // defensive shape as PluginProcessor.h's nextPreviewToken2/
+    // latestPreviewToken2 pair, scoped to this class (plan §5.12).
+    int engineSyncGeneration = 0;
+
+    void importSfzClicked();
+    void exportSfzClicked();
+    void newInstrumentClicked();
+    void addZoneClicked();   // pick a sample, then trim, then AddZoneOverlay for lo/hi/root
+
+    // ── Add Zone stages ──────────────────────────────────────────────────
+    // Split out of what used to be addZoneClicked()'s file-picker callback
+    // body so the new trim step sits cleanly between picking the file and
+    // collecting the key range — see the METRO-UI Multisampler Add Zone
+    // Trim implementation notes' "Refactor MultisamplerEditor::
+    // addZoneClicked()" section. Only commitAddedZone() actually touches
+    // `instrument`; the first two stages just juggle overlays and pass
+    // trim/key data forward, so cancelling either one leaves the
+    // instrument untouched.
+    /** `forcedNote` >= 0 (a sample dropped on a drum pad): after trimming, the
+        zone is committed straight to that single key (lo = hi = root = note)
+        and the key-mapping overlay is skipped. */
+    void beginAddZoneTrim (const juce::File& sampleFile, int forcedNote = -1);
+    void beginAddZoneKeyMapping (const juce::File& sampleFile,
+                                  int64_t trimStart, int64_t trimEnd, int64_t totalFrames);
+    void commitAddedZone (const juce::File& sampleFile,
+                           int64_t trimStart, int64_t trimEnd, int64_t totalFrames,
+                           int lo, int hi, int root);
+
+    /** "Trim Sample" (ZoneMapView::onTrimZoneRequested, right-click menu):
+        reopens the same AddZoneTrimOverlay the Add Zone flow uses, but
+        seeded with an *existing* zone's current sampleFile/sampleStart/
+        sampleEnd instead of starting a brand new zone. On confirm, writes
+        the result straight back into that zone's sampleStart/sampleEnd
+        (mapping/other fields untouched) rather than handing off to
+        beginAddZoneKeyMapping()/commitAddedZone() — there's no key range
+        to collect, the zone is already mapped. No-op if the zone's sample
+        is currently missing (nothing to decode/trim). */
+    void beginTrimExistingZone (const juce::Uuid& zoneId);
+
+    /** Wires zoneTrimOverlay's chromatic-audition callbacks
+        (onSampleDecoded/onTrimChanged) to PluginProcessor's trim-audition
+        voice pool, flips trimAuditionActive on, and starts
+        trimAuditionPlayheadPoller. Shared by beginAddZoneTrim() and
+        beginTrimExistingZone() — both open the same overlay and both want
+        the sample being trimmed auditionable chromatically (via physical
+        MIDI — see PluginProcessor::processMidi()'s trimAuditionActive
+        branch) with a live playhead for as long as the dialog is up. Call
+        right after constructing zoneTrimOverlay, before setting its
+        onResult. */
+    void wireZoneTrimOverlayAudition();
+
+    void refreshInspectorFromSelection();
+
+    /** Resolves what zoneLcd should currently show — hover preview, the
+        single selection, the auto-elected top layer of a multi-selection
+        (see ZoneMapView::topmostZoneAmong()), or empty — directly from
+        zoneMapView.getSelectedZoneIds() and hoveredZoneId. This is the
+        replacement for the old headerZoneSummary text-building logic, and
+        the reason zoneLcd never has the -1-ambiguity bug the SCB fallback
+        used to have: getSelectedZoneIds().size() can distinguish "0
+        selected" from "2+ selected" directly, with no sentinel collapsing
+        them together. Called from refreshInspectorFromSelection() (selection
+        changed), the onZoneHovered lambda (hover changed), and
+        applyZoneFieldEdit() (the displayed zone's own data changed). */
+    void refreshZoneLcdDisplay();
+
+    /** Rebuilds editLayerCombo's items from whatever key/velocity-overlaps
+        inspectedZoneId right now (MultisamplerInstrument::
+        findOverlappingPairs(), the same pairwise overlap definition the
+        zone-map's overlap hatching and the old right-click "Edit Layer"
+        submenu use), and re-selects the entry matching inspectedZoneId.
+        Disables the combo when nothing is selected or the selected zone
+        doesn't overlap anything. Called from refreshInspectorFromSelection()
+        so it always tracks the current selection, the same way zoneLcd does. */
+    void refreshEditLayerCombo();
+
+    DysektProcessor& processor;
+    MultisamplerInstrument instrument;
+    bool dirty = false;
+    juce::File lastSavedFile;   // last file imported from or exported/saved to; File() if none yet
+
+    ZoneMapView zoneMapView;
+    DrumPadView drumPads { processor, instrument };
+    bool padsShown = false;
+    juce::TextButton viewToggle { "AS KIT" };   // AS KIT (not a kit) | PADS / ZONES (kit)
+    void updateViewToggle();
+
+    /** Re-derives the PADS/ZONES view from instrument.drumKit. `selectBank`
+        = also auto-pick the pad bank (true on any load / kit change). */
+    void applyKitView (bool selectBank);
+
+    /** Shared tail of every pad-menu edit: same dirty / resync / notify path
+        a committed ZONES edit takes (so bus changes still hit performEngineSync
+        and the MixerPanel PendingZonePin handling). */
+    void commitPadEdit();
+
+    // ── Header ───────────────────────────────────────────────────────────
+    juce::Label  titleLabel;
+
+    // "ZONE NN   name" for whatever zoneLcd is currently showing — moved out
+    // of MultisamplerZoneLcd's own internal title row (see
+    // MultisamplerZoneLcd::getZoneTitleText()'s doc comment) and into this
+    // toolbar instead, immediately right of titleLabel, so that row's
+    // height goes back to the knob grid below. Kept in sync from
+    // refreshZoneLcdDisplay() — the same single place that already
+    // resolves what zoneLcd itself should be showing — rather than
+    // duplicating that hover/selection resolution logic here.
+    juce::Label  zoneTagLabel;
+
+    // PREVIEW/AUDITIONING badge for whatever zoneTagLabel is currently
+    // showing — the other half of the title row MultisamplerZoneLcd used
+    // to draw internally (see MultisamplerZoneLcd::isShowingPreview()/
+    // isShowingAuditioning()). Sits immediately right of zoneTagLabel;
+    // blank and effectively invisible whenever neither flag is set. Kept
+    // in sync from refreshZoneLcdDisplay() alongside zoneTagLabel.
+    juce::Label  zoneBadgeLabel;
+
+    // Toolbar promotion of the right-click zone-map "Edit Layer" submenu
+    // (see ZoneMapView::showZoneContextMenu) — lets the user reach a buried
+    // layer without needing to right-click the exact stack of tiles first.
+    // Scoped to whichever zone is currently selected/inspected rather than a
+    // click point (see refreshEditLayerCombo()'s doc comment); disabled
+    // when the current selection has nothing overlapping it. Placed before
+    // (i.e. to the left of, in this right-to-left header layout) addZoneButton.
+    juce::ComboBox editLayerCombo;
+    std::vector<juce::Uuid> editLayerStackIds;   // combo item id N -> editLayerStackIds[N-1]
+
+    juce::TextButton addZoneButton { "ADD ZONE" };
+    juce::TextButton importButton  { "IMPORT SFZ" };
+    juce::TextButton exportButton  { "EXPORT SFZ" };
+    juce::TextButton newButton     { "NEW" };
+
+    // SAVE — rightmost item in the header, to the right of newButton. Used
+    // to live in the shared SliceControlBar (SCB) strip below the zone map;
+    // now that the SCB has no MULTISAMPLER-facing role at all (see zoneLcd's
+    // doc comment below), SAVE lives directly on this panel's own toolbar
+    // instead. Only visible while isDirty() is true — see paint(), which
+    // keeps its visibility in sync the same way it already keeps the
+    // dirty-dot indicator in sync.
+    juce::TextButton saveButton    { "SAVE" };
+    std::unique_ptr<juce::FileChooser>      fileChooser;
+    std::unique_ptr<AddZoneTrimOverlay>     zoneTrimOverlay;   // Add Zone step 1; owned only while open
+    std::unique_ptr<AddZoneOverlay>         zoneAddOverlay;    // Add Zone step 2; owned only while open
+
+    // ── Zone LCD ─────────────────────────────────────────────────────────
+    // Replaces the old route where MULTISAMPLER zone data was mirrored
+    // read-only into the shared SliceControlBar (SCB) and edited through
+    // SliceControlBar::SfzZoneField. zoneLcd is both the display AND the
+    // edit surface for the selected zone's fields — live and editable in
+    // its own strip above the zone map — so the SCB has no MULTISAMPLER-
+    // facing role left at all (see METRO-UI Multisampler Implementation
+    // Plan §8 step 7). See MultisamplerZoneLcd.h for why it never retains
+    // a raw SampleZone pointer, and applyZoneFieldEdit()/
+    // refreshZoneLcdDisplay() above for how edits and display resolution
+    // are handled on this side.
+    MultisamplerZoneLcd zoneLcd;
+    juce::Uuid  inspectedZoneId = juce::Uuid::null();   // juce::Uuid::null() when nothing selected; otherwise the single
+                                                         // selected zone, or the auto-elected top layer of a multi-selection
+    juce::Uuid  hoveredZoneId = juce::Uuid::null();     // mirrors ZoneMapView::hoverZoneId; juce::Uuid::null() when the cursor isn't over a zone
+
+    // X position (in this component's own coordinates) of the hairline
+    // paint() draws between the zone-context cluster (EDIT LAYER/ADD ZONE)
+    // and the file-operations cluster (IMPORT SFZ/EXPORT SFZ/NEW) — set by
+    // resized() every layout pass, -4 (off-screen) whenever the header is
+    // too narrow to have room for the gap it marks. See resized()'s comment
+    // on why that gap exists.
+    int toolbarDividerX = -4;
+
+    // x-centre, in this component's own coordinate space, of the
+    // DualLcdControlFrame (the DYSEKT-SF logo/tab panel between the two
+    // side LCDs) one row up — supplied by PluginEditor::resized() every
+    // layout pass via setControlFrameCentreX() below, since this panel has
+    // no way to know that frame's position on its own (it's a sibling, not
+    // an ancestor/descendant). -1 until PluginEditor has laid out at least
+    // once, which resized() treats as "no target yet, fall back to
+    // centring in the leftover header gap".
+    int controlFrameCentreX = -1;
+
+    static constexpr int kEngineSyncDebounceMs = 300;
+
+    // Bumped from 32 — the header row now also carries zoneTagLabel/
+    // zoneBadgeLabel (the title text/badge that used to live inside
+    // MultisamplerZoneLcd's own title row) alongside titleLabel and the
+    // toolbar buttons, and those buttons now render with the LookAndFeel's
+    // taller font tier (see DysektLookAndFeel::drawButtonText's h<34
+    // bracket) — both need the extra height to read comfortably.
+    static constexpr int kHeaderH    = 40;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MultisamplerEditor)
+};

@@ -1,0 +1,409 @@
+#pragma once
+#include <functional>
+#include <juce_gui_basics/juce_gui_basics.h>
+#include "MixerPanel.h"
+#include "GlobalEqPanel.h"
+#include "ArrangeView.h"
+#include "ThemePickOverlay.h"
+#include "WindowMenuBar.h"
+
+//==============================================================================
+//  SlotWindowContent  –  content component (no window chrome of its own)
+//
+//  Hosts MixerPanel, GlobalEqPanel, and ArrangeView as non-owned children,
+//  showing exactly one of them at a time (mirrors the old mutually-exclusive
+//  "bottom slot" behaviour, just inside a real window instead of an inline
+//  region of the main editor).
+//==============================================================================
+class SlotWindowContent : public juce::Component
+{
+public:
+    enum class Content { None, Mixer, Eq, Arrange };
+
+    SlotWindowContent (MixerPanel& mixer, GlobalEqPanel& eq, ArrangeView& arrange)
+        : mixerPanel (mixer), eqPanel (eq), arrangeView (arrange)
+    {
+        addChildComponent (mixerPanel);
+        addChildComponent (eqPanel);
+        addChildComponent (arrangeView);
+
+        // Tag the two hosted panels that have a clear dominant background
+        // colour, for the Theme Editor's PICK mode (see resolveThemeKeyAt
+        // below and PluginEditor::resolveThemeKeyAt for the main-editor
+        // equivalent). mixerPanel additionally gets precise per-cell
+        // resolution via MixerPanel::themeKeyAt(), same as when it's docked
+        // in the main editor. arrangeView's track rows don't carry a theme
+        // colour distinct from waveformBg/accent/separator (which are all
+        // already reachable elsewhere), so it only gets the panel-level tag.
+        mixerPanel.getProperties().set  ("dysektThemeKey", "waveformBg");
+        eqPanel.getProperties().set     ("dysektThemeKey", "waveformBg");
+        arrangeView.getProperties().set ("dysektThemeKey", "waveformBg");
+
+        configureViewButton (mixerButton, "MIXER");
+        configureViewButton (arrangeButton, "ARRANGER");
+        configureViewButton (eqButton, "GLOBAL EQ");
+        mixerButton.onClick   = [this] { selectView (Content::Mixer); };
+        arrangeButton.onClick = [this] { selectView (Content::Arrange); };
+        eqButton.onClick      = [this] { selectView (Content::Eq); };
+        addChildComponent (mixerButton);
+        addChildComponent (arrangeButton);
+        addChildComponent (eqButton);
+
+        // Same switching, reachable from the floating transport panel's own
+        // MIXER / ARRANGER / GLOBAL EQ buttons (see FloatingTransportBar).
+        arrangeView.onMixerRequested    = [this] { selectView (Content::Mixer); };
+        arrangeView.onArrangerRequested = [this] { selectView (Content::Arrange); };
+        arrangeView.onGlobalEqRequested = [this] { selectView (Content::Eq); };
+        arrangeView.onTransportFloatingChanged = [this] (bool floating)
+        {
+            if (current != Content::Arrange)
+                return;
+
+            if (floating)
+            {
+                // Return the window switcher to this host before detaching it
+                // from the transport. The floating panel has its own switcher.
+                addChildComponent (mixerButton);
+                addChildComponent (arrangeButton);
+                addChildComponent (eqButton);
+                arrangeView.getTransportBar().setViewButtons (nullptr, nullptr, nullptr);
+                mixerButton.setVisible (false);
+                arrangeButton.setVisible (false);
+                eqButton.setVisible (false);
+            }
+            else
+            {
+                arrangeView.getTransportBar().setViewButtons (&mixerButton, &arrangeButton, &eqButton);
+            }
+        };
+    }
+
+    /** Show exactly one of Mixer / Eq / Arrange (or None to hide all three). */
+    void show (Content c)
+    {
+        current = c;
+        mixerPanel.setVisible  (c == Content::Mixer);
+        eqPanel.setVisible     (c == Content::Eq);
+        arrangeView.setVisible (c == Content::Arrange);
+
+        const bool showSwitcher = c == Content::Mixer || c == Content::Arrange || c == Content::Eq;
+
+        // Arrange has its own transport row — dock the switcher buttons into its
+        // far left instead of reserving a separate row above it. Mixer and Eq
+        // have no transport row of their own, so the switcher keeps its
+        // standalone row for those.
+        if (c == Content::Arrange)
+        {
+            if (arrangeView.getTransportBar().isFloating())
+            {
+                // The floating transport owns its own MIXER / ARRANGER / GLOBAL EQ
+                // buttons. Keep the host's copies hidden to avoid duplicate rows.
+                addChildComponent (mixerButton);
+                addChildComponent (arrangeButton);
+                addChildComponent (eqButton);
+                arrangeView.getTransportBar().setViewButtons (nullptr, nullptr, nullptr);
+            }
+            else
+            {
+                arrangeView.getTransportBar().setViewButtons (&mixerButton, &arrangeButton, &eqButton);
+            }
+        }
+        else
+        {
+            arrangeView.getTransportBar().setViewButtons (nullptr, nullptr, nullptr);
+            addChildComponent (mixerButton);
+            addChildComponent (arrangeButton);
+            addChildComponent (eqButton);
+        }
+
+        const bool showHostSwitcher = showSwitcher
+                                      && ! (c == Content::Arrange
+                                            && arrangeView.getTransportBar().isFloating());
+        mixerButton.setVisible (showHostSwitcher);
+        arrangeButton.setVisible (showHostSwitcher);
+        eqButton.setVisible (showHostSwitcher);
+        updateViewButtonState();
+        resized();
+    }
+
+    Content getContent() const noexcept { return current; }
+
+    /** Called only when the user selects a view from the window switcher. */
+    std::function<void (Content)> onViewSelected;
+
+    // ── Theme Editor "PICK" mode ─────────────────────────────────────────
+    // slotWindow is a genuinely separate OS-level window (see SlotWindow's
+    // class comment), so it needs its own click-intercepting overlay — the
+    // main editor's pickOverlay can never see clicks landing in here.
+    // onKeyPicked is supplied once by the host (PluginEditor) and simply
+    // forwards to ThemeEditorPanel::selectByKey().
+    void setPickModeActive (bool active, std::function<void (const juce::String&)> onKeyPickedIn)
+    {
+        onKeyPicked = std::move (onKeyPickedIn);
+
+        if (pickOverlay == nullptr)
+        {
+            pickOverlay = std::make_unique<ThemePickOverlay>();
+            addChildComponent (*pickOverlay);
+            pickOverlay->onPick = [this] (juce::Point<int> pos)
+            {
+                pickOverlay->setVisible (false);
+                auto* hit = getComponentAt (pos);
+                auto key = resolveThemeKeyAt (hit, pos);
+                pickOverlay->setVisible (true);
+                if (onKeyPicked && key.isNotEmpty())
+                    onKeyPicked (key);
+            };
+        }
+
+        pickOverlay->setBounds (getLocalBounds());
+        pickOverlay->setVisible (active);
+        if (active) pickOverlay->toFront (false);
+    }
+
+    /// Resolves the theme key for whatever's under the point — mirrors
+    /// PluginEditor::resolveThemeKeyAt for the panels hosted in this window.
+    juce::String resolveThemeKeyAt (juce::Component* hit, juce::Point<int> posInEditor)
+    {
+        if (hit == nullptr || hit == this)
+            return {};
+
+        if (hit == &mixerPanel || mixerPanel.isParentOf (hit))
+        {
+            const auto localPt = mixerPanel.getLocalPoint (this, posInEditor);
+            const auto key = mixerPanel.themeKeyAt (localPt);
+            return key.isNotEmpty() ? key : "waveformBg";
+        }
+
+        for (auto* c = hit; c != nullptr && c != this; c = c->getParentComponent())
+        {
+            const auto& key = c->getProperties()["dysektThemeKey"];
+            if (! key.isVoid())
+                return key.toString();
+        }
+        return {};
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        // Arrange docks the switcher into its own transport row, so it needs no
+        // separate switcher row here; Mixer and Eq still reserve one above the content.
+        constexpr int switcherHeight = 34;
+        const bool reserveSwitcherRow = (current == Content::Mixer || current == Content::Eq);
+        const auto contentBounds = reserveSwitcherRow ? r.withTrimmedTop (switcherHeight) : r;
+        mixerPanel.setBounds  (contentBounds);
+        eqPanel.setBounds     (contentBounds);
+        arrangeView.setBounds (contentBounds);
+
+        if (reserveSwitcherRow)
+        {
+            auto switcher = r.removeFromTop (switcherHeight).reduced (8, 5);
+            constexpr int arrangeWidth = 92;
+            constexpr int mixerWidth = 70;
+            constexpr int eqWidth = 88;
+            // Dock far left, mixer then arrange then eq — same order/position as
+            // the switcher docked into the transport bar in Arrange view.
+            mixerButton.setBounds (switcher.removeFromLeft (mixerWidth));
+            switcher.removeFromLeft (4);
+            arrangeButton.setBounds (switcher.removeFromLeft (arrangeWidth));
+            switcher.removeFromLeft (4);
+            eqButton.setBounds (switcher.removeFromLeft (eqWidth));
+        }
+
+        if (pickOverlay != nullptr)
+            pickOverlay->setBounds (getLocalBounds());
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colour (0xFF060608));
+        if (current == Content::Mixer)
+        {
+            g.setColour (juce::Colour (0xFF2A2A35));
+            g.drawHorizontalLine (34, 0.0f, (float) getWidth());
+        }
+    }
+
+private:
+    void configureViewButton (juce::TextButton& button, const juce::String& label)
+    {
+        button.setButtonText (label);
+        button.setTooltip ("Switch to " + label.toLowerCase());
+        button.setColour (juce::TextButton::buttonColourId, juce::Colour (0xFF171720));
+        button.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xFF5B3C8A));
+        button.setColour (juce::TextButton::textColourOffId, juce::Colour (0xFFB7B4C4));
+        button.setColour (juce::TextButton::textColourOnId, juce::Colours::white);
+    }
+
+    void updateViewButtonState()
+    {
+        const bool mixerActive = current == Content::Mixer;
+        const bool arrangeActive = current == Content::Arrange;
+        const bool eqActive = current == Content::Eq;
+
+        mixerButton.setToggleState (mixerActive, juce::dontSendNotification);
+        arrangeButton.setToggleState (arrangeActive, juce::dontSendNotification);
+        eqButton.setToggleState (eqActive, juce::dontSendNotification);
+
+        // The floating transport owns separate buttons, so mirror the selected
+        // view to them whenever the host changes views.
+        arrangeView.getTransportBar().setActiveView (mixerActive, arrangeActive, eqActive);
+    }
+
+    void selectView (Content c)
+    {
+        if (current == c)
+            return;
+
+        show (c);
+        if (onViewSelected)
+            onViewSelected (c);
+    }
+
+    MixerPanel&    mixerPanel;
+    GlobalEqPanel& eqPanel;
+    ArrangeView&   arrangeView;
+    juce::TextButton mixerButton;
+    juce::TextButton arrangeButton;
+    juce::TextButton eqButton;
+    Content        current = Content::None;
+
+    std::unique_ptr<ThemePickOverlay> pickOverlay;
+    std::function<void (const juce::String&)> onKeyPicked;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SlotWindowContent)
+};
+
+//==============================================================================
+//  SlotWindow  –  native OS floating window that hosts SlotWindowContent
+//
+//  Usage (from PluginEditor, standalone builds only):
+//      slotWindow.showMixer();     // show / bring to front, Mixer content
+//      slotWindow.showEq();        // show / bring to front, EQ content
+//      slotWindow.showArrange();   // show / bring to front, Arrange content
+//      slotWindow.closeWindow();   // hide
+//
+//  Mirrors PianoRollWindow's shape: a DocumentWindow with a themed title bar,
+//  genuinely floating rather than embedded/laid-out inline inside the main
+//  editor's bounds.
+//==============================================================================
+class SlotWindow : public juce::DocumentWindow
+{
+public:
+    static juce::String kArrangeTitle() { return juce::String::fromUTF8 ("ARRANGE  \xe2\x80\xa2  TRACKS"); }
+    static juce::String kEqTitle()      { return juce::String::fromUTF8 ("EQ  \xe2\x80\xa2  GLOBAL"); }
+
+    SlotWindow (MixerPanel& mixer, GlobalEqPanel& eq, ArrangeView& arrange,
+                juce::LookAndFeel& lnf)
+        : juce::DocumentWindow ("MIXER",
+                                juce::Colour (0xFF0D0D14),
+                                juce::DocumentWindow::closeButton |
+                                juce::DocumentWindow::minimiseButton |
+                                juce::DocumentWindow::maximiseButton),
+          content (mixer, eq, arrange)
+    {
+        setUsingNativeTitleBar (false);  // use our themed title bar
+        setLookAndFeel (&lnf);
+        setResizable (true, true);
+        setContentNonOwned (&content, true);
+        content.onViewSelected = [this] (SlotWindowContent::Content selected)
+        {
+            if (selected == SlotWindowContent::Content::Mixer)
+                setName ("MIXER");
+            else if (selected == SlotWindowContent::Content::Arrange)
+                setName (kArrangeTitle());
+
+            if (onViewSelected)
+                onViewSelected (selected);
+        };
+
+        setSize (1180, 680);
+        centreWithSize (getWidth(), getHeight());
+    }
+
+    ~SlotWindow() override
+    {
+        setLookAndFeel (nullptr);
+    }
+
+    //==========================================================================
+    void showMixer()
+    {
+        setName ("MIXER");
+        content.show (SlotWindowContent::Content::Mixer);
+        showWindow();
+    }
+
+    void showEq()
+    {
+        setName (kEqTitle());
+        content.show (SlotWindowContent::Content::Eq);
+        showWindow();
+    }
+
+    void showArrange()
+    {
+        setName ("ARRANGE  •  TRACKS");
+        content.show (SlotWindowContent::Content::Arrange);
+        showWindow();
+    }
+
+    /** Attach the standalone app's File / Audio-MIDI / Help menu bar to this window. */
+    void setSharedMenuBar (juce::MenuBarModel* model, int height)
+    {
+        WindowMenuBar::attach (*this, model, height);
+    }
+
+    /** Hide the window without destroying it. */
+    void closeWindow()
+    {
+        content.show (SlotWindowContent::Content::None);
+        setVisible (false);
+    }
+
+    bool isShowingMixer()   const noexcept { return isVisible() && content.getContent() == SlotWindowContent::Content::Mixer; }
+    bool isShowingEq()      const noexcept { return isVisible() && content.getContent() == SlotWindowContent::Content::Eq; }
+    bool isShowingArrange() const noexcept { return isVisible() && content.getContent() == SlotWindowContent::Content::Arrange; }
+
+    /// Exposes the content component so the host can wire up the Theme
+    /// Editor's PICK mode (see SlotWindowContent::setPickModeActive) —
+    /// this window is a genuinely separate OS window, so it needs its own
+    /// independent pick overlay rather than sharing the main editor's.
+    SlotWindowContent& getContent() noexcept { return content; }
+
+    /** Fired when the user hits the native X — lets PluginEditor reset
+     *  activeSlot / header-button state to match (see PluginEditor.cpp). */
+    std::function<void()> onCloseRequested;
+
+    /** Fired when the user uses the in-window Mixer / Arranger switcher. */
+    std::function<void (SlotWindowContent::Content)> onViewSelected;
+
+    //==========================================================================
+    /** Native X button — hide rather than delete. */
+    void closeButtonPressed() override
+    {
+        closeWindow();
+        if (onCloseRequested)
+            onCloseRequested();
+    }
+
+private:
+    void showWindow()
+    {
+        WindowMenuBar::style (*this);
+        setVisible (true);
+        toFront (true);
+    }
+
+    SlotWindowContent content;
+
+    // This window is a separate top-level window, and PluginEditor's
+    // TooltipWindow is parented to the editor, so hover tooltips on the
+    // arranger / mixer / EQ controls never appeared here. A desktop-level
+    // TooltipWindow (no parent) serves this window's components.
+    juce::TooltipWindow tooltipWindow { nullptr, 500 };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SlotWindow)
+};
+

@@ -1,0 +1,47 @@
+# Build
+build/
+cmake-build-*/
+out/
+_codeql_build_dir/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.ncb
+*.sdf
+*.opensdf
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude Code
+.claude/
+CLAUDE.md
+AGENTS.md
+plan.md
+review.md
+
+
+# Compiled objects
+*.o
+*.obj
+*.dll
+*.so
+*.dylib
+*.exe
+*.vst3
+*.component
+
+# Misc
+nul
+info/
+
+# Apple USB Share helper — too large for git; built separately and
+# fetched into place by CI (or copied in manually for local builds).
+# See the WIN32 block in CMakeLists.txt and AppleUsbShareLauncher.h.
+src/standalone/network/AppleUsbShareDriver/iPhoneUsbShare.exe

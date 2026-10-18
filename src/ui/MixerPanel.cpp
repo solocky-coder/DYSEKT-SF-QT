@@ -1,0 +1,2519 @@
+#include "MixerPanel.h"
+#include "../PluginProcessor.h"
+static constexpr int kMaxMeterSlices = DysektProcessor::kMaxMeterSlices;
+#include "DysektLookAndFeel.h"
+#include "../sequencer/SequencerEngine.h"
+#include "../network/NetworkTrackMeters.h"
+#include "IconManager.h"
+#include "../audio/Slice.h"
+#include "../audio/SfzZoneLabel.h"
+#include "../params/ParamIds.h"
+#include <cmath>
+
+namespace
+{
+    // v26: only slices with showInMixer set get their own MixerPanel row —
+    // with kMaxSlices=128 per engine, showing every slice unconditionally
+    // would flood the mixer. This maps "display row position" <-> "real
+    // slice index" everywhere the mixer lays out/hit-tests its slice rows.
+    // See Slice::showInMixer's doc comment for how it gets set (auto-on
+    // when routed off Main, or manually pinned from SliceLane/ZONES).
+    std::vector<int> collectVisibleSlices (const DysektProcessor::UiSliceSnapshot& snap)
+    {
+        std::vector<int> out;
+        out.reserve ((size_t) snap.numSlices);
+        for (int i = 0; i < snap.numSlices; ++i)
+            if (snap.slices[(size_t) i].showInMixer)
+                out.push_back (i);
+        return out;
+    }
+
+    // Display row position of a real slice index within the visible list,
+    // or -1 if that slice currently has no row (not shown in the mixer).
+    int visibleRowOf (const std::vector<int>& visible, int realIdx)
+    {
+        for (int r = 0; r < (int) visible.size(); ++r)
+            if (visible[(size_t) r] == realIdx)
+                return r;
+        return -1;
+    }
+
+    // SFZ-PLAYER only: like collectVisibleSlices above, but merges every
+    // slice sharing a zone's [zoneLoKey,zoneHiKey] — i.e. every MIDI key,
+    // plus any velocity layer/round-robin, expanded from the same <region>
+    // (see SoundFontLoader's per-note expansion and Slice::zoneLoKey's doc
+    // comment) — into a single mixer row, instead of one row per expanded
+    // slice. So a 7-key zone with MIX on produces exactly one row here,
+    // not seven.
+    //
+    // Deliberately a SEPARATE helper from collectVisibleSlices, not a mode
+    // added to it: collectVisibleSlices is also called at 7 Slicer call
+    // sites with sliceManager's snapshot, and every Slicer slice has
+    // zoneLoKey == -1 (sliceManager never stamps it) — a naive shared
+    // dedupe-by-zone would collapse every Slicer slice with MIX on into a
+    // single (-1,-1) row, a real regression. Slices here with
+    // zoneLoKey == -1 (SFZ-PLAYER slices built outside the normal
+    // zone-load path) get the same treatment: never merged with each
+    // other, one row each, exactly like collectVisibleSlices — nothing
+    // without a real zone identity silently vanishes into someone else's
+    // row.
+    //
+    // Returns one REPRESENTATIVE real slice index per visible zone — the
+    // lowest-indexed visible slice in that zone. Callers that need the
+    // rest of the zone (editing all siblings' GAIN/PAN, aggregating the
+    // peak meter) re-derive the sibling list from that slice's
+    // zoneLoKey/zoneHiKey; see drawSfz2ChannelRow.
+    std::vector<int> collectVisibleSfzZones (const DysektProcessor::UiSliceSnapshot& snap2)
+    {
+        std::vector<int> out;
+        out.reserve ((size_t) snap2.numSlices);
+        for (int i = 0; i < snap2.numSlices; ++i)
+        {
+            const auto& s = snap2.slices[(size_t) i];
+            if (! s.showInMixer) continue;
+
+            if (s.zoneLoKey >= 0)
+            {
+                bool alreadySeen = false;
+                for (int prev : out)
+                {
+                    const auto& p = snap2.slices[(size_t) prev];
+                    if (sfzSlicesShareZone (p, s))
+                    {
+                        alreadySeen = true;
+                        break;
+                    }
+                }
+                if (alreadySeen) continue;
+            }
+
+            out.push_back (i);
+        }
+        return out;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Ctor / Dtor
+// ─────────────────────────────────────────────────────────────────────────────
+MixerPanel::MixerPanel (DysektProcessor& p)
+    : processor (p)
+{
+    setWantsKeyboardFocus (false);
+    startTimerHz (30);
+}
+
+MixerPanel::~MixerPanel() = default;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  setActiveChannels
+// ─────────────────────────────────────────────────────────────────────────────
+void MixerPanel::setActiveChannels (const std::vector<Sf2PresetInfo>& presets,
+                                    const std::unordered_map<int,int>& presetChannels)
+{
+    sf2Channels.clear();
+    // Build ordered list: for each preset that has a channel assignment, add entry.
+    // Key is preset index (0, 1, 2...), NOT bank*128+preset.
+    for (int i = 0; i < (int) presets.size(); ++i)
+    {
+        auto it = presetChannels.find (i);   // key is preset index, not bank*128+preset
+        if (it != presetChannels.end() && it->second >= 3 && it->second <= 16)
+            sf2Channels.push_back ({ presets[(size_t) i], it->second - 1 });  // convert to 0-based
+    }
+    repaint();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  sf2TotalH / sf2ChRowY
+// ─────────────────────────────────────────────────────────────────────────────
+int MixerPanel::sf2TotalH() const
+{
+    return kSf2RowH + (int) sf2Channels.size() * kSf2ChRowH;
+}
+
+int MixerPanel::sf2ChRowY (int chRowIdx) const
+{
+    // sf2RowY() already applies -scrollPixels once; do not subtract it again here
+    // or channel rows creep upward whenever the panel is scrolled, overlapping
+    // the slice rows above them.
+    return sf2RowY() + kSf2RowH + chRowIdx * kSf2ChRowH;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  sfz2TotalH / sfz2RowY
+// ─────────────────────────────────────────────────────────────────────────────
+int MixerPanel::sfz2TotalH() const
+{
+    // A mixer track for the SFZ-Player row only takes up space once a .sfz
+    // file is actually loaded — this is what makes the row appear
+    // automatically the moment a file is loaded, and disappear again once
+    // nothing is loaded, matching the SF-PLAYER section.
+    //
+    // This used to gate on processor.sfzPlayer2.isLoaded(), but that flag
+    // is flipped inside SfzPlayer::applyPendingLoad(), which only runs at
+    // the top of SfzPlayer::process() -- and sfzPlayer2.process() is never
+    // called anywhere in DysektProcessor::processBlock(). The SFZ-PLAYER
+    // tab's actual playback path is sliceManager2 + voicePool2 (see
+    // PluginProcessor.h's note on sliceManager2/voicePool2 and
+    // browserPanel.onLoadRequest's "sfzPlayer2 (never .process()'d)"
+    // comment) -- sfzPlayer2.isLoaded() was therefore permanently false
+    // and this row could never appear. Gate on sliceManager2's own
+    // published slice count instead, which is what's actually populated
+    // once the async render (loadSoundFontAsync -> SoundFontLoader)
+    // completes.
+    const auto& snap2 = processor.getUiSliceSnapshot2();
+    const int   n     = snap2.numSlices;
+    // Zones with showInMixer set get their own sub-row beneath the header,
+    // exactly like the Slicer's collectVisibleSlices(snap) mechanism —
+    // this was previously never consulted here, so the per-zone toggle in
+    // the SFZ-Player zone view set Slice::showInMixer but nothing ever
+    // read it back out, and no channel could ever appear.
+    const int visibleZones = n > 0 ? (int) collectVisibleSfzZones (snap2).size() : 0;
+    processor.releaseUiSliceSnapshot2();
+    return n > 0 ? kSf2RowH + visibleZones * kSf2ChRowH : 0;
+}
+
+int MixerPanel::sfz2RowY() const
+{
+    // Sits directly below the SF-PLAYER section (header + any channel rows),
+    // above Master.
+    return sf2RowY() + sf2TotalH();
+}
+
+int MixerPanel::sfz2ChRowY (int chRowIdx) const
+{
+    // sfz2RowY() already applies -scrollPixels once; do not subtract it again
+    // here or channel rows creep upward whenever the panel is scrolled.
+    return sfz2RowY() + kSf2RowH + chRowIdx * kSf2ChRowH;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Network Audio tracks (SequencerEngine TrackType::Audio with a network route)
+// ─────────────────────────────────────────────────────────────────────────────
+// Rows are derived from the SequencerEngine on every layout/paint, so creating a
+// network track in the Arranger adds its row immediately and removing the track
+// removes the row — there is no separate list to keep in sync.
+std::vector<int> MixerPanel::collectNetworkTracks() const
+{
+    std::vector<int> result;
+    const int n = juce::jmin (processor.sequencer.getNumTracks(), NetworkTrackMeters::kMaxTracks);
+    for (int i = 0; i < n; ++i)
+        if (processor.sequencer.isNetworkAudioTrack (i))
+            result.push_back (i);
+    return result;
+}
+
+int MixerPanel::netTotalH() const
+{
+    return (int) collectNetworkTracks().size() * kNetRowH;
+}
+
+int MixerPanel::netRowY (int netRowIdx) const
+{
+    // Sits directly below the SFZ-Player section (or SF-PLAYER section when no .sfz
+    // is loaded), above Master. sf2RowY() already applies -scrollPixels once.
+    return sf2RowY() + sf2TotalH() + sfz2TotalH() + netRowIdx * kNetRowH;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  updateFromSnapshot
+// ─────────────────────────────────────────────────────────────────────────────
+void MixerPanel::updateFromSnapshot()
+{
+    const uint32_t v = (uint32_t) processor.getUiSliceSnapshotVersion();
+    {
+        cachedVersion = v;
+
+        // Auto-scroll so the selected row is always visible.
+        // Only nudge scroll when the selection actually changes.
+        const auto& snap = processor.getUiSliceSnapshot();
+        if (snap.selectedSlice >= 0 && snap.selectedSlice != cachedNumSlices)
+        {
+            const auto visible = collectVisibleSlices (snap);
+            const int  visRow  = visibleRowOf (visible, snap.selectedSlice);
+
+            // Selected slice isn't shown in the mixer at all (showInMixer
+            // false) — nothing to scroll to.
+            if (visRow >= 0)
+            {
+                const int visTop    = kHeaderH;
+                const int visBottom = getHeight() - sf2TotalH() - sfz2TotalH() - netTotalH() - kMasterH;
+                const int visH      = visBottom - visTop;
+
+                const int rowTop    = kHeaderH + visRow * kRowH - scrollPixels;
+                const int rowBottom = rowTop + kRowH;
+
+                if (rowTop < visTop)
+                    scrollPixels = kHeaderH + visRow * kRowH - visTop;
+                else if (rowBottom > visBottom)
+                    scrollPixels = kHeaderH + visRow * kRowH - (visH - kRowH);
+
+                // Clamp to valid scroll range
+                const int totalH  = (int) visible.size() * kRowH + kMasterH + sf2TotalH() + sfz2TotalH() + netTotalH();
+                const int maxScroll = juce::jmax (0, totalH - (getHeight() - kHeaderH));
+                scrollPixels = juce::jlimit (0, maxScroll, scrollPixels);
+            }
+        }
+        cachedNumSlices = snap.selectedSlice;
+
+        repaint();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Layout helpers
+// ─────────────────────────────────────────────────────────────────────────────
+int MixerPanel::colX (Col col) const
+{
+    return kNameColW + (int)col * kKnobColW;
+}
+
+int MixerPanel::rowY (int sliceIdx) const
+{
+    return kHeaderH + sliceIdx * kRowH - scrollPixels;
+}
+
+int MixerPanel::sf2RowY() const
+{
+    // SF-PLAYER row sits immediately below the slice rows, above Master.
+    const auto& snap = processor.getUiSliceSnapshot();
+    const int visibleCount = (int) collectVisibleSlices (snap).size();
+    return kHeaderH + visibleCount * kRowH - scrollPixels;
+}
+
+int MixerPanel::masterRowY() const
+{
+    // Master row is at the very bottom, below the full SF section (header + channel rows)
+    // and below the SFZ-Player row (if a .sfz file is loaded).
+    const auto& snap = processor.getUiSliceSnapshot();
+    const int visibleCount = (int) collectVisibleSlices (snap).size();
+    return kHeaderH + visibleCount * kRowH + sf2TotalH() + sfz2TotalH() + netTotalH() - scrollPixels;
+}
+
+MixerPanel::Cell MixerPanel::hitTest (juce::Point<int> pos) const
+{
+    Cell c;
+    if (pos.y < kHeaderH) return c;          // header — no hit
+
+    const auto& snap = processor.getUiSliceSnapshot();
+    const auto  visible = collectVisibleSlices (snap);
+    const int   visibleCount = (int) visible.size();
+    [[maybe_unused]] const int totalRowsH = visibleCount * kRowH + kMasterH;
+    const int contentTop = kHeaderH;
+
+    // Which logical (display) row?
+    const int relY = pos.y - contentTop + scrollPixels;
+    const int logicalRow = relY / kRowH;
+
+    if (logicalRow < visibleCount)
+    {
+        c.row = visible[(size_t) logicalRow];   // map display row -> real slice index
+        c.isMaster = false;
+    }
+    else if (relY >= visibleCount * kRowH &&
+             relY <  visibleCount * kRowH + kSf2RowH)
+    {
+        c.row = -2;
+        c.isSf2 = true;
+    }
+    else if (relY >= visibleCount * kRowH + kSf2RowH &&
+             relY <  visibleCount * kRowH + sf2TotalH())
+    {
+        // Which channel sub-row?
+        const int chIdx = (relY - visibleCount * kRowH - kSf2RowH) / kSf2ChRowH;
+        if (chIdx >= 0 && chIdx < (int) sf2Channels.size())
+        {
+            c.isSf2Ch   = true;
+            c.sf2Channel = sf2Channels[(size_t) chIdx].channel;
+            c.row = -4 - chIdx;  // sentinel: negative, distinct from master/sf2
+        }
+        else return c;
+    }
+    else if (relY >= visibleCount * kRowH + sf2TotalH() &&
+             relY <  visibleCount * kRowH + sf2TotalH() + sfz2TotalH())
+    {
+        const int localY = relY - visibleCount * kRowH - sf2TotalH();
+        if (localY < kSf2RowH)
+        {
+            c.row = -3;
+            c.isSfz2 = true;
+        }
+        else
+        {
+            const auto& snap2 = processor.getUiSliceSnapshot2();
+            const auto  visibleZones = collectVisibleSfzZones (snap2);
+            processor.releaseUiSliceSnapshot2();
+            const int zoneChIdx = (localY - kSf2RowH) / kSf2ChRowH;
+            if (zoneChIdx >= 0 && zoneChIdx < (int) visibleZones.size())
+            {
+                c.isSfz2Ch    = true;
+                c.sfz2ZoneIdx = visibleZones[(size_t) zoneChIdx];
+                c.row = -100 - zoneChIdx;  // sentinel: negative, distinct from sf2Ch's -4-i
+            }
+            else return c;
+        }
+    }
+    else if (relY >= visibleCount * kRowH + sf2TotalH() + sfz2TotalH() &&
+             relY <  visibleCount * kRowH + sf2TotalH() + sfz2TotalH() + netTotalH())
+    {
+        // Network Audio track rows (below SFZ-Player, above Master)
+        const auto netTracks = collectNetworkTracks();
+        const int netIdx = (relY - visibleCount * kRowH - sf2TotalH() - sfz2TotalH()) / kNetRowH;
+        if (netIdx >= 0 && netIdx < (int) netTracks.size())
+        {
+            c.isNet    = true;
+            c.netTrack = netTracks[(size_t) netIdx];
+            c.row      = -200 - netIdx;  // sentinel: negative, distinct from sf2Ch (-4-i) and sfz2Ch (-100-i)
+        }
+        else return c;
+    }
+    else if (relY >= visibleCount * kRowH + sf2TotalH() + sfz2TotalH() + netTotalH() &&
+             relY <  visibleCount * kRowH + sf2TotalH() + sfz2TotalH() + netTotalH() + kMasterH)
+    {
+        c.row = -1;
+        c.isMaster = true;
+    }
+    else return c;  // below content
+
+    // Which column?
+    const int cx = pos.x;
+    if (cx < kNameColW) { c.row = -2; return c; }  // name column (row select only)
+    int colIdx = (cx - kNameColW) / kKnobColW;
+    if (colIdx < 0 || colIdx >= kNumCols) return c;
+    c.col = (Col) colIdx;
+
+    const int rowTop  = c.isNet      ? netRowY (c.row <= -200 ? (-200 - c.row) : 0)
+                        : c.isSf2Ch    ? sf2ChRowY (c.row <= -4 ? (-4 - c.row) : 0)
+                        : c.isSfz2Ch ? sfz2ChRowY (c.row <= -100 ? (-100 - c.row) : 0)
+                        : c.isSf2    ? sf2RowY()
+                        : c.isSfz2   ? sfz2RowY()
+                        : c.isMaster ? masterRowY()
+                                     : rowY (logicalRow);
+    const int rowHt   = c.isNet ? kNetRowH : c.isSf2Ch ? kSf2ChRowH : c.isSfz2Ch ? kSf2ChRowH : c.isSf2 ? kSf2RowH : c.isSfz2 ? kSf2RowH : c.isMaster ? kMasterH : kRowH;
+    c.bounds = { kNameColW + colIdx * kKnobColW, rowTop, kKnobColW, rowHt };
+    return c;
+}
+
+juce::String MixerPanel::themeKeyAt (juce::Point<int> p) const
+{
+    const auto cell = hitTest (p);
+
+    // Knobs (drawKnobInRow) and the Mute/Chromatic badges are all drawn in
+    // the accent colour (see drawKnobInRow / drawMuteBadge / drawChroBadge).
+    switch (cell.col)
+    {
+        case ColGain: case ColPan: case ColFcut: case ColPres:
+        case ColMute: case ColChro: case ColLegato:
+            return "accent";
+        default:
+            break;
+    }
+
+    // A slice row's name/lane is tinted with that slice's own colour.
+    if (! cell.isMaster && ! cell.isSf2 && ! cell.isSf2Ch && ! cell.isSfz2 && ! cell.isSfz2Ch
+        && cell.row >= 0 && cell.row < ThemeData::kSlicePaletteSize)
+        return "slice" + juce::String (cell.row + 1);
+
+    return {}; // master / SF-PLAYER rows / header — let the caller fall back
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Format helpers
+// ─────────────────────────────────────────────────────────────────────────────
+juce::String MixerPanel::fmtGain (float db) const
+{
+    return (db >= 0.f ? "+" : "") + juce::String (db, 1) + "dB";
+}
+juce::String MixerPanel::fmtPan (float pan) const
+{
+    if (std::abs (pan) < 0.02f) return "C";
+    return pan < 0.f ? "L" + juce::String ((int)(-pan * 100.f))
+                     : "R" + juce::String ((int)( pan * 100.f));
+}
+juce::String MixerPanel::fmtFcut (float hz) const
+{
+    return hz >= 999.f ? juce::String ((int)(hz / 1000.f)) + "k"
+                       : juce::String ((int) hz);
+}
+juce::String MixerPanel::fmtPres (float res) const
+{
+    return juce::String ((int)(res * 100.f)) + "%";
+}
+juce::String MixerPanel::fmtOut (int bus) const
+{
+    return juce::String (bus + 1);
+}
+juce::String MixerPanel::fmtMute (int mg) const
+{
+    return juce::String (mg);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Norm helpers
+// ─────────────────────────────────────────────────────────────────────────────
+// 0 dB maps to 0.5 (12 o'clock).  Range: -24 dB (fully CCW) → +24 dB (fully CW).
+// Values below -24 clamp to 0; values above +24 clamp to 1.
+float MixerPanel::toNormGain (float db)  const { return juce::jlimit (0.f, 1.f, (db + 24.f) / 48.f); }
+float MixerPanel::toNormPan  (float pan) const { return juce::jlimit (0.f, 1.f, (pan + 1.f) * 0.5f); }
+float MixerPanel::toNormFcut (float hz)  const
+{
+    return juce::jlimit (0.f, 1.f,
+        std::log2 (juce::jmax (20.f, hz) / 20.f) / std::log2 (20000.f / 20.f));
+}
+float MixerPanel::toNormPres (float res) const { return juce::jlimit (0.f, 1.f, res); }
+float MixerPanel::toNormOut  (int bus)   const { return juce::jlimit (0.f, 1.f, bus / 15.f); }
+
+float MixerPanel::fromNormFcut (float n) const
+{
+    return 20.f * std::pow (2.f, n * std::log2 (20000.f / 20.f));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Drawing
+// ─────────────────────────────────────────────────────────────────────────────
+static constexpr int kKnobR = 14;  // knob radius (px) — bumped from 13 now that
+                                    // kRowH gives each row more vertical room
+
+// Flattened — was a vector knob-face asset (baked shading/gradient) underneath
+// a 3-pass glow arc (wide dim strokes layered under a solid stroke) for both
+// the gain-centred and hard-left-stop sweep cases. Now a plain guide ring +
+// single accent-coloured fill arc, no image, no gradient, no glow — matching
+// SliceControlBar::drawKnob / DysektLookAndFeel::drawRotarySlider's flat
+// rotary language, still reading each theme's own colours.
+void MixerPanel::drawKnobInRow (juce::Graphics& g, int cx, int cy,
+                                 float norm, bool locked, bool isMaster,
+                                 bool isGain) const
+{
+    const auto& theme = getTheme();
+    const float r = (float) kKnobR;
+    const float normC0 = juce::jlimit (0.f, 1.f, norm);
+
+    // Guide ring behind the track — always visible (not just a faint hint)
+    // so a knob at idle (no fill arc drawn) still reads clearly as a dial
+    // rather than empty space with a dot in the middle.
+    g.setColour (theme.accent.withAlpha (0.16f));
+    g.drawEllipse ((float)cx - (r + 3.5f), (float)cy - (r + 3.5f), (r + 3.5f) * 2.f, (r + 3.5f) * 2.f, 1.0f);
+
+    // Track arc (background) — 270° sweep, 7 o'clock → 5 o'clock
+    //
+    // juce::Path::addCentredArc measures angles clockwise from 12 o'clock.
+    // "7 o'clock" as a raw compass position is pi*0.75 rad *only* in the
+    // unshifted (cos/sin) convention that DualLcdControlFrame's pointer-line
+    // math uses — for addCentredArc's convention it must be shifted by
+    // +halfPi first (see DualLcdControlFrame.cpp's kStart -> arcStart).
+    // Passing pi*0.75 straight into addCentredArc (as this used to do)
+    // actually lands the sweep's start ~90° early, which is why the 0 dB
+    // indicator was rendering at 9 o'clock instead of 12 o'clock.
+    const float startA  = juce::MathConstants<float>::pi * 0.75f
+                         + juce::MathConstants<float>::halfPi;
+    const float arcLen  = juce::MathConstants<float>::pi * 1.5f;
+    juce::Path track;
+    track.addCentredArc ((float)cx, (float)cy, r, r, 0.f, startA, startA + arcLen, true);
+    g.setColour (theme.separator.withAlpha (0.6f));
+    g.strokePath (track, juce::PathStrokeType (1.5f));
+
+    // Fill arc — for gain knobs: bidirectional from 12 o'clock (norm = 0.5)
+    //            for all others: sweep from 7 o'clock (startA) as before
+    const auto fillCol = locked ? theme.lockActive
+                                : (isMaster ? theme.accent.brighter (0.15f) : theme.accent);
+    const float normC = juce::jlimit (0.f, 1.f, norm);
+
+    if (isGain)
+    {
+        // 0 dB is at norm=0.5 → 12 o'clock (centre of the sweep)
+        constexpr float zeroNorm  = 0.5f;
+        const float     zeroAngle = startA + arcLen * zeroNorm;   // 12 o'clock
+
+        if (std::abs (normC - zeroNorm) > 0.005f)
+        {
+            juce::Path fill;
+            if (normC > zeroNorm)   // boost → fill rightward from centre
+                fill.addCentredArc ((float)cx, (float)cy, r, r, 0.f,
+                                    zeroAngle, startA + arcLen * normC, true);
+            else                    // cut → fill leftward from centre
+                fill.addCentredArc ((float)cx, (float)cy, r, r, 0.f,
+                                    startA + arcLen * normC, zeroAngle, true);
+
+            g.setColour (fillCol);
+            g.strokePath (fill, juce::PathStrokeType (1.5f));
+        }
+
+        // Small centre-tick marker at 12 o'clock so 0 dB is always visible.
+        // zeroAngle is in JUCE's arc convention (0 = 12 o'clock, clockwise);
+        // std::cos/sin expect the standard convention (0 = 3 o'clock). Offset
+        // by -halfPi to convert, same as the arc/indicator fix elsewhere.
+        const float zeroAngleM = zeroAngle - juce::MathConstants<float>::halfPi;
+        const float tx = (float)cx + r * std::cos (zeroAngleM);
+        const float ty = (float)cy + r * std::sin (zeroAngleM);
+        g.setColour (theme.foreground.withAlpha (0.30f));
+        g.drawLine ((float)cx + (r - 2.f) * std::cos (zeroAngleM),
+                    (float)cy + (r - 2.f) * std::sin (zeroAngleM),
+                    tx, ty, 1.0f);
+    }
+    else
+    {
+        // Non-gain knob: sweep from hard left stop
+        if (normC > 0.001f)
+        {
+            const float endAngle = startA + arcLen * normC;
+            juce::Path fill;
+            fill.addCentredArc ((float)cx, (float)cy, r, r, 0.f, startA, endAngle, true);
+
+            g.setColour (fillCol);
+            g.strokePath (fill, juce::PathStrokeType (1.5f));
+        }
+    }
+
+    // Rim indicator — small fixed-size dot at the current position, drawn
+    // regardless of fill amount. This is what actually replaces the old
+    // rotated pointer: it gives clear position feedback at idle values
+    // (0 dB / 0%) without becoming a stray line at this knob's small size.
+    {
+        const float indAngle = startA + arcLen * normC0;
+        const float indAngleM = indAngle - juce::MathConstants<float>::halfPi;
+        const float ix = (float)cx + r * std::cos (indAngleM);
+        const float iy = (float)cy + r * std::sin (indAngleM);
+        g.setColour (locked ? theme.lockActive : theme.foreground.withAlpha (0.85f));
+        g.fillEllipse (ix - 1.5f, iy - 1.5f, 3.f, 3.f);
+    }
+
+    // Centre dot
+    g.setColour (locked ? theme.lockActive.withAlpha (0.7f) : theme.accent.withAlpha (0.55f));
+    g.fillEllipse ((float)cx - 2.f, (float)cy - 2.f, 4.f, 4.f);
+}
+
+// Flattened — was a rounded badge (2.5f corners) with a two-pass expanding
+// glow halo behind it when active. Now a flat, square-cornered badge with a
+// single flat fill/border, no glow — matching the rest of the shape language,
+// still reading each theme's own colours.
+void MixerPanel::drawMuteBadge (juce::Graphics& g, int cx, int cy,
+                                  int muteGroup, bool locked, bool dimmed) const
+{
+    const auto& theme = getTheme();
+    const int bw = 18, bh = 16;
+    const juce::Rectangle<float> r ((float)(cx - bw/2), (float)(cy - bh/2), (float)bw, (float)bh);
+
+    // When global MONO is on, render the badge fully greyed out
+    if (dimmed)
+    {
+        g.setColour (theme.separator.withAlpha (0.18f));
+        g.fillRect (r);
+        g.setColour (theme.foreground.withAlpha (0.15f));
+        g.drawRect (r, 0.8f);
+        g.setFont (DysektLookAndFeel::makeFont (11.0f));
+        g.setColour (theme.foreground.withAlpha (0.15f));
+        g.drawText (juce::String (muteGroup), r.toNearestInt(), juce::Justification::centred);
+        return;
+    }
+
+    const bool active = (muteGroup > 0);
+
+    g.setColour (active ? (locked ? theme.lockActive.withAlpha (0.15f)
+                                  : theme.accent.withAlpha (0.10f))
+                        : theme.separator.withAlpha (0.3f));
+    g.fillRect (r);
+
+    g.setColour (active ? (locked ? theme.lockActive : theme.accent)
+                        : theme.foreground.withAlpha (0.25f));
+    g.drawRect (r, 0.8f);
+
+    g.setFont (DysektLookAndFeel::makeFont (11.0f));
+    g.setColour (active ? (locked ? theme.lockActive : theme.accent)
+                        : theme.foreground.withAlpha (0.3f));
+    g.drawText (juce::String (muteGroup), r.toNearestInt(), juce::Justification::centred);
+}
+
+void MixerPanel::drawHeader (juce::Graphics& g) const
+{
+    const auto& theme = getTheme();
+
+    g.setColour (theme.darkBar.darker (0.3f));
+    g.fillRect (0, 0, getWidth(), kHeaderH);
+
+    g.setColour (theme.separator);
+    g.drawHorizontalLine (kHeaderH - 1, 0.f, (float) getWidth());
+
+    // Track column
+    g.setFont (DysektLookAndFeel::makeFont (12.0f));
+    g.setColour (theme.accent.withAlpha (0.5f));
+    g.drawText ("TRACK", 10, 0, kNameColW - 10, kHeaderH, juce::Justification::centredLeft);
+
+    // Knob column headers
+    const char* labels[kNumCols] = { "GAIN", "PAN", "FCUT", "PRES", "MUTE GRP", "CHRO", "LEGATO", "OUT" };
+    for (int i = 0; i < kNumCols; ++i)
+    {
+        g.setColour (i < 4 ? theme.accent.withAlpha (0.55f)
+                           : theme.foreground.withAlpha (0.28f));
+        g.drawText (labels[i],
+                    colX ((Col)i), 0, kKnobColW, kHeaderH,
+                    juce::Justification::centred);
+    }
+}
+
+void MixerPanel::drawChroBadge (juce::Graphics& g, int cx, int cy, int channel, bool locked) const
+{
+    const auto& theme = getTheme();
+    const int bw = 18, bh = 16;
+    const juce::Rectangle<float> r ((float)(cx - bw/2), (float)(cy - bh/2), (float)bw, (float)bh);
+
+    const bool active = (channel > 0);
+
+    // Flat, square-cornered badge — no expanding glow halo, matching the
+    // already-flattened drawMuteBadge treatment.
+    g.setColour (active ? (locked ? theme.lockActive.withAlpha (0.15f) : theme.accent.withAlpha (0.15f))
+                        : theme.separator.withAlpha (0.3f));
+    g.fillRect (r);
+    g.setColour (active ? (locked ? theme.lockActive : theme.accent)
+                        : (locked ? theme.lockActive.withAlpha (0.5f) : theme.foreground.withAlpha (0.25f)));
+    g.drawRect (r, 0.8f);
+
+    g.setFont (DysektLookAndFeel::makeFont (11.0f));
+    g.setColour (active ? (locked ? theme.lockActive : theme.accent)
+                        : (locked ? theme.lockActive.withAlpha (0.5f) : theme.foreground.withAlpha (0.3f)));
+    g.drawText (active ? juce::String (channel) : "-", r.toNearestInt(), juce::Justification::centred);
+}
+
+void MixerPanel::drawMeter (juce::Graphics& g,
+                             int x, int y, int w, int h,
+                             float peakL, float peakR,
+                             juce::Colour /*tint*/, int si) const
+{
+    // Match the Network Audio track meter's visual language while preserving
+    // the Mixer's existing meter rectangle and dimensions.
+    // The live levels are smoothed so the fill is solid and continuous
+    // instead of flashing with each raw audio peak snapshot.
+    constexpr float kFloorDb     = -60.0f;
+    constexpr float kAmberStart  = 0.70f; // -18 dB
+    constexpr float kRedStart    = 0.90f; //  -6 dB
+    constexpr float kAttack      = 0.55f;
+    constexpr float kRelease     = 0.18f;
+    constexpr int   kGap         = 1;
+    constexpr int   kHoldW       = 2;
+
+    const int barH = juce::jmax (1, (h - kGap) / 2);
+    const int si2  = juce::jlimit (0, kTotalHoldSlots - 1, si);
+
+    const float inL = juce::jmax (0.0f, peakL);
+    const float inR = juce::jmax (0.0f, peakR);
+
+    auto smooth = [] (float current, float target) -> float
+    {
+        const float alpha = target > current ? kAttack : kRelease;
+        return current + (target - current) * alpha;
+    };
+
+    meterL[si2] = smooth (meterL[si2], inL);
+    meterR[si2] = smooth (meterR[si2], inR);
+
+    // Peak hold remains independent from the smoothed live fill.
+    if (inL > holdL[si2]) holdL[si2] = inL;
+    if (inR > holdR[si2]) holdR[si2] = inR;
+
+    const juce::Colour kGreen { 0xff2fbf71 };
+    const juce::Colour kAmber { 0xffe0a93b };
+    const juce::Colour kRed   { 0xffe0504f };
+
+    auto gainToPos = [] (float gain) -> float
+    {
+        if (gain <= 0.001f) return 0.0f;
+        const float db = 20.0f * std::log10 (gain);
+        return juce::jlimit (0.0f, 1.0f, (db - kFloorDb) / -kFloorDb);
+    };
+
+    auto drawBar = [&] (int barY, float levelGain, float holdGain)
+    {
+        const float level = gainToPos (levelGain);
+        const float hold  = gainToPos (holdGain);
+        const int fillW = juce::jmax (0, juce::roundToInt (level * (float) (w - kHoldW - 2)));
+
+        g.setColour (juce::Colour (0xff0a0a0a));
+        g.fillRect (x, barY, w, barH);
+
+        g.setColour (juce::Colour (0xff1e1e1e));
+        g.drawRect (x, barY, w, barH);
+
+        auto drawZone = [&] (float from, float to, juce::Colour colour)
+        {
+            const float x0 = from * (float) w;
+            const float x1 = std::min (to * (float) w, (float) fillW);
+            if (x1 > x0)
+            {
+                g.setColour (colour);
+                g.fillRect (juce::Rectangle<float> ((float) x + x0,
+                                                    (float) barY,
+                                                    x1 - x0,
+                                                    (float) barH));
+            }
+        };
+
+        drawZone (0.0f,        kAmberStart, kGreen);
+        drawZone (kAmberStart, kRedStart,   kAmber);
+        drawZone (kRedStart,   1.0f,        kRed);
+
+        if (barH >= 3)
+        {
+            g.setColour (juce::Colour (0xff0a0a0a));
+            g.fillRect (x + (int) (kAmberStart * (float) w), barY, 1, barH);
+            g.fillRect (x + (int) (kRedStart   * (float) w), barY, 1, barH);
+        }
+
+        if (hold > 0.0f)
+        {
+            const int hx = x + 1 + juce::roundToInt (hold * (float) (w - kHoldW - 2));
+            if (hx < x + w - 1)
+            {
+                g.setColour (juce::Colours::white.withAlpha (0.9f));
+                g.fillRect (hx, barY, kHoldW, barH);
+            }
+        }
+    };
+
+    drawBar (y,               meterL[si2], holdL[si2]);
+    drawBar (y + barH + kGap, meterR[si2], holdR[si2]);
+}
+
+void MixerPanel::drawSliceRow (juce::Graphics& g, int ry, int idx, bool selected) const
+{
+    const auto& theme = getTheme();
+    const auto& snap  = processor.getUiSliceSnapshot();
+    const auto& sl    = snap.slices[(size_t) idx];
+
+    // ── Row separation ────────────────────────────────────────────────────
+    // Each track gets its own 1px seam of base background top and bottom
+    // (rgIns/rgH below) so adjacent rows read as distinct bars rather than
+    // a continuous striped list, plus a bright top+bottom border so the
+    // boundary is unambiguous even between two unselected, same-colour rows.
+    const int rgIns = ry + 1;
+    const int rgH   = kRowH - 2;
+
+    // Row background
+    if (selected)
+    {
+        g.setColour (theme.accent.withAlpha (0.06f));
+        g.fillRect (2, rgIns, getWidth() - 2, rgH);
+        g.setColour (theme.accent.withAlpha (0.55f));
+        g.fillRect (0, rgIns, 2, rgH);
+    }
+    else if (idx % 2 == 1)
+    {
+        g.setColour (juce::Colour (0xFF000000).withAlpha (0.16f));
+        g.fillRect (0, rgIns, getWidth(), rgH);
+    }
+
+    // ── Full-lane slice colour tint ──────────────────────────────────────
+    // Subtle wash across the entire row so each slice is immediately
+    // identifiable at a glance, matching the waveform lane colours.
+    g.setColour (sl.colour.withAlpha (selected ? 0.34f : 0.24f));
+    g.fillRect (kNameColW, rgIns, getWidth() - kNameColW, rgH);
+
+    // Row borders — top AND bottom, brighter than before, full width, so
+    // each track reads as its own bounded bar rather than a stripe.
+    g.setColour (theme.separator.withAlpha (0.55f));
+    g.drawHorizontalLine (ry, 0.f, (float) getWidth());
+    g.drawHorizontalLine (ry + kRowH - 1, 0.f, (float) getWidth());
+
+    // ── Slice name column — tinted with slice colour ─────────────────────
+    const juce::Colour dot = sl.colour;
+
+    // Colour bar on left edge (thicker, more visible than old dot — doubles
+    // as the row's own identity stripe now that borders are stronger)
+    g.setColour (dot.withAlpha (0.9f));
+    g.fillRect (0, rgIns, 4, rgH);
+
+    // Colour tint on name column background
+    g.setColour (dot.withAlpha (0.13f));
+    g.fillRect (4, rgIns, kNameColW - 5, rgH);
+
+    // Slice number / custom name
+    g.setFont (DysektLookAndFeel::makeFont (14.0f));
+    g.setColour (dot.withAlpha (selected ? 0.95f : 0.65f));
+    if (sl.name.isNotEmpty())
+    {
+        // Custom name set — show it in the name column
+        g.drawText (sl.name.toUpperCase().substring (0, 9),
+                    5, ry, kNameColW - 8, kRowH, juce::Justification::centredLeft);
+    }
+    else
+    {
+        // No custom name — show padded slice number
+        g.drawText (juce::String (idx + 1).paddedLeft ('0', 2),
+                    8, ry, 30, kRowH, juce::Justification::centredLeft);
+
+        // Duration (only when no custom name, to keep layout clean)
+        const double srate = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 44100.0;
+        const int end = (idx >= 0 && idx < snap.numSlices) ? snap.sliceEndSamples[idx] : snap.sampleNumFrames;
+        const double lenSec = (end - sl.startSample) / srate;
+        g.setFont (DysektLookAndFeel::makeFont (11.0f));
+        g.setColour (theme.foreground.withAlpha (0.30f));
+        g.drawText (juce::String (lenSec, 2) + "s",
+                    40, ry, kNameColW - 42, kRowH, juce::Justification::centredLeft);
+    }
+
+    // ── Knob columns ────────────────────────────────────────────────────
+    const int kcy = ry + kRowH / 2;
+
+    auto drawCol = [&] (Col col, float norm, bool locked,
+                         const juce::String& valStr)
+    {
+        const int x = colX (col);
+        const int cx = x + kKnobR + 8;
+        drawKnobInRow (g, cx, kcy, norm, locked);
+
+        // Centre the readout in the gap between the knob's right edge and
+        // this column's right-hand divider line, rather than left-aligning
+        // it a fixed distance after the knob.
+        const int knobEdge = cx + kKnobR;
+        const int divider   = x + kKnobColW;
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (locked ? theme.foreground.withAlpha (0.90f)
+                            : theme.foreground.withAlpha (0.40f));
+        g.drawText (valStr, knobEdge, ry + 1, divider - knobEdge, kRowH - 2,
+                    juce::Justification::centred);
+    };
+
+    // GAIN — isGain=true so fill is bidirectional from 12 o'clock
+    const bool gainLocked = (sl.lockMask & kLockVolume) != 0;
+    {
+        const int x  = colX (ColGain);
+        const int cx = x + kKnobR + 8;
+        drawKnobInRow (g, cx, kcy, toNormGain (sl.volume), gainLocked, false, /*isGain=*/true);
+        const int knobEdge = cx + kKnobR;
+        const int divider   = x + kKnobColW;
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (gainLocked ? theme.foreground.withAlpha (0.90f)
+                                : theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtGain (sl.volume), knobEdge, ry + 1, divider - knobEdge, kRowH - 2,
+                    juce::Justification::centred);
+    }
+
+    // PAN — horizontal bipolar slider
+    {
+        const bool    panLocked = (sl.lockMask & kLockPan) != 0;
+        const int     x      = colX (ColPan);
+        const int     sliderX = x + 6;
+        const int     sliderW = kKnobColW - 12;
+        const int     sliderY = kcy + 5;   // slider now sits BELOW the label
+        const int     sliderH = 6;
+        const float   pan     = sl.pan;
+        const float   norm    = toNormPan (pan);
+        const int     thumbX  = sliderX + (int)(norm * (float)sliderW);
+        const int     centreX = sliderX + sliderW / 2;
+        const auto    fillCol = panLocked ? theme.lockActive : theme.accent;
+
+        // Value label — now drawn ABOVE the slider track, centred in column
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (panLocked ? theme.foreground.withAlpha (0.90f)
+                               : theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtPan (pan), x, kcy - 20, kKnobColW, 16,
+                    juce::Justification::centred);
+
+        // Track bg — flat, square corners
+        g.setColour (theme.darkBar.darker (0.3f));
+        g.fillRoundedRectangle ((float)sliderX, (float)sliderY,
+                                 (float)sliderW, (float)sliderH, 0.0f);
+
+        // Centre tick
+        g.setColour (theme.foreground.withAlpha (0.18f));
+        g.drawVerticalLine (centreX, (float)sliderY, (float)(sliderY + sliderH));
+
+        // Fill from centre
+        if (std::abs (pan) > 0.005f)
+        {
+            const int fillX = (pan < 0.f) ? thumbX : centreX;
+            const int fillW = std::abs (thumbX - centreX);
+            if (fillW > 0)
+            {
+                g.setColour (fillCol.withAlpha (panLocked ? 0.55f : 0.35f));
+                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f);
+            }
+        }
+
+        // Flat thumb — no glow halo
+        g.setColour (fillCol.withAlpha (panLocked ? 1.0f : 0.85f));
+        g.fillRoundedRectangle ((float)(thumbX - 2), (float)(sliderY - 1),
+                                 4.f, (float)(sliderH + 2), 0.0f);
+        g.setColour (theme.darkBar.darker (0.5f).withAlpha (0.6f));
+        g.drawVerticalLine (thumbX, (float)(sliderY - 1), (float)(sliderY + sliderH + 1));
+    }
+
+    // FCUT
+    const bool filterLocked = (sl.lockMask & kLockFilter) != 0;
+    drawCol (ColFcut, toNormFcut (sl.filterCutoff), filterLocked, fmtFcut (sl.filterCutoff));
+
+    // PRES
+    drawCol (ColPres, toNormPres (sl.filterRes), filterLocked, fmtPres (sl.filterRes));
+
+    // MUTE GRP
+    {
+        const bool mg_locked = (sl.lockMask & kLockMuteGroup) != 0;
+        const int x = colX (ColMute);
+        const int cx = x + kKnobColW / 2;
+        const bool monoOn = processor.apvts.getRawParameterValue (ParamIds::globalMono)->load() > 0.5f;
+        drawMuteBadge (g, cx, kcy, sl.muteGroup, mg_locked, monoOn);
+    }
+
+    // CHRO — chromatic MIDI channel badge
+    {
+        const bool chromaLocked = (sl.lockMask & kLockChromaticChannel) != 0;
+        const int x  = colX (ColChro);
+        const int cx = x + kKnobColW / 2;
+        drawChroBadge (g, cx, kcy, sl.chromaticChannel, chromaLocked);
+    }
+
+    // LEGATO — chromatic legato toggle
+    {
+        const bool legatoLocked = (sl.lockMask & kLockChromaticLegato) != 0;
+        const int x  = colX (ColLegato);
+        const bool on = sl.chromaticLegato;
+        const auto& T = getTheme();
+        juce::Colour col = on ? T.accent : T.foreground.withAlpha (0.28f);
+        if (legatoLocked) col = T.lockActive;
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (col);
+        g.drawText (on ? "ON" : "OFF", x, ry, kKnobColW, kRowH, juce::Justification::centred);
+    }
+
+    // OUT
+    {
+        const bool outLocked = (sl.lockMask & kLockOutputBus) != 0;
+        const int x = colX (ColOut);
+        const int cx = x + kKnobColW / 2 - 6;
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (outLocked ? theme.foreground.withAlpha (0.85f)
+                               : theme.foreground.withAlpha (0.32f));
+        g.drawText (fmtOut (sl.outputBus), cx, ry, kKnobColW - 4, kRowH,
+                    juce::Justification::centredLeft);
+    }
+
+    // METER — horizontal peak bar after OUT, tinted with slice colour
+    {
+        const int mx = colX (ColOut) + kKnobColW + 4;
+        const int mw = getWidth() - mx - 6;
+        if (mw > 20)
+        {
+            const int si = idx < kMaxMeterSlices ? idx : 0;
+            const float pkL = processor.slicePeakL[si].load (std::memory_order_relaxed);
+            const float pkR = processor.slicePeakR[si].load (std::memory_order_relaxed);
+            drawMeter (g, mx, ry + 4, mw, kRowH - 8, pkL, pkR, dot, si);
+        }
+    }
+}
+
+void MixerPanel::drawMasterRow (juce::Graphics& g, int ry) const
+{
+    const auto& theme = getTheme();
+
+    // Small extra gap above MASTER (on top of the shared 1px inset below)
+    // so it visually breaks from the track list rather than continuing it.
+    const int rgIns = ry + 2;
+    const int rgH   = kMasterH - 3;
+
+    g.setColour (theme.accent.withAlpha (0.05f));
+    g.fillRect (0, rgIns, getWidth(), rgH);
+    g.setColour (theme.accent.withAlpha (0.45f));
+    g.drawHorizontalLine (ry + 1, 0.f, (float) getWidth());
+    g.drawHorizontalLine (ry + kMasterH - 1, 0.f, (float) getWidth());
+    g.setColour (theme.accent.withAlpha (0.9f));
+    g.fillRect (0, rgIns, 4, rgH);
+
+    // Label
+    g.setFont (DysektLookAndFeel::makeFont (11.0f, true));
+    g.setColour (theme.accent.withAlpha (0.6f));
+    g.drawText ("MASTER", 10, ry, kNameColW - 10, kMasterH, juce::Justification::centredLeft);
+
+    const float masterDb  = processor.apvts.getRawParameterValue (ParamIds::masterVolume)->load();
+    const float masterPan = processor.apvts.getRawParameterValue (ParamIds::defaultPan)->load();
+
+    const int kcy = ry + kMasterH / 2;
+
+    auto drawMasterCol = [&] (Col col, float norm, const juce::String& valStr, bool isGain = false)
+    {
+        const int x  = colX (col);
+        const int cx = x + kKnobR + 8;
+        drawKnobInRow (g, cx, kcy, norm, false, true, isGain);
+        const int knobEdge = cx + kKnobR;
+        const int divider   = x + kKnobColW;
+        g.setFont (DysektLookAndFeel::makeFont (14.0f));
+        g.setColour (theme.accent.withAlpha (0.55f));
+        g.drawText (valStr, knobEdge, ry + 1, divider - knobEdge, kMasterH - 2,
+                    juce::Justification::centred);
+    };
+
+    drawMasterCol (ColGain, toNormGain (masterDb),  fmtGain (masterDb), /*isGain=*/true);
+
+    // Master PAN — horizontal bipolar slider
+    {
+        const int   x       = colX (ColPan);
+        const int   sliderX = x + 6;
+        const int   sliderW = kKnobColW - 12;
+        const int   sliderY = kcy + 5;   // slider below the label
+        const int   sliderH = 6;
+        const float norm    = toNormPan (masterPan);
+        const int   thumbX  = sliderX + (int)(norm * (float)sliderW);
+        const int   centreX = sliderX + sliderW / 2;
+        const auto  fillCol = theme.accent;
+
+        g.setFont (DysektLookAndFeel::makeFont (14.0f));
+        g.setColour (theme.accent.withAlpha (0.55f));
+        g.drawText (fmtPan (masterPan), x, kcy - 18, kKnobColW, 14,
+                    juce::Justification::centred);
+
+        g.setColour (theme.darkBar.darker (0.3f));
+        g.fillRoundedRectangle ((float)sliderX, (float)sliderY,
+                                 (float)sliderW, (float)sliderH, 0.0f);   // flat, square corners
+        g.setColour (theme.foreground.withAlpha (0.18f));
+        g.drawVerticalLine (centreX, (float)sliderY, (float)(sliderY + sliderH));
+
+        if (std::abs (masterPan) > 0.005f)
+        {
+            const int fillX = (masterPan < 0.f) ? thumbX : centreX;
+            const int fillW = std::abs (thumbX - centreX);
+            if (fillW > 0)
+            {
+                g.setColour (fillCol.withAlpha (0.35f));
+                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f);   // flat, square corners
+            }
+        }
+        g.setColour (fillCol.withAlpha (0.22f));
+        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4),
+                                 10.f, (float)(sliderH + 8), 0.0f);
+        g.setColour (fillCol.withAlpha (0.85f));
+        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1),
+                                 4.f, (float)(sliderH + 2), 0.0f);
+        g.setColour (theme.darkBar.darker (0.5f).withAlpha (0.6f));
+        g.drawVerticalLine (thumbX, (float)(sliderY - 1), (float)(sliderY + sliderH + 1));
+    }
+
+        // Remaining columns — dimmed dashes
+    g.setFont (DysektLookAndFeel::makeFont (14.0f));
+    g.setColour (theme.foreground.withAlpha (0.15f));
+    for (int i = ColFcut; i < kNumCols; ++i)
+        g.drawText ("—", colX ((Col)i), ry, kKnobColW, kMasterH, juce::Justification::centred);
+
+    // === ADD THIS BLOCK HERE: ===
+    const int mx = colX(ColOut) + kKnobColW + 4;
+    const int mw = getWidth() - mx - 6;
+    if (mw > 20)
+    {
+        float pkL = processor.masterPeakL.load(std::memory_order_relaxed);
+        float pkR = processor.masterPeakR.load(std::memory_order_relaxed);
+        drawMeter(g, mx, ry + 4, mw, kMasterH - 8, pkL, pkR, theme.accent, kMaxMeterSlices - 1);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SF2 player row
+// ─────────────────────────────────────────────────────────────────────────────
+void MixerPanel::drawSf2Row (juce::Graphics& g, int ry) const
+{
+    const auto& theme = getTheme();
+
+    // Background — slightly different tint to distinguish from master
+    const int rgIns = ry + 1;
+    const int rgH   = kSf2RowH - 2;
+    g.setColour (theme.accent.withAlpha (0.06f));
+    g.fillRect (0, rgIns, getWidth(), rgH);
+    g.setColour (theme.accent.withAlpha (0.4f));
+    g.drawHorizontalLine (ry, 0.f, (float) getWidth());
+    g.drawHorizontalLine (ry + kSf2RowH - 1, 0.f, (float) getWidth());
+
+    // Label — this row is bound to processor.sfzPlayer, the .sf2-only engine
+    // used by the SF2-PLAYER tab (it was previously mislabeled "SFZ-PLAYER",
+    // which collided with the real .sfz engine's row — see drawSfz2Row).
+    g.setFont (DysektLookAndFeel::makeFont (11.0f, true));
+    g.setColour (theme.accent.withAlpha (0.75f));
+    g.drawText ("SF2-PLAYER", 10, ry, kNameColW - 10, kSf2RowH, juce::Justification::centredLeft);
+
+    const int kcy    = ry + kSf2RowH / 2;
+    const float volLin = processor.sfzPlayer.getVolume();
+    const float volDb  = juce::Decibels::gainToDecibels (volLin, -100.f);
+    const float pan    = processor.sfzPlayer.getPan();
+
+    // GAIN knob
+    {
+        const int x  = colX (ColGain);
+        const int cx = x + kKnobR + 8;
+        drawKnobInRow (g, cx, kcy, toNormGain (volDb), false, true, /*isGain=*/true);
+        const int knobEdge = cx + kKnobR;
+        const int divider   = x + kKnobColW;
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtGain (volDb), knobEdge, ry + 1, divider - knobEdge, kSf2RowH - 2,
+                    juce::Justification::centred);
+    }
+
+    // PAN slider
+    {
+        const int   x       = colX (ColPan);
+        const int   sliderX = x + 6;
+        const int   sliderW = kKnobColW - 12;
+        const int   sliderY = kcy + 5;   // slider below the label
+        const int   sliderH = 6;
+        const float norm    = toNormPan (pan);
+        const int   thumbX  = sliderX + (int)(norm * (float)sliderW);
+        const int   centreX = sliderX + sliderW / 2;
+        const auto  fillCol = theme.accent;
+
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtPan (pan), x, kcy - 20, kKnobColW, 16, juce::Justification::centred);
+
+        g.setColour (theme.darkBar.darker (0.3f));
+        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, 0.0f);   // flat, square corners
+        g.setColour (theme.foreground.withAlpha (0.18f));
+        g.drawVerticalLine (centreX, (float)sliderY, (float)(sliderY + sliderH));
+        if (std::abs (pan) > 0.005f)
+        {
+            const int fillX = (pan < 0.f) ? thumbX : centreX;
+            const int fillW = std::abs (thumbX - centreX);
+            if (fillW > 0) { g.setColour (fillCol.withAlpha (0.35f)); g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f); }   // flat, square corners
+        }
+        g.setColour (fillCol.withAlpha (0.22f));
+        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), 0.0f);
+        g.setColour (fillCol.withAlpha (0.85f));
+        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), 0.0f);
+        g.setColour (theme.darkBar.darker (0.5f).withAlpha (0.6f));
+        g.drawVerticalLine (thumbX, (float)(sliderY - 1), (float)(sliderY + sliderH + 1));
+    }
+
+    // Dash-fill columns that don't apply to the SF-Player
+    g.setFont (DysektLookAndFeel::makeFont (11.0f));
+    g.setColour (theme.foreground.withAlpha (0.15f));
+    for (int i = ColFcut; i < kNumCols; ++i)
+        g.drawText ("—", colX ((Col)i), ry, kKnobColW, kSf2RowH, juce::Justification::centred);
+
+    // Peak meter using sfzPeakL/R from processor (this row's own engine, sfzPlayer)
+    const int mx = colX (ColOut) + kKnobColW + 4;
+    const int mw = getWidth() - mx - 6;
+    if (mw > 20)
+    {
+        float pkL = processor.sfzPeakL.load (std::memory_order_relaxed);
+        float pkR = processor.sfzPeakR.load (std::memory_order_relaxed);
+        // Use a dedicated hold slot beyond the slice slots (index kMaxHoldSlices - 2)
+        constexpr int kSf2HoldSlot = kMaxHoldSlices - 2;
+        holdL[kSf2HoldSlot] = std::max (holdL[kSf2HoldSlot], pkL);
+        holdR[kSf2HoldSlot] = std::max (holdR[kSf2HoldSlot], pkR);
+        drawMeter (g, mx, ry + 4, mw, kSf2RowH - 8, pkL, pkR, theme.accent, kSf2HoldSlot);
+    }
+
+    // ── Per-channel sub-rows ───────────────────────────────────────────────
+    for (int i = 0; i < (int) sf2Channels.size(); ++i)
+        drawSf2ChannelRow (g, sf2ChRowY (i), sf2Channels[(size_t)i].channel,
+                           sf2Channels[(size_t)i].preset);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SF2 per-channel sub-row
+// ─────────────────────────────────────────────────────────────────────────────
+void MixerPanel::drawSf2ChannelRow (juce::Graphics& g, int ry,
+                                     int channel, const Sf2PresetInfo& preset) const
+{
+    const auto& theme = getTheme();
+
+    // Background — alternating shade, slightly indented to read as a sub-row
+    const int rgIns = ry + 1;
+    const int rgH   = kSf2ChRowH - 2;
+    const bool even = (channel % 2 == 0);
+    g.setColour (even ? theme.darkBar.brighter (0.04f)
+                      : theme.darkBar.brighter (0.02f));
+    g.fillRect (0, rgIns, getWidth(), rgH);
+
+    // Left indent stripe using a colour derived from the channel number
+    static const juce::Colour kChanPalette[] = {
+        juce::Colour (0xFF4060A0), juce::Colour (0xFF60A040),
+        juce::Colour (0xFFA04060), juce::Colour (0xFF40A0A0),
+        juce::Colour (0xFFA0A040), juce::Colour (0xFF8060C0),
+        juce::Colour (0xFF60A0C0), juce::Colour (0xFFC08040),
+    };
+    const juce::Colour chCol = kChanPalette[channel % (int) std::size (kChanPalette)];
+
+    g.setColour (chCol.withAlpha (0.8f));
+    g.fillRect (0, rgIns, 3, rgH);
+
+    // Separator lines top + bottom, brighter than before, so sub-rows read
+    // as their own bounded strip under the parent MULTISAMPLER/SF2 row.
+    g.setColour (theme.separator.withAlpha (0.4f));
+    g.drawHorizontalLine (ry, 0.f, (float) getWidth());
+    g.drawHorizontalLine (ry + kSf2ChRowH - 1, 0.f, (float) getWidth());
+
+    const int kcy = ry + kSf2ChRowH / 2;
+
+    // Name column: indent + "ch N  PresetName"
+    g.setFont (DysektLookAndFeel::makeFont (11.0f));
+    g.setColour (chCol.withAlpha (0.55f));
+    g.drawText (juce::String ("ch") + juce::String (channel + 1),
+                6, ry, 28, kSf2ChRowH, juce::Justification::centredLeft);
+
+    g.setColour (theme.foreground.withAlpha (0.55f));
+    const juce::String nameStr = preset.name.isNotEmpty()
+                                     ? preset.name.substring (0, 10)
+                                     : (juce::String (preset.bank) + ":" + juce::String (preset.preset));
+    g.drawText (nameStr, 34, ry, kNameColW - 36, kSf2ChRowH, juce::Justification::centredLeft);
+
+    // Fetch current channel strip
+    const auto strip = processor.sfzPlayer.getChannelStrip (channel);
+    const float volDb = juce::Decibels::gainToDecibels (strip.volume, -100.f);
+
+    // GAIN knob
+    {
+        const int x  = colX (ColGain);
+        const int cx = x + kKnobR + 8;
+        drawKnobInRow (g, cx, kcy, toNormGain (volDb), false, false, /*isGain=*/true);
+        const int knobEdge = cx + kKnobR;
+        const int divider   = x + kKnobColW;
+        g.setFont (DysektLookAndFeel::makeFont (14.0f));
+        g.setColour (theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtGain (volDb), knobEdge, ry + 1, divider - knobEdge, kSf2ChRowH - 2,
+                    juce::Justification::centred);
+    }
+
+    // PAN slider
+    {
+        const int   x       = colX (ColPan);
+        const int   sliderX = x + 6;
+        const int   sliderW = kKnobColW - 12;
+        const int   sliderY = kcy + 4;   // slider below the label
+        const int   sliderH = 6;
+        const float norm    = toNormPan (strip.pan);
+        const int   thumbX  = sliderX + (int)(norm * (float)sliderW);
+        const int   centreX = sliderX + sliderW / 2;
+        const auto  fillCol = chCol;
+
+        g.setFont (DysektLookAndFeel::makeFont (14.0f));
+        g.setColour (theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtPan (strip.pan), x, kcy - 16, kKnobColW, 14,
+                    juce::Justification::centred);
+
+        g.setColour (theme.darkBar.darker (0.3f));
+        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, 0.0f);   // flat, square corners
+        g.setColour (theme.foreground.withAlpha (0.18f));
+        g.drawVerticalLine (centreX, (float)sliderY, (float)(sliderY + sliderH));
+        if (std::abs (strip.pan) > 0.005f)
+        {
+            const int fillX = (strip.pan < 0.f) ? thumbX : centreX;
+            const int fillW = std::abs (thumbX - centreX);
+            if (fillW > 0)
+            {
+                g.setColour (fillCol.withAlpha (0.35f));
+                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f);   // flat, square corners
+            }
+        }
+        g.setColour (fillCol.withAlpha (0.22f));
+        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), 0.0f);
+        g.setColour (fillCol.withAlpha (0.85f));
+        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), 0.0f);
+        g.setColour (theme.darkBar.darker (0.5f).withAlpha (0.6f));
+        g.drawVerticalLine (thumbX, (float)(sliderY - 1), (float)(sliderY + sliderH + 1));
+    }
+
+    // Mute button — small badge in FCUT column
+    {
+        const int x  = colX (ColFcut);
+        const int cx = x + kKnobColW / 2;
+        const juce::Rectangle<float> r ((float)(cx - 12), (float)(kcy - 8), 24.f, 16.f);
+        const bool muted = strip.muted;
+        g.setColour (muted ? theme.accent.withAlpha (0.25f) : theme.separator.withAlpha (0.2f));
+        g.fillRect (r);
+        g.setColour (muted ? theme.accent : theme.foreground.withAlpha (0.30f));
+        g.drawRect (r, 0.8f);
+        g.setFont (DysektLookAndFeel::makeFont (10.0f));
+        g.setColour (muted ? theme.accent : theme.foreground.withAlpha (0.30f));
+        g.drawText ("M", r.toNearestInt(), juce::Justification::centred);
+    }
+
+    // Remaining columns — dashes
+    g.setFont (DysektLookAndFeel::makeFont (10.0f));
+    g.setColour (theme.foreground.withAlpha (0.12f));
+    for (int i = ColPres; i < kNumCols; ++i)
+        g.drawText ("—", colX ((Col)i), ry, kKnobColW, kSf2ChRowH, juce::Justification::centred);
+
+    // Per-channel peak meter (same column as slice meters, after OUT)
+    {
+        const int mx = colX (ColOut) + kKnobColW + 4;
+        const int mw = getWidth() - mx - 6;
+        if (mw > 20)
+        {
+            // Hold slot: use kMaxHoldSlices - 3 - channel (channels 0-15 get
+            // slots kMaxHoldSlices-3 down to kMaxHoldSlices-18; safely within
+            // the 128-slot array since slice rows use 0..N-1, sf2 header uses
+            // kMaxHoldSlices-2, master uses kMaxHoldSlices-1).
+            const int holdSlot = kMaxHoldSlices - 3 - channel;
+            const float pkL = processor.sfzPlayer.channelPeakL[channel]
+                                  .load (std::memory_order_relaxed);
+            const float pkR = processor.sfzPlayer.channelPeakR[channel]
+                                  .load (std::memory_order_relaxed);
+            holdL[holdSlot] = std::max (holdL[holdSlot], pkL);
+            holdR[holdSlot] = std::max (holdR[holdSlot], pkR);
+            drawMeter (g, mx, ry + 3, mw, kSf2ChRowH - 6, pkL, pkR, chCol, holdSlot);
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Multisampler row (sfzPlayer2 — the real .sfz-file engine)
+// ─────────────────────────────────────────────────────────────────────────────
+// This row is what makes the mixer automatically grow a track the moment a
+// .sfz file is loaded in the Multisampler tab: sfz2TotalH() (and therefore
+// this row's very presence) is driven directly off processor.sfzPlayer2's
+// loaded state, so no explicit "add mixer track" step is ever needed.
+// (Label shown to the user is "MULTISAMPLER" — was "SFZ-PLAYER" prior to the
+// v27 rename; sfzPlayer2/drawSfz2Row/etc. keep their old internal names.)
+void MixerPanel::drawSfz2Row (juce::Graphics& g, int ry) const
+{
+    const auto& theme = getTheme();
+
+    // Background — same treatment as the SF2-PLAYER row, tinted to distinguish
+    // it from Master.
+    const int rgIns = ry + 1;
+    const int rgH   = kSf2RowH - 2;
+    g.setColour (theme.accent.withAlpha (0.06f));
+    g.fillRect (0, rgIns, getWidth(), rgH);
+    g.setColour (theme.accent.withAlpha (0.4f));
+    g.drawHorizontalLine (ry, 0.f, (float) getWidth());
+    g.drawHorizontalLine (ry + kSf2RowH - 1, 0.f, (float) getWidth());
+
+    // Label
+    g.setFont (DysektLookAndFeel::makeFont (11.0f, true));
+    g.setColour (theme.accent.withAlpha (0.75f));
+    g.drawText ("MULTISAMPLER", 10, ry, kNameColW - 10, kSf2RowH, juce::Justification::centredLeft);
+
+    const int kcy    = ry + kSf2RowH / 2;
+    const float volLin = processor.sfzPlayer2.getVolume();
+    const float volDb  = juce::Decibels::gainToDecibels (volLin, -100.f);
+    const float pan    = processor.sfzPlayer2.getPan();
+
+    // GAIN knob
+    {
+        const int x  = colX (ColGain);
+        const int cx = x + kKnobR + 8;
+        drawKnobInRow (g, cx, kcy, toNormGain (volDb), false, true, /*isGain=*/true);
+        const int knobEdge = cx + kKnobR;
+        const int divider   = x + kKnobColW;
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtGain (volDb), knobEdge, ry + 1, divider - knobEdge, kSf2RowH - 2,
+                    juce::Justification::centred);
+    }
+
+    // PAN slider
+    {
+        const int   x       = colX (ColPan);
+        const int   sliderX = x + 6;
+        const int   sliderW = kKnobColW - 12;
+        const int   sliderY = kcy + 5;   // slider below the label
+        const int   sliderH = 6;
+        const float norm    = toNormPan (pan);
+        const int   thumbX  = sliderX + (int)(norm * (float)sliderW);
+        const int   centreX = sliderX + sliderW / 2;
+        const auto  fillCol = theme.accent;
+
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtPan (pan), x, kcy - 20, kKnobColW, 16, juce::Justification::centred);
+
+        g.setColour (theme.darkBar.darker (0.3f));
+        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, 0.0f);
+        g.setColour (theme.foreground.withAlpha (0.18f));
+        g.drawVerticalLine (centreX, (float)sliderY, (float)(sliderY + sliderH));
+        if (std::abs (pan) > 0.005f)
+        {
+            const int fillX = (pan < 0.f) ? thumbX : centreX;
+            const int fillW = std::abs (thumbX - centreX);
+            if (fillW > 0) { g.setColour (fillCol.withAlpha (0.35f)); g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f); }
+        }
+        g.setColour (fillCol.withAlpha (0.22f));
+        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), 0.0f);
+        g.setColour (fillCol.withAlpha (0.85f));
+        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), 0.0f);
+        g.setColour (theme.darkBar.darker (0.5f).withAlpha (0.6f));
+        g.drawVerticalLine (thumbX, (float)(sliderY - 1), (float)(sliderY + sliderH + 1));
+    }
+
+    // Dash-fill columns that don't apply to the SFZ-Player
+    g.setFont (DysektLookAndFeel::makeFont (11.0f));
+    g.setColour (theme.foreground.withAlpha (0.15f));
+    for (int i = ColFcut; i < kNumCols; ++i)
+        g.drawText ("—", colX ((Col)i), ry, kKnobColW, kSf2RowH, juce::Justification::centred);
+
+    // Peak meter using sfz2PeakL/R from processor (this row's own engine, sfzPlayer2)
+    const int mx = colX (ColOut) + kKnobColW + 4;
+    const int mw = getWidth() - mx - 6;
+    if (mw > 20)
+    {
+        float pkL = processor.sfz2PeakL.load (std::memory_order_relaxed);
+        float pkR = processor.sfz2PeakR.load (std::memory_order_relaxed);
+        // Dedicated hold slot, distinct from the SF2-PLAYER row's slot
+        // (kMaxHoldSlices - 2), Master's (kMaxHoldSlices - 1), and the SF2
+        // per-channel slots (kMaxHoldSlices - 3 down to kMaxHoldSlices - 18,
+        // for up to 16 channels).
+        constexpr int kSfz2HoldSlot = kMaxHoldSlices - 19;
+        holdL[kSfz2HoldSlot] = std::max (holdL[kSfz2HoldSlot], pkL);
+        holdR[kSfz2HoldSlot] = std::max (holdR[kSfz2HoldSlot], pkR);
+        drawMeter (g, mx, ry + 4, mw, kSf2RowH - 8, pkL, pkR, theme.accent, kSfz2HoldSlot);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SFZ-Player per-zone sub-row (zone with showInMixer set on sliceManager2)
+// ─────────────────────────────────────────────────────────────────────────────
+void MixerPanel::drawSfz2ChannelRow (juce::Graphics& g, int ry, int zoneIdx) const
+{
+    const auto& theme = getTheme();
+    const auto& snap2 = processor.getUiSliceSnapshot2();
+    if (zoneIdx < 0 || zoneIdx >= snap2.numSlices)
+    {
+        processor.releaseUiSliceSnapshot2();
+        return;
+    }
+    const auto& sl = snap2.slices[(size_t) zoneIdx];
+
+    // Background — alternating shade, matching drawSf2ChannelRow's treatment.
+    const int rgIns = ry + 1;
+    const int rgH   = kSf2ChRowH - 2;
+    const bool even = (zoneIdx % 2 == 0);
+    const bool selectedZone = sl.zoneLoKey >= 0
+        && sl.zoneLoKey == selectedSfzZoneLo && sl.zoneHiKey == selectedSfzZoneHi;
+    g.setColour (selectedZone ? theme.accent.withAlpha (0.20f)
+                              : (even ? theme.darkBar.brighter (0.04f)
+                                      : theme.darkBar.brighter (0.02f)));
+    g.fillRect (0, rgIns, getWidth(), rgH);
+
+    g.setColour (theme.accent.withAlpha (selectedZone ? 1.0f : 0.6f));
+    g.fillRect (0, rgIns, selectedZone ? 4 : 3, rgH);
+
+    g.setColour (theme.separator.withAlpha (0.4f));
+    g.drawHorizontalLine (ry, 0.f, (float) getWidth());
+    g.drawHorizontalLine (ry + kSf2ChRowH - 1, 0.f, (float) getWidth());
+
+    const int kcy = ry + kSf2ChRowH / 2;
+
+    // Name column — for a real zone (zoneLoKey >= 0) show the key range
+    // this merged row actually covers (e.g. "C3-G3", or just "C3" for a
+    // single-key zone) rather than one arbitrary sibling's sample name,
+    // since the row now represents every key/layer in the zone, not just
+    // the representative slice it happens to be drawn from. Slices with no
+    // real zone identity (zoneLoKey == -1) fall back to the sample name,
+    // same as before.
+    g.setFont (DysektLookAndFeel::makeFont (11.0f));
+    g.setColour (theme.foreground.withAlpha (0.55f));
+    const juce::String nameStr = sl.zoneLoKey >= 0
+        ? SfzZoneLabel::range (sl.zoneLoKey, sl.zoneHiKey)
+        : (sl.name.isNotEmpty() ? sl.name.substring (0, 14)
+                                 : ("Zone " + juce::String (zoneIdx + 1)));
+    g.drawText (nameStr, 6, ry, kNameColW - 8, kSf2ChRowH, juce::Justification::centredLeft);
+
+    const float volDb = sl.volume;
+    const float pan   = sl.pan;
+
+    // GAIN knob
+    {
+        const int x  = colX (ColGain);
+        const int cx = x + kKnobR + 8;
+        drawKnobInRow (g, cx, kcy, toNormGain (volDb), false, false, /*isGain=*/true);
+        const int knobEdge = cx + kKnobR;
+        const int divider   = x + kKnobColW;
+        g.setFont (DysektLookAndFeel::makeFont (14.0f));
+        g.setColour (theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtGain (volDb), knobEdge, ry + 1, divider - knobEdge, kSf2ChRowH - 2,
+                    juce::Justification::centred);
+    }
+
+    // PAN slider
+    {
+        const int   x       = colX (ColPan);
+        const int   sliderX = x + 6;
+        const int   sliderW = kKnobColW - 12;
+        const int   sliderY = kcy + 4;
+        const int   sliderH = 6;
+        const float norm    = toNormPan (pan);
+        const int   thumbX  = sliderX + (int)(norm * (float)sliderW);
+        const int   centreX = sliderX + sliderW / 2;
+        const auto  fillCol = theme.accent;
+
+        g.setFont (DysektLookAndFeel::makeFont (14.0f));
+        g.setColour (theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtPan (pan), x, kcy - 16, kKnobColW, 14,
+                    juce::Justification::centred);
+
+        g.setColour (theme.darkBar.darker (0.3f));
+        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, 0.0f);
+        g.setColour (theme.foreground.withAlpha (0.18f));
+        g.drawVerticalLine (centreX, (float)sliderY, (float)(sliderY + sliderH));
+        if (std::abs (pan) > 0.005f)
+        {
+            const int fillX = (pan < 0.f) ? thumbX : centreX;
+            const int fillW = std::abs (thumbX - centreX);
+            if (fillW > 0)
+            {
+                g.setColour (fillCol.withAlpha (0.35f));
+                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f);
+            }
+        }
+        g.setColour (fillCol.withAlpha (0.22f));
+        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), 0.0f);
+        g.setColour (fillCol.withAlpha (0.85f));
+        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), 0.0f);
+        g.setColour (theme.darkBar.darker (0.5f).withAlpha (0.6f));
+        g.drawVerticalLine (thumbX, (float)(sliderY - 1), (float)(sliderY + sliderH + 1));
+    }
+
+    // Remaining columns — dashes (only GAIN/PAN are editable for a zone row,
+    // matching the aggregate SFZ-Player row's own restriction).
+    g.setFont (DysektLookAndFeel::makeFont (10.0f));
+    g.setColour (theme.foreground.withAlpha (0.12f));
+    for (int i = ColFcut; i < kNumCols; ++i)
+        g.drawText ("—", colX ((Col)i), ry, kKnobColW, kSf2ChRowH, juce::Justification::centred);
+
+    // Per-zone peak meter — real per-voice peaks written by processBlock
+    // into slicePeak2L/R (indexed by voicePool2's sliceIdx), same source the
+    // Slicer's own per-slice meters use via slicePeakL/R. No longer reusing
+    // the aggregate sfzPlayer2 peak now that the real per-zone data exists.
+    //
+    // This row now represents every key/layer in the zone (see
+    // collectVisibleSfzZones), not just the one representative slice it's
+    // drawn from — a single sample sounding within the zone should still
+    // light this meter up, so aggregate (max, not sum — these are peaks,
+    // not a mix bus) across every sibling sharing zoneIdx's
+    // zoneLoKey/zoneHiKey. Slices with no real zone identity
+    // (zoneLoKey == -1) fall back to just their own peak, same as before.
+    {
+        const int mx = colX (ColOut) + kKnobColW + 4;
+        const int mw = getWidth() - mx - 6;
+        if (mw > 20 && zoneIdx >= 0 && zoneIdx < kMaxMeterSlices)
+        {
+            float pkL = 0.f, pkR = 0.f;
+            if (sl.zoneLoKey >= 0)
+            {
+                for (int i = 0; i < snap2.numSlices; ++i)
+                {
+                    const auto& sib = snap2.slices[(size_t) i];
+                    if (! sfzSlicesShareZone (sib, sl))
+                        continue;
+                    if (i < 0 || i >= kMaxMeterSlices)
+                        continue;
+                    pkL = std::max (pkL, processor.slicePeak2L[(size_t) i].load (std::memory_order_relaxed));
+                    pkR = std::max (pkR, processor.slicePeak2R[(size_t) i].load (std::memory_order_relaxed));
+                }
+            }
+            else
+            {
+                pkL = processor.slicePeak2L[(size_t) zoneIdx].load (std::memory_order_relaxed);
+                pkR = processor.slicePeak2R[(size_t) zoneIdx].load (std::memory_order_relaxed);
+            }
+            // Hold slots below the aggregate row's kMaxHoldSlices-19, one per
+            // visible zone row — kMaxHoldSlices-20 downward.
+            const int holdSlot = juce::jmax (0, kMaxHoldSlices - 20 - zoneIdx);
+            holdL[holdSlot] = std::max (holdL[holdSlot], pkL);
+            holdR[holdSlot] = std::max (holdR[holdSlot], pkR);
+            drawMeter (g, mx, ry + 3, mw, kSf2ChRowH - 6, pkL, pkR, theme.accent, holdSlot);
+        }
+    }
+
+    processor.releaseUiSliceSnapshot2();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  timerCallback — hold decay + Network Audio meter polling
+// ─────────────────────────────────────────────────────────────────────────────
+void MixerPanel::timerCallback()
+{
+    static constexpr float kHoldDecay = 0.94f;   // ~40 dB/s visual falloff
+    bool anyHeld = false;
+    for (int i = 0; i < kTotalHoldSlots; ++i)
+    {
+        holdL[i] *= kHoldDecay;
+        holdR[i] *= kHoldDecay;
+        if (holdL[i] > 0.001f || holdR[i] > 0.001f) anyHeld = true;
+    }
+
+    // Network Audio levels come from the existing NetworkTrackMeters infrastructure
+    // (pushed from NetworkAudioProcessor::processBlock). The Mixer uses its own read
+    // cursor so it never steals peaks from the Arranger's header meters.
+    const int numTracks = juce::jmin (processor.sequencer.getNumTracks(), NetworkTrackMeters::kMaxTracks);
+    for (int i = 0; i < NetworkTrackMeters::kMaxTracks; ++i)
+    {
+        float pkL = 0.f, pkR = 0.f;
+        if (i < numTracks && processor.sequencer.isNetworkAudioTrack (i))
+        {
+            const auto r = NetworkTrackMeters::consume (i, NetworkTrackMeters::kReaderMixer);
+            pkL = r.left;
+            pkR = r.stereo ? r.right : r.left;
+        }
+        netPeakL[(size_t) i] = pkL;
+        netPeakR[(size_t) i] = pkR;
+        if (pkL > 0.001f || pkR > 0.001f) anyHeld = true;
+    }
+
+    // Keep the meter animation running continuously. The live fill is
+    // smoothed in drawMeter(), so repainting at the existing 30 Hz timer rate
+    // produces a stable, fluid bar instead of blinking raw peak snapshots.
+    repaint();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Network Audio track row
+// ─────────────────────────────────────────────────────────────────────────────
+void MixerPanel::drawNetworkRow (juce::Graphics& g, int ry, int trackIndex, int netRowIdx) const
+{
+    const auto& theme = getTheme();
+    const auto info = processor.sequencer.getTrackInfo (trackIndex);   // the single source of truth
+    const bool muted = ! info.enabled;
+
+    // Background — tinted like the other player rows, with the track colour as a left stripe
+    const int rgIns = ry + 1;
+    const int rgH   = kNetRowH - 2;
+    g.setColour (theme.accent.withAlpha (0.06f));
+    g.fillRect (0, rgIns, getWidth(), rgH);
+    g.setColour (info.colour.withAlpha (0.85f));
+    g.fillRect (0, rgIns, 3, rgH);
+    g.setColour (theme.accent.withAlpha (0.4f));
+    g.drawHorizontalLine (ry, 0.f, (float) getWidth());
+    g.drawHorizontalLine (ry + kNetRowH - 1, 0.f, (float) getWidth());
+
+    // Name column: "NETWORK" caption over the network source / track name
+    g.setFont (DysektLookAndFeel::makeFont (9.0f, true));
+    g.setColour (theme.accent.withAlpha (0.75f));
+    g.drawText ("NETWORK", 10, ry + 8, kNameColW - 12, 12, juce::Justification::centredLeft);
+    g.setFont (DysektLookAndFeel::makeFont (11.0f));
+    g.setColour (theme.foreground.withAlpha (muted ? 0.35f : 0.75f));
+    g.drawText (info.name.isNotEmpty() ? info.name : juce::String ("Audio ") + juce::String (trackIndex + 1),
+                10, ry + 22, kNameColW - 12, 16, juce::Justification::centredLeft, true);
+
+    const int kcy = ry + kNetRowH / 2;
+    const float volDb = info.volumeDb;
+    const float pan   = info.pan;
+
+    // GAIN knob
+    {
+        const int x  = colX (ColGain);
+        const int cx = x + kKnobR + 8;
+        drawKnobInRow (g, cx, kcy, toNormGain (volDb), false, false, /*isGain=*/true);
+        const int knobEdge = cx + kKnobR;
+        const int divider  = x + kKnobColW;
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtGain (volDb), knobEdge, ry + 1, divider - knobEdge, kNetRowH - 2,
+                    juce::Justification::centred);
+    }
+
+    // PAN slider (a balance control for stereo routes — same state the renderer reads)
+    {
+        const int   x       = colX (ColPan);
+        const int   sliderX = x + 6;
+        const int   sliderW = kKnobColW - 12;
+        const int   sliderY = kcy + 5;
+        const int   sliderH = 6;
+        const float norm    = toNormPan (pan);
+        const int   thumbX  = sliderX + (int) (norm * (float) sliderW);
+        const int   centreX = sliderX + sliderW / 2;
+        const auto  fillCol = theme.accent;
+
+        g.setFont (DysektLookAndFeel::makeFont (16.0f));
+        g.setColour (theme.foreground.withAlpha (0.40f));
+        g.drawText (fmtPan (pan), x, kcy - 20, kKnobColW, 16, juce::Justification::centred);
+
+        g.setColour (theme.darkBar.darker (0.3f));
+        g.fillRect ((float) sliderX, (float) sliderY, (float) sliderW, (float) sliderH);
+        g.setColour (theme.foreground.withAlpha (0.18f));
+        g.drawVerticalLine (centreX, (float) sliderY, (float) (sliderY + sliderH));
+        if (std::abs (pan) > 0.005f)
+        {
+            const int fillX = (pan < 0.f) ? thumbX : centreX;
+            const int fillW = std::abs (thumbX - centreX);
+            if (fillW > 0) { g.setColour (fillCol.withAlpha (0.35f)); g.fillRect ((float) fillX, (float) (sliderY + 1), (float) fillW, (float) (sliderH - 2)); }
+        }
+        g.setColour (fillCol.withAlpha (0.22f));
+        g.fillRect ((float) (thumbX - 5), (float) (sliderY - 4), 10.f, (float) (sliderH + 8));
+        g.setColour (fillCol.withAlpha (0.85f));
+        g.fillRect ((float) (thumbX - 2), (float) (sliderY - 1), 4.f, (float) (sliderH + 2));
+    }
+
+    // MUTE badge — FCUT column, same place as the SF2 channel rows
+    {
+        const int x  = colX (ColFcut);
+        const int cx = x + kKnobColW / 2;
+        const juce::Rectangle<float> r ((float) (cx - 12), (float) (kcy - 8), 24.f, 16.f);
+        g.setColour (muted ? theme.accent.withAlpha (0.25f) : theme.separator.withAlpha (0.2f));
+        g.fillRect (r);
+        g.setColour (muted ? theme.accent : theme.foreground.withAlpha (0.30f));
+        g.drawRect (r, 0.8f);
+        g.setFont (DysektLookAndFeel::makeFont (10.0f));
+        g.drawText ("M", r.toNearestInt(), juce::Justification::centred);
+    }
+
+    // Remaining columns do not apply to a network audio track
+    g.setFont (DysektLookAndFeel::makeFont (10.0f));
+    g.setColour (theme.foreground.withAlpha (0.12f));
+    for (int i = ColPres; i < kNumCols; ++i)
+        g.drawText (juce::String::fromUTF8 ("\xe2\x80\x94"), colX ((Col) i), ry, kKnobColW, kNetRowH,
+                    juce::Justification::centred);
+
+    // Live meter: post-fader/pan peaks pushed by NetworkAudioProcessor::processBlock()
+    const int mx = colX (ColOut) + kKnobColW + 4;
+    const int mw = getWidth() - mx - 6;
+    if (mw > 20 && trackIndex >= 0 && trackIndex < NetworkTrackMeters::kMaxTracks)
+    {
+        const float pkL = netPeakL[(size_t) trackIndex];
+        const float pkR = netPeakR[(size_t) trackIndex];
+        const int holdSlot = kNetHoldBase + trackIndex;
+        holdL[holdSlot] = std::max (holdL[holdSlot], pkL);
+        holdR[holdSlot] = std::max (holdR[holdSlot], pkR);
+        drawMeter (g, mx, ry + 4, mw, kNetRowH - 8, pkL, pkR, info.colour, holdSlot);
+    }
+    juce::ignoreUnused (netRowIdx);
+}
+
+void MixerPanel::paint (juce::Graphics& g)
+{
+    const auto& theme = getTheme();
+    const auto& snap  = processor.getUiSliceSnapshot();
+
+    // ── LCD-style frame — flat, square-cornered, no gradient, no glow ───────
+    {
+        auto b = getLocalBounds();
+
+        g.setColour (theme.waveformBg);
+        g.fillRoundedRectangle (b.toFloat(), 0.0f);
+        g.setColour (theme.separator);
+        g.drawRoundedRectangle (b.toFloat().reduced (0.5f), 0.0f, 1.0f);
+
+        auto screen = b.reduced (4);
+        g.setColour (theme.darkBar.darker (0.55f));
+        g.fillRoundedRectangle (screen.toFloat(), 0.0f);
+
+        g.setColour (juce::Colours::black.withAlpha (0.18f));
+        for (int y = screen.getY(); y < screen.getBottom(); y += 2)
+            g.drawHorizontalLine (y, (float) screen.getX(), (float) screen.getRight());
+    }
+
+    // Clip ALL content to inner screen rect so the frame border is never overwritten
+    g.saveState();
+    g.reduceClipRegion (getLocalBounds().reduced (4));
+
+    {
+        const auto visible = collectVisibleSlices (snap);
+        for (int r = 0; r < (int) visible.size(); ++r)
+        {
+            const int realIdx = visible[(size_t) r];
+            drawSliceRow (g, rowY (r), realIdx, realIdx == snap.selectedSlice);
+        }
+    }
+
+    drawSf2Row    (g, sf2RowY());
+    if (sfz2TotalH() > 0)
+    {
+        drawSfz2Row (g, sfz2RowY());
+        const auto& snap2 = processor.getUiSliceSnapshot2();
+        const auto  visibleZones = collectVisibleSfzZones (snap2);
+        processor.releaseUiSliceSnapshot2();
+        for (int i = 0; i < (int) visibleZones.size(); ++i)
+            drawSfz2ChannelRow (g, sfz2ChRowY (i), visibleZones[(size_t) i]);
+    }
+    {
+        const auto netTracks = collectNetworkTracks();
+        for (int i = 0; i < (int) netTracks.size(); ++i)
+            drawNetworkRow (g, netRowY (i), netTracks[(size_t) i], i);
+    }
+    drawMasterRow (g, masterRowY());
+
+    // Column dividers
+    g.setColour (theme.accent.withAlpha (0.12f));
+    g.drawVerticalLine (kNameColW - 1, 0.f, (float) getHeight());
+    for (int i = 1; i < kNumCols; ++i)
+        g.drawVerticalLine (colX ((Col)i) - 1, (float) kHeaderH, (float) getHeight());
+
+    // Meter column separator
+    {
+        const int mx = colX (ColOut) + kKnobColW;
+        g.setColour (theme.accent.withAlpha (0.12f));
+        g.drawVerticalLine (mx + 2, (float) kHeaderH, (float) getHeight());
+        g.setFont (DysektLookAndFeel::makeFont (12.0f));
+        g.setColour (theme.foreground.withAlpha (0.22f));
+        g.drawText ("METER", mx + 6, 0, kMeterColW - 8, kHeaderH, juce::Justification::centredLeft);
+    }
+
+    drawHeader (g);
+
+    g.restoreState();
+}
+
+void MixerPanel::resized() {}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Mouse
+// ─────────────────────────────────────────────────────────────────────────────
+void MixerPanel::mouseDown (const juce::MouseEvent& e)
+{
+    if (textEditor) { textEditor.reset(); repaint(); }
+
+    const auto& snap = processor.getUiSliceSnapshot();
+    const Cell c = hitTest (e.getPosition());
+
+    // Any click on a slice / SF-PLAYER / SFZ-PLAYER row switches the main UI
+    // to that track's player. Master row is excluded — it's the overall
+    // output, not a player. See onTrackSelected doc comment for uiMode values.
+    if (onTrackSelected)
+    {
+        if (c.row >= 0 && c.row < snap.numSlices) onTrackSelected (0);
+        else if (c.isSfz2 || c.isSfz2Ch)           onTrackSelected (1);
+        else if (c.isSf2 || c.isSf2Ch)             onTrackSelected (2);
+    }
+
+    // Network Audio track row: operates directly on the SequencerEngine track (the same
+    // state the Arranger header and NetworkAudioProcessor use). Always returns, so the
+    // slice/SF2/SFZ handling below can never see a network row.
+    if (c.isNet)
+    {
+        if (c.bounds.isEmpty())                      // name column — nothing to do
+            return;
+
+        auto& seq = processor.sequencer;
+        if (c.col == ColFcut)                        // MUTE badge (same column as SF2 channel rows)
+        {
+            const auto info = seq.getTrackInfo (c.netTrack);
+            seq.setTrackEnabled (c.netTrack, ! info.enabled);   // enabled == not muted
+            repaint();
+            return;
+        }
+
+        if (c.col != ColGain && c.col != ColPan)
+            return;
+
+        const auto info = seq.getTrackInfo (c.netTrack);
+        drag.active      = true;
+        drag.isNet       = true;
+        drag.netTrack    = c.netTrack;
+        drag.isMaster    = drag.isSf2 = drag.isSf2Ch = drag.isSfz2 = drag.isSfz2Ch = false;
+        drag.col         = c.col;
+        drag.startY      = (c.col == ColPan) ? e.getScreenPosition().x : e.getScreenPosition().y;
+        drag.startVal    = (c.col == ColGain) ? info.volumeDb : info.pan;
+        return;
+    }
+
+    // Selecting an SF2 channel strip also focuses that channel's arranger
+    // track (any click within the row, not just the mute badge below).
+    if (c.isSf2Ch && onSf2ChannelSelected)
+        onSf2ChannelSelected (c.sf2Channel);
+
+    // Clicking a zone's sub-row selects that zone on sliceManager2, exactly
+    // like clicking a Slicer row selects it on sliceManager (see the
+    // targetEngine2 branch of CmdSelectSlice).
+    if (c.isSfz2Ch)
+    {
+        const auto& zoneSnap = processor.getUiSliceSnapshot2();
+        if (c.sfz2ZoneIdx >= 0 && c.sfz2ZoneIdx < zoneSnap.numSlices)
+        {
+            const auto& zone = zoneSnap.slices[(size_t) c.sfz2ZoneIdx];
+            if (onSfzZoneSelected && zone.zoneLoKey >= 0)
+                onSfzZoneSelected (zone.zoneLoKey, zone.zoneHiKey);
+        }
+        processor.releaseUiSliceSnapshot2();
+
+        DysektProcessor::Command sel;
+        sel.type          = DysektProcessor::CmdSelectSlice;
+        sel.intParam1     = c.sfz2ZoneIdx;
+        sel.targetEngine2 = true;
+        processor.pushCommand (sel);
+    }
+
+    // Click on name column (c.row == -2) or anywhere in a valid row → select slice
+    if (c.row >= 0 && c.row < snap.numSlices)
+    {
+        // Always select the clicked row
+        DysektProcessor::Command sel;
+        sel.type = DysektProcessor::CmdSelectSlice;
+        sel.intParam1 = c.row;
+        processor.pushCommand (sel);
+
+        // If click was in the name column, don't start a drag
+        if (c.row == -2) { repaint(); return; }
+    }
+
+    if (!c.isMaster && !c.isSf2 && !c.isSf2Ch && !c.isSfz2 && !c.isSfz2Ch && (c.row < 0 || c.row >= snap.numSlices)) return;
+
+    // SF2 channel mute toggle — ColFcut column holds the M badge
+    if (c.isSf2Ch && c.col == ColFcut)
+    {
+        const auto strip = processor.sfzPlayer.getChannelStrip (c.sf2Channel);
+        const bool newMuted = ! strip.muted;
+        processor.sfzPlayer.setChannelMuted (c.sf2Channel, newMuted);
+        if (onSf2ChannelMuted) onSf2ChannelMuted (c.sf2Channel, newMuted);
+        repaint(); return;
+    }
+
+    // Mute group — cycle on click (no drag)
+    if (c.col == ColMute)
+    {
+        if (!c.isMaster && !c.isSf2 && !c.isSf2Ch && !c.isSfz2 && !c.isSfz2Ch)
+        {
+            const auto& sl = snap.slices[(size_t) c.row];
+            int next = (sl.muteGroup + 1);
+            if (next > 32) next = 0;
+            DysektProcessor::Command cmd;
+            cmd.type = DysektProcessor::CmdSetSliceParam;
+            cmd.intParam1 = DysektProcessor::FieldMuteGroup;
+            cmd.floatParam1 = (float) next;
+            processor.pushCommand (cmd);
+        }
+        repaint(); return;
+    }
+
+    // CHRO — cycle channel 0→1→2→...→16→0 on click
+    if (c.col == ColChro)
+    {
+        if (!c.isMaster && !c.isSf2 && !c.isSf2Ch && !c.isSfz2 && !c.isSfz2Ch)
+        {
+            const auto& sl = snap.slices[(size_t) c.row];
+            if (e.mods.isRightButtonDown())
+            {
+                // Right-click: toggle chromatic channel lock
+                DysektProcessor::Command cmd;
+                cmd.type      = DysektProcessor::CmdToggleLock;
+                cmd.intParam1 = (int) kLockChromaticChannel;
+                processor.pushCommand (cmd);
+            }
+            else
+            {
+                // Left-click: cycle channel 0→1→...→16→0, skipping channels
+                // owned by the SF player.  Use savedSfPlayerChannelMask so the
+                // exclusion works even while sfPlayerChannelMask is zeroed in
+                // Slicer mode.  Channel 0 (Off) is always reachable.
+                const uint32_t sfMask =
+                    processor.savedSfPlayerChannelMask.load (std::memory_order_relaxed);
+                int next = sl.chromaticChannel;
+                do { next = (next + 1) % 17; }
+                while (next != 0 && sfMask != 0 && (sfMask & (1u << next)));
+                DysektProcessor::Command cmd;
+                cmd.type = DysektProcessor::CmdSetSliceParam;
+                cmd.intParam1 = DysektProcessor::FieldChromaticChannel;
+                cmd.floatParam1 = (float) next;
+                processor.pushCommand (cmd);
+            }
+        }
+        repaint(); return;
+    }
+
+    // OUT — cycle on click
+    if (c.col == ColLegato)
+    {
+        if (!c.isMaster && !c.isSf2 && !c.isSf2Ch && !c.isSfz2 && !c.isSfz2Ch)
+        {
+            const auto& sl = snap.slices[(size_t) c.row];
+            if (e.mods.isRightButtonDown())
+            {
+                DysektProcessor::Command cmd;
+                cmd.type      = DysektProcessor::CmdToggleLock;
+                cmd.intParam1 = (int) kLockChromaticLegato;
+                processor.pushCommand (cmd);
+            }
+            else
+            {
+                DysektProcessor::Command cmd;
+                cmd.type        = DysektProcessor::CmdSetSliceParam;
+                cmd.intParam1   = DysektProcessor::FieldChromaticLegato;
+                cmd.floatParam1 = sl.chromaticLegato ? 0.0f : 1.0f;
+                processor.pushCommand (cmd);
+            }
+        }
+        repaint(); return;
+    }
+
+    if (c.col == ColOut)
+    {
+        if (!c.isMaster && !c.isSf2 && !c.isSf2Ch && !c.isSfz2 && !c.isSfz2Ch)
+        {
+            const auto& sl = snap.slices[(size_t) c.row];
+            int next = (sl.outputBus + 1) % 16;
+            DysektProcessor::Command cmd;
+            cmd.type = DysektProcessor::CmdSetSliceParam;
+            cmd.intParam1 = DysektProcessor::FieldOutputBus;
+            cmd.floatParam1 = (float) next;
+            processor.pushCommand (cmd);
+        }
+        repaint(); return;
+    }
+
+    // Begin knob drag
+    drag.active    = true;
+    drag.isMaster  = c.isMaster;
+    drag.isSf2     = c.isSf2;
+    drag.isSf2Ch   = c.isSf2Ch;
+    drag.isSfz2    = c.isSfz2;
+    drag.isSfz2Ch  = c.isSfz2Ch;
+    drag.sf2Channel= c.sf2Channel;
+    drag.sliceIdx  = c.row;
+    drag.sfz2ZoneIdx = c.sfz2ZoneIdx;
+    drag.col       = c.col;
+    drag.startY    = (c.col == ColPan) ? e.getScreenPosition().x : e.getScreenPosition().y;
+
+    if (c.isSf2Ch)
+    {
+        const auto strip = processor.sfzPlayer.getChannelStrip (c.sf2Channel);
+        if (c.col == ColGain)
+            drag.startVal = juce::Decibels::gainToDecibels (strip.volume, -100.f);
+        else if (c.col == ColPan)
+            drag.startVal = strip.pan;
+        else
+            drag.active = false;
+    }
+    else if (c.isSf2)
+    {
+        if (c.col == ColGain)
+            drag.startVal = juce::Decibels::gainToDecibels (processor.sfzPlayer.getVolume(), -100.f);
+        else if (c.col == ColPan)
+            drag.startVal = processor.sfzPlayer.getPan();
+        else
+            drag.active = false;  // other columns are not interactive
+    }
+    else if (c.isSfz2)
+    {
+        if (c.col == ColGain)
+            drag.startVal = juce::Decibels::gainToDecibels (processor.sfzPlayer2.getVolume(), -100.f);
+        else if (c.col == ColPan)
+            drag.startVal = processor.sfzPlayer2.getPan();
+        else
+            drag.active = false;  // other columns are not interactive
+    }
+    else if (c.isSfz2Ch)
+    {
+        const auto& snap2 = processor.getUiSliceSnapshot2();
+        if (c.sfz2ZoneIdx >= 0 && c.sfz2ZoneIdx < snap2.numSlices)
+        {
+            const auto& zsl = snap2.slices[(size_t) c.sfz2ZoneIdx];
+            if (c.col == ColGain)      drag.startVal = zsl.volume;
+            else if (c.col == ColPan)  drag.startVal = zsl.pan;
+            else                       drag.active = false;
+        }
+        else drag.active = false;
+        processor.releaseUiSliceSnapshot2();
+    }
+    else if (c.isMaster)
+    {
+        drag.startVal = (c.col == ColGain)
+            ? processor.apvts.getRawParameterValue (ParamIds::masterVolume)->load()
+            : processor.apvts.getRawParameterValue (ParamIds::defaultPan)->load();
+    }
+    else
+    {
+        const auto& sl = snap.slices[(size_t) c.row];
+        switch (c.col)
+        {
+            case ColGain: drag.startVal = sl.volume;       break;
+            case ColPan:  drag.startVal = sl.pan;          break;
+            case ColFcut: drag.startVal = sl.filterCutoff; break;
+            case ColPres: drag.startVal = sl.filterRes;    break;
+            default:      drag.startVal = 0.f;             break;
+        }
+    }
+}
+
+void MixerPanel::mouseDrag (const juce::MouseEvent& e)
+{
+    if (!drag.active) return;
+
+    const float dy       = (float)(drag.startY - e.getScreenPosition().y);
+    const float dx       = (float)(e.getScreenPosition().x - drag.startY);  // for pan slider
+    const bool  fine     = e.mods.isShiftDown();
+    const float fineMult = fine ? 0.1f : 1.0f;
+
+    float newVal = drag.startVal;
+
+    if (drag.isNet)
+    {
+        auto& seq = processor.sequencer;
+        if (drag.col == ColGain)
+        {
+            // Same -60..+6 dB range as the Arranger's TrackInspector slider.
+            seq.setTrackVolumeDb (drag.netTrack, juce::jlimit (-60.f, 6.f, drag.startVal + dy * 0.5f * fineMult));
+        }
+        else if (drag.col == ColPan)
+        {
+            seq.setTrackPan (drag.netTrack, juce::jlimit (-1.f, 1.f, drag.startVal + dx * 0.01f * fineMult));
+        }
+        repaint(); return;
+    }
+
+    if (drag.isSf2Ch)
+    {
+        if (drag.col == ColGain)
+        {
+            const float newDb = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            processor.sfzPlayer.setChannelVolume (drag.sf2Channel,
+                juce::Decibels::decibelsToGain (newDb, -100.f));
+        }
+        else if (drag.col == ColPan)
+        {
+            processor.sfzPlayer.setChannelPan (drag.sf2Channel,
+                juce::jlimit (-1.f, 1.f, drag.startVal + dx * 0.01f * fineMult));
+        }
+        repaint(); return;
+    }
+
+    if (drag.isSf2)
+    {
+        if (drag.col == ColGain)
+        {
+            const float newDb  = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            processor.sfzPlayer.setVolume (juce::Decibels::decibelsToGain (newDb, -100.f));
+        }
+        else if (drag.col == ColPan)
+        {
+            processor.sfzPlayer.setPan (juce::jlimit (-1.f, 1.f, drag.startVal + dx * 0.01f * fineMult));
+        }
+        repaint(); return;
+    }
+
+    if (drag.isSfz2)
+    {
+        if (drag.col == ColGain)
+        {
+            const float newDb  = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            processor.sfzPlayer2.setVolume (juce::Decibels::decibelsToGain (newDb, -100.f));
+        }
+        else if (drag.col == ColPan)
+        {
+            processor.sfzPlayer2.setPan (juce::jlimit (-1.f, 1.f, drag.startVal + dx * 0.01f * fineMult));
+        }
+        repaint(); return;
+    }
+
+    if (drag.isMaster)
+    {
+        if (drag.col == ColGain)
+        {
+            newVal = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            processor.apvts.getRawParameterValue (ParamIds::masterVolume)->store (newVal);
+        }
+        else if (drag.col == ColPan)
+        {
+            newVal = juce::jlimit (-1.f, 1.f, drag.startVal + dx * 0.01f * fineMult);
+            processor.apvts.getRawParameterValue (ParamIds::defaultPan)->store (newVal);
+        }
+        repaint(); return;
+    }
+
+    if (drag.isSfz2Ch)
+    {
+        // The zone was already selected on sliceManager2 in mouseDown, so
+        // CmdSetSliceParam{targetEngine2=true} lands on the right zone.
+        // zoneWide=true propagates GAIN/PAN to every sibling slice in the
+        // zone (see Command::zoneWide) — this merged row now represents
+        // the whole zone, not just the representative slice it drags.
+        DysektProcessor::Command cmd2;
+        cmd2.type          = DysektProcessor::CmdSetSliceParam;
+        cmd2.targetEngine2 = true;
+        cmd2.zoneWide      = true;
+        if (drag.col == ColGain)
+        {
+            newVal = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            cmd2.intParam1 = DysektProcessor::FieldVolume;
+        }
+        else if (drag.col == ColPan)
+        {
+            newVal = juce::jlimit (-1.f, 1.f, drag.startVal + dx * 0.01f * fineMult);
+            cmd2.intParam1 = DysektProcessor::FieldPan;
+        }
+        else { repaint(); return; }
+        cmd2.floatParam1 = newVal;
+        processor.pushCommand (cmd2);
+        repaint(); return;
+    }
+
+    DysektProcessor::Command cmd;
+    cmd.type = DysektProcessor::CmdSetSliceParam;
+
+    switch (drag.col)
+    {
+        case ColGain:
+            newVal = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            cmd.intParam1 = DysektProcessor::FieldVolume;
+            break;
+        case ColPan:
+            newVal = juce::jlimit (-1.f, 1.f, drag.startVal + dx * 0.01f * fineMult);
+            cmd.intParam1 = DysektProcessor::FieldPan;
+            break;
+        case ColFcut:
+        {
+            // Log-space drag: convert to norm, adjust, convert back
+            float normStart = toNormFcut (drag.startVal);
+            float normNew   = juce::jlimit (0.f, 1.f, normStart + dy * 0.005f * fineMult);
+            newVal = fromNormFcut (normNew);
+            cmd.intParam1 = DysektProcessor::FieldFilterCutoff;
+            break;
+        }
+        case ColPres:
+            newVal = juce::jlimit (0.f, 1.f, drag.startVal + dy * 0.005f * fineMult);
+            cmd.intParam1 = DysektProcessor::FieldFilterRes;
+            break;
+        default: return;
+    }
+
+    cmd.floatParam1 = newVal;
+    processor.pushCommand (cmd);
+    repaint();
+}
+
+void MixerPanel::mouseUp (const juce::MouseEvent&)
+{
+    drag.active = false;
+    drag.isNet  = false;
+}
+
+void MixerPanel::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    const Cell c = hitTest (e.getPosition());
+
+    // ── Name column double-click: open inline rename editor ─────────────────
+    if (! c.isMaster && c.row >= 0)
+    {
+        const auto& snap = processor.getUiSliceSnapshot();
+        if (c.row < snap.numSlices && e.getPosition().x < kNameColW)
+        {
+            const auto& sl = snap.slices[(size_t) c.row];
+            const auto& theme = getTheme();
+            const int displayRow = visibleRowOf (collectVisibleSlices (snap), c.row);
+            const int ry = rowY (displayRow >= 0 ? displayRow : 0);
+            const juce::Rectangle<int> nameArea (3, ry + 2, kNameColW - 6, kRowH - 4);
+
+            // Select the row first
+            DysektProcessor::Command sel;
+            sel.type = DysektProcessor::CmdSelectSlice;
+            sel.intParam1 = c.row;
+            processor.pushCommand (sel);
+
+            textEditor = std::make_unique<juce::TextEditor>();
+            addAndMakeVisible (*textEditor);
+            textEditor->setBounds (nameArea);
+            textEditor->setFont (DysektLookAndFeel::makeFont (11.0f));
+            textEditor->setColour (juce::TextEditor::backgroundColourId, theme.darkBar.brighter (0.15f));
+            textEditor->setColour (juce::TextEditor::textColourId,       theme.foreground);
+            textEditor->setColour (juce::TextEditor::outlineColourId,    theme.accent);
+            textEditor->setInputRestrictions (14);
+            textEditor->setText (sl.name, false);
+            textEditor->selectAll();
+            textEditor->grabKeyboardFocus();
+
+            const int rowIdx = c.row;
+            auto commit = [this, rowIdx]
+            {
+                if (! textEditor) return;
+                juce::String newName = textEditor->getText().trim();
+                textEditor.reset();
+                DysektProcessor::Command cmd;
+                cmd.type        = DysektProcessor::CmdSetSliceName;
+                cmd.intParam1   = rowIdx;
+                cmd.stringParam = newName;
+                processor.pushCommand (cmd);
+                repaint();
+            };
+            textEditor->onReturnKey = commit;
+            textEditor->onEscapeKey = [this] { textEditor.reset(); repaint(); };
+            textEditor->onFocusLost = commit;
+            return;
+        }
+    }
+
+    if (c.col == ColMute || c.col == ColOut || c.col == ColLegato) return;
+    if (c.isSf2Ch && c.col == ColFcut) return;  // mute badge — click only
+    if (c.isSf2Ch && c.col >= ColFcut) return;   // only GAIN/PAN editable
+    if (c.isSf2  && c.col >= ColFcut) return;
+    if (c.isSfz2 && c.col >= ColFcut) return;    // only GAIN/PAN editable
+    if (c.isSfz2Ch && c.col >= ColFcut) return;  // only GAIN/PAN editable
+    if (!c.isMaster && !c.isSf2 && !c.isSfz2 && !c.isSfz2Ch && (c.row < 0)) return;
+    if (c.isMaster && c.col >= ColFcut) return;
+
+    // Get current value as display string
+    float currentVal = 0.f;
+    juce::String suffix;
+
+    if (c.isSf2Ch)
+    {
+        const auto strip = processor.sfzPlayer.getChannelStrip (c.sf2Channel);
+        currentVal = (c.col == ColGain)
+            ? juce::Decibels::gainToDecibels (strip.volume, -100.f)
+            : strip.pan;
+    }
+    else if (c.isSf2)
+    {
+        currentVal = (c.col == ColGain)
+            ? juce::Decibels::gainToDecibels (processor.sfzPlayer.getVolume(), -100.f)
+            : processor.sfzPlayer.getPan();
+    }
+    else if (c.isSfz2)
+    {
+        currentVal = (c.col == ColGain)
+            ? juce::Decibels::gainToDecibels (processor.sfzPlayer2.getVolume(), -100.f)
+            : processor.sfzPlayer2.getPan();
+    }
+    else if (c.isSfz2Ch)
+    {
+        const auto& snap2 = processor.getUiSliceSnapshot2();
+        if (c.sfz2ZoneIdx >= 0 && c.sfz2ZoneIdx < snap2.numSlices)
+        {
+            const auto& zsl = snap2.slices[(size_t) c.sfz2ZoneIdx];
+            currentVal = (c.col == ColGain) ? zsl.volume : zsl.pan;
+        }
+        processor.releaseUiSliceSnapshot2();
+    }
+    else if (c.isMaster)
+    {
+        currentVal = (c.col == ColGain)
+            ? processor.apvts.getRawParameterValue (ParamIds::masterVolume)->load()
+            : processor.apvts.getRawParameterValue (ParamIds::defaultPan)->load();
+    }
+    else
+    {
+        const auto& snap = processor.getUiSliceSnapshot();
+        if (c.row < 0 || c.row >= snap.numSlices) return;
+        const auto& sl = snap.slices[(size_t) c.row];
+        switch (c.col)
+        {
+            case ColGain: currentVal = sl.volume;        break;
+            case ColPan:  currentVal = sl.pan;           break;
+            case ColFcut: currentVal = sl.filterCutoff;  break;
+            case ColPres: currentVal = sl.filterRes * 100.f; break;
+            default: return;
+        }
+    }
+
+    const juce::Rectangle<int> cellBounds = c.bounds;
+
+    textEditor = std::make_unique<juce::TextEditor>();
+    addAndMakeVisible (*textEditor);
+    textEditor->setBounds (cellBounds.getX() + kKnobR * 2 + 12,
+                           cellBounds.getY() + cellBounds.getHeight() / 2 - 8,
+                           cellBounds.getWidth() - kKnobR * 2 - 16, 16);
+    textEditor->setFont (DysektLookAndFeel::makeFont (11.0f));
+    const auto& theme = getTheme();
+    textEditor->setColour (juce::TextEditor::backgroundColourId, theme.darkBar.brighter (0.15f));
+    textEditor->setColour (juce::TextEditor::textColourId,       theme.foreground);
+    textEditor->setColour (juce::TextEditor::outlineColourId,    theme.accent);
+    textEditor->setText (juce::String (currentVal, c.col == ColPres ? 0 : 2), false);
+    textEditor->selectAll();
+    textEditor->grabKeyboardFocus();
+
+    const bool  isMaster  = c.isMaster;
+    const bool  isSf2     = c.isSf2;
+    const bool  isSf2Ch   = c.isSf2Ch;
+    const bool  isSfz2    = c.isSfz2;
+    const bool  isSfz2Ch  = c.isSfz2Ch;
+    const int   sf2ChIdx  = c.sf2Channel;
+    const int   sfz2ZoneIdx = c.sfz2ZoneIdx;
+    const Col   col       = c.col;
+    const int   rowIdx    = c.row;
+
+    textEditor->onReturnKey = [this, isMaster, isSf2, isSf2Ch, isSfz2, isSfz2Ch, sf2ChIdx, sfz2ZoneIdx, col, rowIdx]
+    {
+        if (!textEditor) return;
+        float v = textEditor->getText().getFloatValue();
+        textEditor.reset();
+
+        if (isSf2Ch)
+        {
+            if (col == ColGain)
+                processor.sfzPlayer.setChannelVolume (sf2ChIdx,
+                    juce::Decibels::decibelsToGain (juce::jlimit (-100.f, 24.f, v), -100.f));
+            else if (col == ColPan)
+                processor.sfzPlayer.setChannelPan (sf2ChIdx, juce::jlimit (-1.f, 1.f, v));
+            repaint(); return;
+        }
+
+        if (isSf2)
+        {
+            if (col == ColGain)
+                processor.sfzPlayer.setVolume (juce::Decibels::decibelsToGain (juce::jlimit (-100.f, 24.f, v), -100.f));
+            else if (col == ColPan)
+                processor.sfzPlayer.setPan (juce::jlimit (-1.f, 1.f, v));
+            repaint(); return;
+        }
+
+        if (isSfz2)
+        {
+            if (col == ColGain)
+                processor.sfzPlayer2.setVolume (juce::Decibels::decibelsToGain (juce::jlimit (-100.f, 24.f, v), -100.f));
+            else if (col == ColPan)
+                processor.sfzPlayer2.setPan (juce::jlimit (-1.f, 1.f, v));
+            repaint(); return;
+        }
+
+        if (isSfz2Ch)
+        {
+            DysektProcessor::Command sel;
+            sel.type          = DysektProcessor::CmdSelectSlice;
+            sel.intParam1     = sfz2ZoneIdx;
+            sel.targetEngine2 = true;
+            processor.pushCommand (sel);
+
+            // zoneWide=true — same zone-row propagation as the drag-commit
+            // path above (see Command::zoneWide).
+            DysektProcessor::Command cmd2;
+            cmd2.type          = DysektProcessor::CmdSetSliceParam;
+            cmd2.targetEngine2 = true;
+            cmd2.zoneWide      = true;
+            if (col == ColGain)
+            {
+                cmd2.intParam1   = DysektProcessor::FieldVolume;
+                cmd2.floatParam1 = juce::jlimit (-100.f, 24.f, v);
+            }
+            else if (col == ColPan)
+            {
+                cmd2.intParam1   = DysektProcessor::FieldPan;
+                cmd2.floatParam1 = juce::jlimit (-1.f, 1.f, v);
+            }
+            else { repaint(); return; }
+            processor.pushCommand (cmd2);
+            repaint(); return;
+        }
+
+        if (isMaster)
+        {
+            if (col == ColGain)
+            {
+                v = juce::jlimit (-100.f, 24.f, v);
+                processor.apvts.getRawParameterValue (ParamIds::masterVolume)->store (v);
+            }
+            else if (col == ColPan)
+            {
+                v = juce::jlimit (-1.f, 1.f, v);
+                processor.apvts.getRawParameterValue (ParamIds::defaultPan)->store (v);
+            }
+            repaint(); return;
+        }
+
+        // Select row first
+        DysektProcessor::Command sel;
+        sel.type = DysektProcessor::CmdSelectSlice;
+        sel.intParam1 = rowIdx;
+        processor.pushCommand (sel);
+
+        DysektProcessor::Command cmd;
+        cmd.type = DysektProcessor::CmdSetSliceParam;
+        switch (col)
+        {
+            case ColGain: cmd.intParam1 = DysektProcessor::FieldVolume;       cmd.floatParam1 = juce::jlimit (-100.f, 24.f, v);    break;
+            case ColPan:  cmd.intParam1 = DysektProcessor::FieldPan;          cmd.floatParam1 = juce::jlimit (-1.f, 1.f, v);       break;
+            case ColFcut: cmd.intParam1 = DysektProcessor::FieldFilterCutoff; cmd.floatParam1 = juce::jlimit (20.f, 20000.f, v);   break;
+            case ColPres: cmd.intParam1 = DysektProcessor::FieldFilterRes;    cmd.floatParam1 = juce::jlimit (0.f, 1.f, v / 100.f); break;
+            default: repaint(); return;
+        }
+        processor.pushCommand (cmd);
+        repaint();
+    };
+    textEditor->onEscapeKey = [this] { textEditor.reset(); repaint(); };
+    textEditor->onFocusLost = [this] { textEditor.reset(); repaint(); };
+}
+
+void MixerPanel::mouseWheelMove (const juce::MouseEvent&,
+                                   const juce::MouseWheelDetails& wheel)
+{
+    const auto& snap = processor.getUiSliceSnapshot();
+    const int visibleCount = (int) collectVisibleSlices (snap).size();
+    const int contentH = visibleCount * kRowH + sf2TotalH() + sfz2TotalH() + netTotalH() + kMasterH;
+    const int visibleH = getHeight() - kHeaderH;
+    const int maxScroll = juce::jmax (0, contentH - visibleH);
+
+    scrollPixels = juce::jlimit (0, maxScroll,
+        scrollPixels - (int)(wheel.deltaY * 30.f));
+    repaint();
+}

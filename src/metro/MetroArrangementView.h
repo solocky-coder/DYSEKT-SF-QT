@@ -1,0 +1,108 @@
+/*
+    DYSEKT 2
+    Metro UI
+
+    MetroArrangementView.h
+
+    The Metro standalone's arrangement/timeline workspace: draws the timeline
+    ruler, track lanes and clips, owns the playhead redraw timer, and handles
+    click-to-select for tracks and clips.
+
+    This was previously a private nested class inside MetroStandaloneEditor.
+    It is extracted here so it can be reused, tested, and own its own
+    selection/interaction logic independently of the editor shell.
+*/
+#pragma once
+
+#include <functional>
+#include <juce_gui_basics/juce_gui_basics.h>
+#include "MetroSelection.h"
+
+class SequencerEngine;
+
+namespace dysekt::metro
+{
+/** Draws and drives interaction for the arrangement (track/clip) workspace. */
+class MetroArrangementView final : public juce::Component,
+                                    private juce::Timer
+{
+public:
+    explicit MetroArrangementView (SequencerEngine& sequencer);
+    ~MetroArrangementView() override;
+
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+
+    /** Horizontal zoom multiplier applied to the base beat width. Clamped to a sane range. */
+    void setZoom (float newZoom);
+    float getZoom() const noexcept { return zoom; }
+
+    /** Horizontal scroll offset in pixels (pre-zoom timeline space). Clamped to >= 0. */
+    void setScrollPosition (float newScrollPixels);
+    float getScrollPosition() const noexcept { return scrollPixels; }
+
+    /** Called whenever the user selects (or deselects) a track or clip. */
+    void setSelectionChangedCallback (std::function<void (const MetroSelection&)> callback);
+
+    /** Clears the current selection and notifies the callback, if any. */
+    void clearSelection();
+
+    const MetroSelection& getSelection() const noexcept { return selection; }
+
+private:
+    void timerCallback() override;
+
+    static constexpr int kToolbarHeight = 40;
+    static constexpr int kMiniArrangerHeight = 28;
+    static constexpr int kRulerHeight = 28;
+    static constexpr int kTrackHeaderWidth = 168;
+    static constexpr int kTrackRowHeight = 72;
+    static constexpr int kClipInset = 7;
+
+    int beatWidthPx() const noexcept;
+    juce::Rectangle<int> trackRowBounds (int trackIndex) const;
+    juce::Rectangle<int> clipBounds (int trackIndex, int clipIndex, int rowY) const;
+
+    /** Returns trackIndex >= 0 if the point falls on a track row, else -1. clipIndexOut is
+        set if the point also falls on a clip within that row, else left at -1. */
+    int hitTestTrack (juce::Point<int> position, int& clipIndexOut) const;
+
+    void setSelection (MetroSelection newSelection);
+    void drawToolbar (juce::Graphics& graphics, juce::Rectangle<int> area) const;
+    void drawRuler (juce::Graphics& graphics, juce::Rectangle<int> area) const;
+    void drawMiniArranger (juce::Graphics& graphics, juce::Rectangle<int> area) const;
+    juce::Rectangle<float> miniViewportBounds() const;
+    void drawTrackHeader (juce::Graphics& graphics, juce::Rectangle<int> area,
+                          int trackIndex, const SequencerTrackInfo& track) const;
+    void drawClip (juce::Graphics& graphics, juce::Rectangle<int> area,
+                   int trackIndex, int clipIndex, const SequencerTrackInfo& track) const;
+
+    SequencerEngine& engine;
+
+    float zoom = 1.0f;
+    float scrollPixels = 0.0f;
+    enum class MiniDragMode { none, move, leftEdge, rightEdge };
+    MiniDragMode miniDragMode = MiniDragMode::none;
+    float miniDragStartX = 0.0f;
+    float miniDragStartScroll = 0.0f;
+    float miniDragStartZoom = 1.0f;
+    juce::Rectangle<float> miniDragStartViewport;
+
+    MetroSelection selection;
+    int activeTool = 0; // select, draw, erase, split, glue
+    bool gridVisible = true;
+    bool magnetEnabled = true;
+    bool locked = false;
+    int64_t snapTicks = MidiClip::kPPQ / 4; // 1/16 note
+
+    int64_t tickAtX (int x) const noexcept;
+    int64_t snapTick (int64_t tick) const noexcept;
+    void createClipAt (int trackIndex, int64_t tick);
+    void splitSelectedClip (int64_t splitTick);
+    void glueSelectedClip ();
+    std::function<void (const MetroSelection&)> onSelectionChanged;
+};
+} // namespace dysekt::metro

@@ -1,0 +1,233 @@
+#pragma once
+#include <juce_gui_basics/juce_gui_basics.h>
+#include "TransportBar.h"
+#include "PianoRollComponent.h"
+#include "../sequencer/SequencerEngine.h"
+#include "WindowMenuBar.h"
+
+//==============================================================================
+//  PianoRollPanel  –  content component (no window chrome of its own)
+//
+//  Layout:
+//    ┌─────────────────────────────────────────────────────┐
+//    │  TransportBar                                        │
+//    ├───────────────────────────────────────────────────────┤
+//    │  PianoRollComponent — draws its own black/white       │
+//    │  keyboard gutter; edits the active track's clip       │
+//    └─────────────────────────────────────────────────────┘
+//
+//  Track selection happens in ArrangeView; this window always opens already
+//  scoped to a track/clip via openFor(), so it doesn't duplicate a track list.
+//
+//  Hosted inside PianoRollWindow (a DocumentWindow) so the OS supplies
+//  the real title bar with a native X / close button.
+//==============================================================================
+class PianoRollPanel : public juce::Component
+{
+public:
+    static constexpr int kTransportH  = 38;
+
+    PianoRollPanel (SequencerEngine& seq, AbletonLink* link = nullptr)
+        : engine (seq), transport (seq, link), pianoRoll (seq)
+    {
+        addAndMakeVisible (transport);
+        addAndMakeVisible (pianoRoll);
+
+        engine.addMainTrack();
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        transport.setBounds  (r.removeFromTop  (kTransportH));
+        pianoRoll.setBounds  (r);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colour (0xFF080A0D));
+    }
+
+    void syncSnap()
+    {
+        pianoRoll.setSnapTicks (transport.getSnapTicks());
+    }
+
+    void setActiveTool (PianoRollComponent::Tool t) { pianoRoll.setActiveTool (t); }
+
+    void setActiveTrackPublic (int trackIndex, int clipIndex = 0)
+    {
+        pianoRoll.setActiveTrack (trackIndex, clipIndex);
+    }
+
+    //==========================================================================
+    void onSliceChromaticToggled (int sliceIdx, bool enabled,
+                                  int chromaticChannel,
+                                  const juce::String& name,
+                                  juce::Colour colour)
+    {
+        if (enabled)
+            engine.addChromaticTrack (sliceIdx, chromaticChannel, name, colour);
+        else
+            engine.removeChromaticTrack (sliceIdx);
+    }
+
+    void onSf2Loaded (const std::vector<Sf2PresetInfo>& presets,
+                      const juce::Colour* palette, int paletteSize)
+    {
+        engine.rebuildSfTracks (presets, palette, paletteSize);
+    }
+
+    void addOrUpdateSfPresetTrack (const Sf2PresetInfo& preset, int midiChannel1Based,
+                                   juce::Colour colour)
+    {
+        engine.addOrUpdateSfTrackOnChannel (preset, midiChannel1Based - 1, colour);
+    }
+
+    void addSfzInstrumentTrack (const juce::String& name, juce::Colour colour)
+    {
+        // 0-based channel 1 == MIDI channel 2, matching sfzPlayer2's own
+        // default channel (see DysektProcessor's sfzPlayer2.setMidiChannel(2)
+        // and the sfzPlayer2ChannelMask default). Channel 16 here was never
+        // correct — sfzPlayer2 was never listening there.
+        engine.addSfzTrack (name, 1, colour);
+    }
+
+    /** Creates/updates the SFZ instrument's per-layer child tracks (one per note-range layer
+     *  of the given .sfz file). Call after addSfzInstrumentTrack(). */
+    void syncSfzLayerTracks (const juce::File& sfzFile)
+    {
+        int scannerDropped = 0;
+        const auto layers = SfzPlayer::scanLayers (sfzFile, &scannerDropped);
+        int budgetDropped = 0;
+        engine.syncSfzLayerTracks (layers, &budgetDropped);
+        const int totalDropped = scannerDropped + budgetDropped;
+
+        static bool layerLimitWarningShown = false;
+        if (totalDropped > 0 && ! layerLimitWarningShown)
+        {
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::WarningIcon,
+                "SFZ Arranger Layer Limit",
+                juce::String (totalDropped) + " SFZ layer(s) could not get Arranger tracks because of the layer or 64-track project limit. Existing layers with MIDI clips were preserved. Reduce the number of distinct note ranges or remove unused tracks to show more layers.");
+            layerLimitWarningShown = true;
+        }
+        else if (totalDropped == 0)
+            layerLimitWarningShown = false;
+    }
+
+    SequencerTrackInfo getTrackInfo (int i) const { return engine.getTrackInfo (i); }
+
+    /** Kept for API compatibility with PluginEditor's wiring — no longer fired
+     *  internally since the piano roll no longer hosts its own track list
+     *  (channel reassignment happens via ArrangeView's TrackHeaderStrip). */
+    std::function<void(int trackIndex, int midiChannel1Based)> onSfTrackChannelChanged;
+
+private:
+    SequencerEngine&   engine;
+    TransportBar       transport;
+    PianoRollComponent pianoRoll;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PianoRollPanel)
+};
+
+//==============================================================================
+//  PianoRollWindow  –  native OS floating window that hosts PianoRollPanel
+//
+//  Usage (from PluginEditor):
+//      pianoRollWindow->openFor (trackIndex, clipIndex);   // show / bring to front
+//      pianoRollWindow->closeWindow();                     // hide
+//==============================================================================
+class PianoRollWindow : public juce::DocumentWindow
+{
+public:
+    PianoRollWindow (SequencerEngine& seq, juce::LookAndFeel& lnf, AbletonLink* link = nullptr)
+        : juce::DocumentWindow (juce::String::fromUTF8 ("PIANO ROLL  \xe2\x80\xa2  MIDI EDITOR"),
+                                juce::Colour (0xFF0D0D14),
+                                juce::DocumentWindow::closeButton |
+                                juce::DocumentWindow::minimiseButton |
+                                juce::DocumentWindow::maximiseButton),
+          panel (seq, link)
+    {
+        setUsingNativeTitleBar (false);  // use our themed title bar
+        setLookAndFeel (&lnf);
+        setResizable (true, true);
+        setContentNonOwned (&panel, true);
+        setSize (1180, 680);
+        centreWithSize (getWidth(), getHeight());
+        wireCallbacks();
+    }
+
+    ~PianoRollWindow() override
+    {
+        setLookAndFeel (nullptr);
+    }
+
+    //==========================================================================
+    /** Attach the standalone app's File / Audio-MIDI / Help menu bar to this window. */
+    void setSharedMenuBar (juce::MenuBarModel* model, int height)
+    {
+        WindowMenuBar::attach (*this, model, height);
+    }
+
+    /** Show the window and focus the given track/clip. */
+    void openFor (int trackIndex, int clipIndex = 0)
+    {
+        panel.setActiveTrackPublic (trackIndex, clipIndex);
+        panel.syncSnap();
+        WindowMenuBar::style (*this);
+        setVisible (true);
+        toFront (true);
+    }
+
+    /** Hide the window without destroying it. */
+    void closeWindow()
+    {
+        setVisible (false);
+    }
+
+    //==========================================================================
+    //  Forwarded accessors (so PluginEditor can reach panel internals)
+    void setActiveTool (PianoRollComponent::Tool t)   { panel.setActiveTool (t); }
+    SequencerTrackInfo getTrackInfo (int i) const     { return panel.getTrackInfo (i); }
+    void syncSnap()                                    { panel.syncSnap(); }
+
+    void onSliceChromaticToggled (int si, bool en, int ch,
+                                  const juce::String& name, juce::Colour col)
+    { panel.onSliceChromaticToggled (si, en, ch, name, col); }
+
+    void onSf2Loaded (const std::vector<Sf2PresetInfo>& p,
+                      const juce::Colour* pal, int palSz)
+    { panel.onSf2Loaded (p, pal, palSz); }
+
+    void addOrUpdateSfPresetTrack (const Sf2PresetInfo& preset,
+                                   int midiChannel1Based, juce::Colour colour)
+    { panel.addOrUpdateSfPresetTrack (preset, midiChannel1Based, colour); }
+
+    void addSfzInstrumentTrack (const juce::String& name, juce::Colour colour)
+    { panel.addSfzInstrumentTrack (name, colour); }
+    void syncSfzLayerTracks (const juce::File& sfzFile) { panel.syncSfzLayerTracks (sfzFile); }
+
+    /** Wire this in PluginEditor after construction to receive SF track channel changes. */
+    std::function<void(int trackIndex, int midiChannel1Based)> onSfTrackChannelChanged;
+
+    void wireCallbacks()
+    {
+        panel.onSfTrackChannelChanged = [this] (int ti, int ch)
+        {
+            if (onSfTrackChannelChanged) onSfTrackChannelChanged (ti, ch);
+        };
+    }
+
+    //==========================================================================
+    /** Native X button — hide rather than delete. */
+    void closeButtonPressed() override
+    {
+        closeWindow();
+    }
+
+private:
+    PianoRollPanel panel;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PianoRollWindow)
+};

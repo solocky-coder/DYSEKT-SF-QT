@@ -1,0 +1,2383 @@
+#include "MetroNetworkAudio.h"
+#include "NetworkAudioChannelState.h"
+
+#include <juce_events/juce_events.h>
+#include <aoo/aoo.hpp>
+#include <aoo/aoo_net.hpp>
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <atomic>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <sstream>
+#include <thread>
+#include <vector>
+
+#if defined(_WIN32)
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+ #endif
+ #include <winsock2.h>
+ #include <ws2tcpip.h>
+ using MetroSocket = SOCKET;
+ static constexpr MetroSocket metroInvalidSocket = INVALID_SOCKET;
+#else
+ #include <arpa/inet.h>
+ #include <fcntl.h>
+ #include <netinet/in.h>
+ #include <sys/select.h>
+ #include <sys/socket.h>
+ #include <unistd.h>
+ using MetroSocket = int;
+ static constexpr MetroSocket metroInvalidSocket = -1;
+#endif
+
+namespace
+{
+constexpr int kAooSampleRate = 48000;
+// The AOO sink block size is a runtime setting (Impl::aooBlockSize). It starts
+// at the default below and follows the host's block size once the audio device
+// has been prepared (MetroNetworkAudio::prepare). The sink's clock-tracking DLL
+// assumes one process() call per sink block, so the sink block must match the
+// host callback size or dynamic resampling is silently disabled.
+constexpr int kAooDefaultBlockSize = 512;
+constexpr int kAooMinBlockSize = 16;
+constexpr int kAooMaxBlockSize = 4096;   // larger host callbacks are processed in chunks
+static_assert (kAooSampleRate == (int) MetroNetworkAudio::kNominalSampleRate
+                   && kAooDefaultBlockSize == MetroNetworkAudio::kNominalBlockSize,
+               "MetroNetworkAudio::kNominal* must match the AOO sink default setup constants");
+
+int chooseAooBlockSize (int hostBlockSize) noexcept
+{
+    return hostBlockSize > 0 ? std::clamp (hostBlockSize, kAooMinBlockSize, kAooMaxBlockSize)
+                             : kAooDefaultBlockSize;
+}
+constexpr int kAooChannels = 64;
+constexpr int kAooBufferMs = 120;
+constexpr int kAooDirectBufferMs = 10;
+constexpr size_t kMaxNetworkSources = 64;
+
+struct LatencyProfileConfig
+{
+    int networkBufferMs;
+    int directBufferMs;
+    int minBufferMs;
+    int maxBufferMs;
+    int resendLimit;
+    int resendInterval;
+    int resendMaxFrames;
+};
+
+LatencyProfileConfig getLatencyProfileConfig (MetroNetworkAudio::LatencyProfile profile) noexcept
+{
+    switch (profile)
+    {
+        case MetroNetworkAudio::LatencyProfile::Low:
+            return { 60, 10, 10, 80, 4, 8, 12 };
+        case MetroNetworkAudio::LatencyProfile::UltraLow:
+            return { 30, 8, 8, 60, 2, 5, 8 };
+        case MetroNetworkAudio::LatencyProfile::Normal:
+        default:
+            return { kAooBufferMs, kAooDirectBufferMs, 10, 120, 5, 10, 16 };
+    }
+}
+
+int64_t monotonicMicros() noexcept
+{
+    return std::chrono::duration_cast<std::chrono::microseconds> (
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// -------------------------------------------------------------------------
+// AOO diagnostic logging
+//
+// Diagnostic-only instrumentation for tracing:
+//
+//   PEER_JOIN
+//      -> wildcard invite
+//      -> SOURCE_ADD
+//      -> specific invite
+//      -> incoming packet routing
+//      -> SOURCE_FORMAT event
+//      -> get_source_format()
+//
+// This does not intentionally alter AOO routing or source state.
+//
+// Written directly to disk rather than relying on DBG()/OutputDebugString:
+// JUCE's DBG() macro compiles to a no-op unless JUCE_DEBUG is set, so a
+// Release-configuration executable (e.g. a GitHub Actions Windows build)
+// silently produces no output at all. All call sites here run on the AOO
+// io/client threads or the message thread, never the realtime audio
+// callback, so the blocking file I/O below is safe.
+// -------------------------------------------------------------------------
+constexpr bool kAooDiagnostics = true;
+
+// Per-packet lines (4+ log lines and one flush per received UDP packet, ~1,600
+// flushed writes/s with two iPads) are off by default. State changes, format
+// results, errors and the 1 Hz AUDIO_STATS lines below are always kept.
+constexpr bool kAooPacketDiagnostics = false;
+
+std::mutex aooLogMutex;
+std::unique_ptr<juce::FileOutputStream> aooLogStream;
+
+juce::File getAooLogFile()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+               .getChildFile ("metro-aoo-log.txt");
+}
+
+void aooDiag (const juce::String& message)
+{
+    if (! kAooDiagnostics)
+        return;
+
+    if (! kAooPacketDiagnostics)
+    {
+        static const char* const noisy[] = {
+            "RX packet", "RX discovery routing", "RX -> runtime",
+            "RX runtime handle_message", "RX runtime format probe",
+            "TX runtime send", "sendAooReply endpoint=",
+            "DIRECT_USB invite retry", "RUNTIME events count" };
+        for (const auto* prefix : noisy)
+            if (message.startsWith (prefix))
+                return;
+    }
+
+    // Still visible in a debugger/console when JUCE_DEBUG is on.
+    DBG ("[METRO-AOO] " + message);
+
+    std::lock_guard<std::mutex> lock (aooLogMutex);
+
+    if (aooLogStream == nullptr)
+    {
+        const auto file = getAooLogFile();
+        file.deleteFile();   // fresh log per process run
+        auto stream = std::make_unique<juce::FileOutputStream> (file);
+
+        if (! stream->openedOk())
+            return; // leave aooLogStream null; we'll retry the open next call
+
+        aooLogStream = std::move (stream);
+    }
+
+    const auto line = juce::Time::getCurrentTime().toString (true, true, true, true)
+                     + "  [METRO-AOO] " + message + "\n";
+
+    aooLogStream->writeText (line, false, false, nullptr);
+    aooLogStream->flush();
+}
+
+juce::String endpointString (const sockaddr_in* endpoint)
+{
+    if (endpoint == nullptr)
+        return "<null>";
+
+    char address[INET_ADDRSTRLEN] {};
+    const char* result = inet_ntop (AF_INET, &endpoint->sin_addr,
+                                    address, sizeof (address));
+
+    return juce::String (result != nullptr ? result : "?")
+         + ":" + juce::String (ntohs (endpoint->sin_port));
+}
+
+juce::String endpointDebug (const sockaddr_in* endpoint)
+{
+    if (endpoint == nullptr)
+        return "ptr=null";
+
+    return "ptr=" + juce::String::toHexString (
+               static_cast<juce::int64> (reinterpret_cast<uintptr_t> (endpoint)))
+         + " addr=" + endpointString (endpoint);
+}
+
+std::mutex aooLifetimeMutex;
+int aooLifetimeUsers = 0;
+std::atomic<MetroSocket*> activeAooSocket { nullptr };
+
+void closeSocket (MetroSocket socket)
+{
+    if (socket == metroInvalidSocket) return;
+#if defined(_WIN32)
+    closesocket (socket);
+#else
+    ::close (socket);
+#endif
+}
+
+bool setNonBlocking (MetroSocket socket)
+{
+#if defined(_WIN32)
+    u_long mode = 1;
+    return ioctlsocket (socket, FIONBIO, &mode) == 0;
+#else
+    const auto flags = fcntl (socket, F_GETFL, 0);
+    return flags >= 0 && fcntl (socket, F_SETFL, flags | O_NONBLOCK) == 0;
+#endif
+}
+
+void startAooLifetime()
+{
+    std::lock_guard<std::mutex> lock (aooLifetimeMutex);
+    if (aooLifetimeUsers++ == 0) aoo_initialize();
+}
+
+void stopAooLifetime()
+{
+    std::lock_guard<std::mutex> lock (aooLifetimeMutex);
+    if (aooLifetimeUsers > 0 && --aooLifetimeUsers == 0) aoo_terminate();
+}
+
+int32_t sendUdp (void* user, const char* data, int32_t numBytes, void* address)
+{
+    auto* socket = static_cast<MetroSocket*> (user);
+    if (socket == nullptr || *socket == metroInvalidSocket || address == nullptr) return 0;
+    const auto result = sendto (*socket, data, numBytes, 0,
+                                static_cast<const sockaddr*> (address), sizeof (sockaddr_in));
+    return result == numBytes ? 1 : 0;
+}
+
+int32_t sendAooReply (void* endpoint, const char* data, int32_t numBytes)
+{
+    auto* socket = activeAooSocket.load (std::memory_order_acquire);
+    if (socket == nullptr || *socket == metroInvalidSocket || endpoint == nullptr)
+    {
+        aooDiag ("sendAooReply FAILED endpoint="
+                 + endpointDebug (static_cast<const sockaddr_in*> (endpoint))
+                 + " bytes=" + juce::String (numBytes));
+        return 0;
+    }
+
+    aooDiag ("sendAooReply endpoint="
+             + endpointDebug (static_cast<const sockaddr_in*> (endpoint))
+             + " bytes=" + juce::String (numBytes));
+
+    const auto result = sendto (*socket, data, numBytes, 0,
+                                static_cast<const sockaddr*> (endpoint), sizeof (sockaddr_in));
+
+    if (result != numBytes)
+        aooDiag ("sendAooReply sendto FAILED result="
+                 + juce::String ((int) result)
+                 + " expected=" + juce::String (numBytes));
+
+    return result == numBytes ? 1 : 0;
+}
+
+int64_t makeSourceKey (const sockaddr_in* endpoint, int32_t sourceId) noexcept
+{
+    // AOO source IDs are scoped to a peer. Keep the METRO identity stable
+    // when the peer's UDP port changes during reconnect/NAT remapping.
+    uint64_t hash = 1469598103934665603ull;
+    const auto mix = [&hash] (uint64_t value)
+    {
+        for (int i = 0; i < 8; ++i)
+        {
+            hash ^= (value >> (i * 8)) & 0xffu;
+            hash *= 1099511628211ull;
+        }
+    };
+    if (endpoint != nullptr)
+        mix (static_cast<uint64_t> (endpoint->sin_addr.s_addr));
+    mix (static_cast<uint32_t> (sourceId));
+    hash &= 0x7fffffffffffffffull;
+    return hash == 0 ? 1 : static_cast<int64_t> (hash);
+}
+
+bool sameEndpoint (const sockaddr_in* a, const sockaddr_in* b) noexcept
+{
+    return a != nullptr && b != nullptr
+        && a->sin_family == b->sin_family
+        && a->sin_addr.s_addr == b->sin_addr.s_addr
+        && a->sin_port == b->sin_port;
+}
+
+bool samePeerAddress (const sockaddr_in* a, const sockaddr_in* b) noexcept
+{
+    // AOO peer identity is the remote IP + source id. The UDP source port can
+    // change between the invited endpoint and the actual packets (for example
+    // iOS may send from an ephemeral port). Do not require the port to match
+    // when deciding which runtime owns an incoming packet.
+    return a != nullptr && b != nullptr
+        && a->sin_family == b->sin_family
+        && a->sin_addr.s_addr == b->sin_addr.s_addr;
+}
+}
+
+class MetroNetworkAudio::Impl
+{
+public:
+    struct SourceRuntime
+    {
+        enum class HandshakeState
+        {
+            New,
+            Invited,
+            Formatted
+        };
+
+        int64_t sourceKey = 0;
+        int32_t sourceId = 0;
+        std::shared_ptr<sockaddr_in> endpoint;
+        aoo::isink::pointer sink;
+
+        // One-way source handshake:
+        // New -> Invited -> Formatted.
+        // Repeated discovery/format events must never re-invite a source.
+        HandshakeState handshake = HandshakeState::New;
+        bool directSourcePublished = false;
+
+        // Sized kAooChannels * aooBlockSize. Only touched by the audio thread
+        // (inside audioGate) and by reconfigureBlockSize()/createRuntime()
+        // while they hold blockConfigMutex.
+        std::vector<float> scratch;
+        std::array<aoo_sample*, kAooChannels> pointers {};
+
+        // Audio-thread diagnostics: written with relaxed atomics by
+        // processSourceChannel(), read and reset once a second by the io
+        // thread (logAudioStats). No logging or allocation on the audio thread.
+        std::atomic<uint32_t> diagCalls { 0 };      // audio callbacks that pulled from this source
+        std::atomic<uint32_t> diagProduced { 0 };   // ...of which sink->process() returned audio
+        std::atomic<float>    diagPeak { 0.0f };    // peak of audio actually delivered
+        std::atomic<int>      diagHostSamples { 0 };// host callback size (numSamples)
+
+        // io-thread diagnostics: UDP packets actually routed to this source.
+        std::atomic<uint32_t> diagRxPackets { 0 };
+        std::atomic<uint32_t> diagRxBytes { 0 };
+
+        // Direct USB endpoint tracking. lastRxMs is the time of the last packet
+        // accepted from the active endpoint (0 = none heard yet); it is written
+        // on the io thread and read by createRuntime() on the UI thread.
+        std::atomic<uint32_t> lastRxMs { 0 };
+        std::atomic<int64_t> lastPacketMicros { 0 };
+        std::atomic<float> packetIntervalMs { 0.0f };
+        std::atomic<float> jitterMs { 0.0f };
+        std::atomic<int> adaptiveBufferMs { 0 };
+
+        // Adaptive-buffer hysteresis is maintained by the IO thread
+        // (adaptJitterBuffers runs there once per second). A short burst of
+        // jitter must persist before we add latency; recovery is deliberately
+        // slower so the buffer does not hunt during marginal network periods.
+        int adaptiveIncreaseSeconds = 0;
+        int adaptiveStableSeconds = 0;
+
+        std::atomic<uint32_t> diagStrayPackets { 0 };   // packets from a non-active port on the same peer
+        std::atomic<int> lastStrayPort { 0 };
+
+        // io-thread only (logAudioStats): debounce counters for the UI status.
+        int silentSeconds = 0;
+        int noDataSeconds = 0;
+        int idleSeconds = 0;   // consecutive seconds with no packets from a Formatted peer (re-invite pacing)
+        MetroNetworkAudio::LinkState lastLinkState = MetroNetworkAudio::LinkState::Unknown;
+    };
+
+    struct PeerInfo
+    {
+        std::shared_ptr<sockaddr_in> endpoint;
+        juce::String group;
+        juce::String user;
+    };
+
+    MetroNetworkAudio& owner;
+    std::atomic<bool> running { false };
+    std::atomic<bool> directMode { false };
+    juce::StringPairArray labelOverrides;   // peer IP -> user-chosen label; guarded by stateMutex
+    MetroSocket socket = metroInvalidSocket;
+    aoo::net::iclient::pointer client;
+    aoo::isink::pointer discoverySink;
+    std::thread ioThread;
+
+    mutable std::mutex stateMutex;
+    std::vector<MetroNetworkAudio::SourceInfo> sources;
+    MetroNetworkAudio::SourceListener listener;
+    std::vector<PeerInfo> peers;
+    std::vector<std::unique_ptr<SourceRuntime>> runtimes;
+    std::array<std::atomic<SourceRuntime*>, kMaxNetworkSources> runtimeSlots {};
+    std::vector<float> mixScratch;   // kAooChannels * aooBlockSize, guarded like SourceRuntime::scratch
+    std::array<aoo_sample*, kAooChannels> mixPointers {};
+
+    // AOO block-size configuration.
+    //  - aooBlockSize:      current sink block size (samples).
+    //  - blockConfigMutex:  serialises everything that sets up / tears down /
+    //                       reconfigures sinks (non-audio threads only).
+    //  - audioGate:         held by reconfigureBlockSize() while sinks and scratch
+    //                       are being changed. The audio thread only ever
+    //                       try-locks it and outputs silence if it is busy, so
+    //                       it can never block on a reconfigure.
+    std::atomic<int> aooBlockSize { kAooDefaultBlockSize };
+    std::atomic<MetroNetworkAudio::LatencyProfile> latencyProfile { MetroNetworkAudio::LatencyProfile::Normal };
+    std::recursive_mutex blockConfigMutex;
+    juce::SpinLock audioGate;
+
+    std::atomic<double> hostSampleRate { 0.0 };   // what the audio callback says it runs at
+    std::atomic<int> hostBlockSize { 0 };         // samples in the most recent audio callback
+    std::atomic<uint32_t> hostBlocks { 0 };       // host audio callbacks since last stats line
+    std::atomic<int64_t>  hostMaxMicros { 0 };    // slowest whole processBlock since last stats line
+    std::atomic<int64_t>  hostSumMicros { 0 };
+    std::atomic<int>      hostLastBlock { 0 };
+    std::atomic<float>    hostOutPeak { 0.0f };   // peak of the FINAL output buffer after all mixing
+    std::array<std::atomic<uint32_t>, 32> eventTypeCounts {};   // sink events by numeric type
+
+    LatencyProfileConfig latencyConfig() const noexcept
+    {
+        return getLatencyProfileConfig (latencyProfile.load (std::memory_order_relaxed));
+    }
+
+    void configureSink (aoo::isink* sink, bool direct) noexcept
+    {
+        if (sink == nullptr) return;
+        const auto cfg = latencyConfig();
+        sink->set_buffersize (direct ? cfg.directBufferMs : cfg.networkBufferMs);
+        sink->set_dynamic_resampling (1);
+        sink->set_resend_limit (cfg.resendLimit);
+        sink->set_resend_interval (cfg.resendInterval);
+        sink->set_resend_maxnumframes (cfg.resendMaxFrames);
+    }
+
+    void observePacketArrival (SourceRuntime& runtime) noexcept
+    {
+        const auto now = monotonicMicros();
+        const auto previous = runtime.lastPacketMicros.exchange (now, std::memory_order_relaxed);
+        if (previous <= 0) return;
+        const float interval = static_cast<float> (now - previous) / 1000.0f;
+        if (interval <= 0.0f || interval > 1000.0f) return;
+
+        const float previousInterval = runtime.packetIntervalMs.load (std::memory_order_relaxed);
+        if (previousInterval <= 0.0f)
+        {
+            runtime.packetIntervalMs.store (interval, std::memory_order_relaxed);
+            return;
+        }
+
+        const float deviation = std::abs (interval - previousInterval);
+        runtime.packetIntervalMs.store (previousInterval + 0.1f * (interval - previousInterval),
+                                         std::memory_order_relaxed);
+        const float previousJitter = runtime.jitterMs.load (std::memory_order_relaxed);
+        runtime.jitterMs.store (previousJitter + 0.1f * (deviation - previousJitter),
+                                std::memory_order_relaxed);
+    }
+
+    void adaptJitterBuffers()
+    {
+        const auto cfg = latencyConfig();
+        const bool direct = directMode.load (std::memory_order_acquire);
+
+        // All non-audio sink configuration uses the same lock order:
+        // blockConfigMutex -> audioGate.
+        std::lock_guard<std::recursive_mutex> configLock (blockConfigMutex);
+        const juce::SpinLock::ScopedTryLockType gate (audioGate);
+        if (! gate.isLocked())
+            return;
+
+        for (const auto& runtimePtr : runtimes)
+        {
+            auto* runtime = runtimePtr.get();
+            if (runtime == nullptr || runtime->sink == nullptr)
+                continue;
+
+            const float jitter = runtime->jitterMs.load (std::memory_order_relaxed);
+            const int base = direct ? cfg.directBufferMs : cfg.networkBufferMs;
+            const int desired = juce::jlimit (cfg.minBufferMs, cfg.maxBufferMs,
+                                              (int) std::lround (base + 4.0f * jitter));
+            const int previous = runtime->adaptiveBufferMs.load (std::memory_order_relaxed);
+            bool changed = false;
+
+            if (previous == 0)
+            {
+                runtime->sink->set_buffersize (base);
+                runtime->adaptiveBufferMs.store (base, std::memory_order_relaxed);
+                runtime->adaptiveIncreaseSeconds = 0;
+                runtime->adaptiveStableSeconds = 0;
+                changed = true;
+            }
+            else
+            {
+                const int delta = desired - previous;
+
+                if (delta >= 2)
+                {
+                    // Increase after two consecutive one-second observations.
+                    // This prevents a single timing spike from adding latency,
+                    // while reacting quickly enough to sustained instability.
+                    ++runtime->adaptiveIncreaseSeconds;
+                    runtime->adaptiveStableSeconds = 0;
+
+                    if (runtime->adaptiveIncreaseSeconds >= 2)
+                    {
+                        runtime->sink->set_buffersize (desired);
+                        runtime->adaptiveBufferMs.store (desired, std::memory_order_relaxed);
+                        runtime->adaptiveIncreaseSeconds = 0;
+                        changed = true;
+                    }
+                }
+                else if (delta <= -2)
+                {
+                    // Recovery is deliberately slower: require five consecutive
+                    // stable observations before reducing the buffer.
+                    ++runtime->adaptiveStableSeconds;
+                    runtime->adaptiveIncreaseSeconds = 0;
+
+                    if (runtime->adaptiveStableSeconds >= 5)
+                    {
+                        runtime->sink->set_buffersize (desired);
+                        runtime->adaptiveBufferMs.store (desired, std::memory_order_relaxed);
+                        runtime->adaptiveStableSeconds = 0;
+                        changed = true;
+                    }
+                }
+                else
+                {
+                    runtime->adaptiveIncreaseSeconds = 0;
+                    runtime->adaptiveStableSeconds = 0;
+                }
+            }
+
+            // Keep this once-per-second and off the audio thread. It gives us
+            // enough evidence to validate adaptation without adding work to the
+            // real-time callback.
+            aooDiag ("ADAPTIVE_BUFFER endpoint=" + endpointString (runtime->endpoint.get())
+                     + " jitterMs=" + juce::String (jitter, 2)
+                     + " desiredMs=" + juce::String (desired)
+                     + " bufferMs=" + juce::String (runtime->adaptiveBufferMs.load (std::memory_order_relaxed))
+                     + " baseMs=" + juce::String (base)
+                     + " minMs=" + juce::String (cfg.minBufferMs)
+                     + " maxMs=" + juce::String (cfg.maxBufferMs)
+                     + " increaseSec=" + juce::String (runtime->adaptiveIncreaseSeconds)
+                     + " stableSec=" + juce::String (runtime->adaptiveStableSeconds)
+                     + " changed=" + juce::String (changed ? 1 : 0));
+        }
+    }
+
+    void applyLatencyProfile()
+    {
+        const auto cfg = latencyConfig();
+        const bool direct = directMode.load (std::memory_order_acquire);
+
+        // Keep the same lock order as reconfigureBlockSize() and
+        // adaptJitterBuffers(): blockConfigMutex -> audioGate.
+        std::lock_guard<std::recursive_mutex> configLock (blockConfigMutex);
+        const juce::SpinLock::ScopedTryLockType gate (audioGate);
+        if (! gate.isLocked())
+            return;
+
+        configureSink (discoverySink.get(), direct);
+        for (const auto& runtimePtr : runtimes)
+            if (runtimePtr != nullptr && runtimePtr->sink != nullptr)
+            {
+                configureSink (runtimePtr->sink.get(), direct);
+                runtimePtr->adaptiveBufferMs.store (direct ? cfg.directBufferMs : cfg.networkBufferMs,
+                                                    std::memory_order_relaxed);
+                runtimePtr->adaptiveIncreaseSeconds = 0;
+                runtimePtr->adaptiveStableSeconds = 0;
+            }
+    }
+
+    void noteHostBlock (int numSamples, int64_t elapsedMicros, float outputPeak) noexcept
+    {
+        {
+            auto prevPeak = hostOutPeak.load (std::memory_order_relaxed);
+            while (outputPeak > prevPeak
+                   && ! hostOutPeak.compare_exchange_weak (prevPeak, outputPeak, std::memory_order_relaxed)) {}
+        }
+        hostBlocks.fetch_add (1, std::memory_order_relaxed);
+        hostSumMicros.fetch_add (elapsedMicros, std::memory_order_relaxed);
+        hostLastBlock.store (numSamples, std::memory_order_relaxed);
+        auto prev = hostMaxMicros.load (std::memory_order_relaxed);
+        while (elapsedMicros > prev
+               && ! hostMaxMicros.compare_exchange_weak (prev, elapsedMicros, std::memory_order_relaxed)) {}
+    }
+    std::atomic<bool> connected { false };
+    std::atomic<bool> joined { false };
+    juce::String group;
+    juce::String pendingGroupPassword;
+    bool pendingGroupPublic = false;
+    std::atomic<bool> groupJoinPending { false };
+
+    explicit Impl (MetroNetworkAudio& ownerIn) : owner (ownerIn)
+    {
+        for (auto& slot : runtimeSlots) slot.store (nullptr, std::memory_order_relaxed);
+        mixScratch.assign ((size_t) kAooChannels * (size_t) kAooDefaultBlockSize, 0.0f);
+    }
+
+    ~Impl() { stop(); }
+
+    SourceRuntime* findRuntime (int64_t sourceKey) const noexcept
+    {
+        for (const auto& slot : runtimeSlots)
+        {
+            auto* runtime = slot.load (std::memory_order_acquire);
+            if (runtime != nullptr && runtime->sourceKey == sourceKey) return runtime;
+        }
+        return nullptr;
+    }
+
+    const PeerInfo* findPeer (const sockaddr_in* endpoint) const noexcept
+    {
+        for (const auto& peer : peers)
+            if (sameEndpoint (peer.endpoint.get(), endpoint)) return &peer;
+        return nullptr;
+    }
+
+    bool isDirectPeerAddress (const sockaddr_in* endpoint) const
+    {
+        if (endpoint == nullptr)
+            return false;
+
+        // Direct Apple USB links use one isolated /24 per USB NCM adapter.
+        // Keep all four reserved USB subnets routable so more than one
+        // iPhone/iPad can be attached at the same time. The Apple peer is
+        // normally .2 on each subnet: 192.168.99/24 .. 102/24.
+        const auto hostOrder = ntohl (endpoint->sin_addr.s_addr);
+        const auto subnet = (hostOrder >> 8) & 0xFFFFFFu;
+        if (subnet >= 0xC0A863u && subnet <= 0xC0A866u)
+            return true;
+
+        std::lock_guard<std::mutex> lock (stateMutex);
+        for (const auto& peer : peers)
+            if (peer.endpoint != nullptr
+                && peer.endpoint->sin_addr.s_addr == endpoint->sin_addr.s_addr)
+                return true;
+        return false;
+    }
+
+    std::shared_ptr<sockaddr_in> findPeerEndpoint (const sockaddr_in* endpoint) const
+    {
+        std::lock_guard<std::mutex> lock (stateMutex);
+        for (const auto& peer : peers)
+            if (sameEndpoint (peer.endpoint.get(), endpoint)) return peer.endpoint;
+        return {};
+    }
+
+    static juce::String addressString (const sockaddr_in* endpoint)
+    {
+        if (endpoint == nullptr) return {};
+        char buffer[INET_ADDRSTRLEN] = {};
+        if (inet_ntop (AF_INET, &endpoint->sin_addr, buffer, sizeof (buffer)) == nullptr) return {};
+        return juce::String (buffer);
+    }
+
+    // User override if there is one, otherwise the subnet-based default.
+    juce::String labelForAddress (const juce::String& address)
+    {
+        {
+            std::lock_guard<std::mutex> lock (stateMutex);
+            const auto overrideLabel = labelOverrides.getValue (address, {});
+            if (overrideLabel.isNotEmpty()) return overrideLabel;
+        }
+        return MetroNetworkAudio::defaultSourceLabel (address);
+    }
+
+    void setSourceLabel (const juce::String& address, const juce::String& label)
+    {
+        if (address.isEmpty()) return;
+        const auto trimmed = label.trim();
+        {
+            std::lock_guard<std::mutex> lock (stateMutex);
+            if (trimmed.isEmpty()) labelOverrides.remove (juce::StringRef (address));
+            else                   labelOverrides.set (address, trimmed);
+
+            const auto effective = trimmed.isNotEmpty() ? trimmed : MetroNetworkAudio::defaultSourceLabel (address);
+            for (auto& source : sources)
+                if (source.peerAddress == address)
+                    source.user = effective;
+        }
+        notifySourceChange (this);
+    }
+
+    void setSourceLabels (const juce::StringPairArray& labels)
+    {
+        {
+            std::lock_guard<std::mutex> lock (stateMutex);
+            labelOverrides = labels;
+            for (auto& source : sources)
+                if (source.peerAddress.isNotEmpty())
+                {
+                    const auto overrideLabel = labelOverrides.getValue (source.peerAddress, {});
+                    source.user = overrideLabel.isNotEmpty() ? overrideLabel
+                                                             : MetroNetworkAudio::defaultSourceLabel (source.peerAddress);
+                }
+        }
+        notifySourceChange (this);
+    }
+
+    juce::StringPairArray getSourceLabels()
+    {
+        std::lock_guard<std::mutex> lock (stateMutex);
+        return labelOverrides;
+    }
+
+    void publishDirectRuntimeSource (SourceRuntime* runtime)
+    {
+        if (runtime == nullptr || ! directMode.load (std::memory_order_acquire)
+            || runtime->directSourcePublished)
+            return;
+
+        SourceInfo info;
+        info.sourceKey = runtime->sourceKey;
+        info.sourceId = runtime->sourceId;
+        info.peerAddress = addressString (runtime->endpoint.get());
+        info.user = labelForAddress (info.peerAddress);
+        info.group = "Direct USB";
+        info.online = true;
+        upsertSource (info);
+        runtime->directSourcePublished = true;
+        notifySourceChange (this);
+        aooDiag ("DIRECT SOURCE published sourceId=" + juce::String (runtime->sourceId)
+                 + " endpoint=" + endpointDebug (runtime->endpoint.get()));
+    }
+
+    SourceRuntime* createRuntime (int32_t sourceId, const sockaddr_in* endpoint)
+    {
+        if (sourceId == AOO_ID_WILDCARD
+            || sourceId == AOO_ID_NONE
+            || endpoint == nullptr)
+        {
+            aooDiag ("createRuntime REJECT sourceId="
+                     + juce::String (sourceId)
+                     + " endpoint=" + endpointDebug (endpoint));
+            return nullptr;
+        }
+
+        const auto identitySourceId = directMode.load (std::memory_order_acquire) ? 0 : sourceId;
+        const auto sourceKey = makeSourceKey (endpoint, identitySourceId);
+
+        aooDiag ("createRuntime sourceId=" + juce::String (sourceId)
+                 + " sourceKey=" + juce::String (sourceKey)
+                 + " endpoint=" + endpointDebug (endpoint));
+
+        // SOURCE_ADD and SOURCE_FORMAT may both reach this function. Once a
+        // runtime exists, simply reuse it. Never invite an existing source.
+        // Direct USB is special: the Apple source may change its UDP source
+        // port. Do not use the endpoint port as the runtime identity or a
+        // second runtime/source will be created for the same iPad.
+        SourceRuntime* existing = findRuntime (sourceKey);
+
+        if (directMode.load (std::memory_order_acquire))
+        {
+            for (auto& slot : runtimeSlots)
+            {
+                auto* candidate = slot.load (std::memory_order_acquire);
+                if (candidate != nullptr
+                    && candidate->sourceId == sourceId
+                    && candidate->endpoint != nullptr
+                    && samePeerAddress (candidate->endpoint.get(), endpoint))
+                {
+                    existing = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (existing != nullptr)
+        {
+            // In direct mode, once the peer has actually sent packets, its
+            // active endpoint is owned by the receive loop (which fails over
+            // only when that port goes quiet). Priming or events must not
+            // rewrite it back to a stale port.
+            const bool peerActive = directMode.load (std::memory_order_acquire)
+                                    && existing->lastRxMs.load (std::memory_order_relaxed) != 0;
+
+            if (existing->endpoint != nullptr
+                && ! peerActive
+                && ! sameEndpoint (existing->endpoint.get(), endpoint))
+            {
+                *existing->endpoint = *endpoint;
+                aooDiag ("createRuntime EXISTING endpoint updated"
+                         " runtime="
+                         + juce::String::toHexString (
+                             static_cast<juce::int64> (
+                                 reinterpret_cast<uintptr_t> (existing)))
+                         + " endpoint="
+                         + endpointDebug (existing->endpoint.get()));
+            }
+            else
+            {
+                aooDiag ("createRuntime EXISTING no-op"
+                         " sourceId=" + juce::String (sourceId)
+                         + " handshake="
+                         + juce::String (
+                             existing->handshake == SourceRuntime::HandshakeState::New
+                                 ? "New"
+                                 : existing->handshake == SourceRuntime::HandshakeState::Invited
+                                     ? "Invited"
+                                     : "Formatted"));
+            }
+
+            return existing;
+        }
+
+        // Held until return: the block size read below must still be current
+        // when this runtime is published, or a concurrent prepare() could
+        // reconfigure every *other* sink and leave this one at the old size.
+        std::lock_guard<std::recursive_mutex> configLock (blockConfigMutex);
+        const int blockSize = aooBlockSize.load (std::memory_order_relaxed);
+
+        auto runtime = std::make_unique<SourceRuntime>();
+        runtime->scratch.assign ((size_t) kAooChannels * (size_t) blockSize, 0.0f);
+        runtime->sourceKey = sourceKey;
+        runtime->sourceId = sourceId;
+        runtime->endpoint = std::make_shared<sockaddr_in> (*endpoint);
+        runtime->sink.reset (aoo::isink::create (0));
+
+        if (runtime->sink == nullptr
+            || runtime->sink->setup (
+                   kAooSampleRate,
+                   blockSize,
+                   kAooChannels) <= 0)
+        {
+            aooDiag ("createRuntime FAILED sink setup"
+                     " sourceId=" + juce::String (sourceId)
+                     + " endpoint=" + endpointDebug (endpoint));
+            return nullptr;
+        }
+
+        configureSink (runtime->sink.get(), directMode.load (std::memory_order_acquire));
+        runtime->adaptiveBufferMs.store (directMode.load (std::memory_order_acquire)
+                                             ? latencyConfig().directBufferMs
+                                             : latencyConfig().networkBufferMs,
+                                         std::memory_order_relaxed);
+
+        auto* raw = runtime.get();
+
+        for (auto& slot : runtimeSlots)
+        {
+            SourceRuntime* expected = nullptr;
+
+            if (! slot.compare_exchange_strong (
+                    expected,
+                    raw,
+                    std::memory_order_release,
+                    std::memory_order_relaxed))
+                continue;
+
+            runtimes.push_back (std::move (runtime));
+
+            // Direct USB runtimes may be proactively created for an Apple peer
+            // so an AUv3-hosted SonoBus instance can receive the AOO invite before
+            // it emits its first packet. Keep that bootstrap runtime invisible;
+            // publish it only after the peer actually responds.
+
+            // The only place a dedicated runtime is invited. This is the
+            // New -> Invited transition and happens at most once per runtime.
+            const auto result = raw->sink->invite_source (
+                raw->endpoint.get(),
+                sourceId,
+                sendAooReply);
+
+            if (result > 0)
+            {
+                raw->handshake = SourceRuntime::HandshakeState::Invited;
+                aooDiag ("SOURCE_HANDSHAKE New -> Invited"
+                         " sourceId=" + juce::String (sourceId)
+                         + " endpoint=" + endpointDebug (raw->endpoint.get())
+                         + " result=" + juce::String (result));
+            }
+            else
+            {
+                aooDiag ("SOURCE_HANDSHAKE invite FAILED"
+                         " sourceId=" + juce::String (sourceId)
+                         + " endpoint=" + endpointDebug (raw->endpoint.get())
+                         + " result=" + juce::String (result));
+            }
+
+            return raw;
+        }
+
+        aooDiag ("createRuntime FAILED: no free runtime slot");
+        return nullptr;
+    }
+
+    void destroyRuntimeSlots()
+    {
+        for (auto& slot : runtimeSlots) slot.store (nullptr, std::memory_order_release);
+        runtimes.clear();
+    }
+
+    // Destroys every sink. Takes blockConfigMutex so a concurrent prepare()
+    // can never reconfigure a sink that is being deleted.
+    void teardownSinks()
+    {
+        std::lock_guard<std::recursive_mutex> configLock (blockConfigMutex);
+        discoverySink.reset();
+        destroyRuntimeSlots();
+    }
+
+    // Message thread (via prepare()). Moves every sink to a new block size.
+    // Must never run on the audio thread: sink->setup() allocates and resets
+    // each source's jitter queues (they refill on the next packets, so expect
+    // one short gap - the same as any device/buffer-size change).
+    void reconfigureBlockSize (int newBlockSize)
+    {
+        std::lock_guard<std::recursive_mutex> configLock (blockConfigMutex);
+        if (newBlockSize == aooBlockSize.load (std::memory_order_relaxed)) return;
+
+        // From here the audio thread's try-lock fails and it outputs silence
+        // instead of touching a half-reconfigured sink.
+        const juce::SpinLock::ScopedLockType gate (audioGate);
+
+        aooBlockSize.store (newBlockSize, std::memory_order_relaxed);
+        mixScratch.assign ((size_t) kAooChannels * (size_t) newBlockSize, 0.0f);
+
+        if (discoverySink != nullptr
+            && discoverySink->setup (kAooSampleRate, newBlockSize, kAooChannels) <= 0)
+            aooDiag ("reconfigureBlockSize FAILED discovery sink block=" + juce::String (newBlockSize));
+
+        int reconfigured = 0;
+        for (auto& slot : runtimeSlots)
+        {
+            auto* runtime = slot.load (std::memory_order_acquire);
+            if (runtime == nullptr || runtime->sink == nullptr) continue;
+
+            runtime->scratch.assign ((size_t) kAooChannels * (size_t) newBlockSize, 0.0f);
+            if (runtime->sink->setup (kAooSampleRate, newBlockSize, kAooChannels) <= 0)
+                aooDiag ("reconfigureBlockSize FAILED sink sourceKey=" + juce::String (runtime->sourceKey)
+                         + " block=" + juce::String (newBlockSize));
+            else
+                ++reconfigured;
+        }
+
+        aooDiag ("AOO block size -> " + juce::String (newBlockSize)
+                 + " (" + juce::String (reconfigured) + " sink(s) reconfigured)");
+    }
+
+    // Message thread. Called when the audio device is (re)prepared.
+    void prepare (double sampleRate, int maxBlockSize)
+    {
+        hostSampleRate.store (sampleRate, std::memory_order_relaxed);
+        reconfigureBlockSize (chooseAooBlockSize (maxBlockSize));
+    }
+
+    bool start()
+    {
+        return startWithBinding (0);
+    }
+
+    bool startDirect (int localPort)
+    {
+        return startWithBinding (localPort);
+    }
+
+    bool startWithBinding (int requestedPort)
+    {
+        if (running.load (std::memory_order_acquire)) return true;
+#if defined(_WIN32)
+        WSADATA wsa {};
+        if (WSAStartup (MAKEWORD (2, 2), &wsa) != 0) return false;
+#endif
+        startAooLifetime();
+        socket = ::socket (AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (socket == metroInvalidSocket) return cleanupFailedStart();
+
+        sockaddr_in local {};
+        local.sin_family = AF_INET;
+        local.sin_addr.s_addr = htonl (INADDR_ANY);
+        local.sin_port = htons (static_cast<uint16_t> (juce::jlimit (0, 65535, requestedPort)));
+        if (::bind (socket, reinterpret_cast<const sockaddr*> (&local), sizeof (local)) != 0 || ! setNonBlocking (socket))
+            return cleanupFailedStart();
+
+        socklen_t localLength = sizeof (local);
+        if (getsockname (socket, reinterpret_cast<sockaddr*> (&local), &localLength) != 0)
+            return cleanupFailedStart();
+
+        client.reset (aoo::net::iclient::create (&socket, sendUdp, ntohs (local.sin_port)));
+
+        // Read the block size and publish the sink under one lock so a
+        // concurrent prepare() either sees this sink or is seen by it.
+        std::lock_guard<std::recursive_mutex> configLock (blockConfigMutex);
+        discoverySink.reset (aoo::isink::create (0));
+        if (client == nullptr || discoverySink == nullptr) return cleanupFailedStart();
+        if (discoverySink->setup (kAooSampleRate, aooBlockSize.load (std::memory_order_relaxed), kAooChannels) <= 0)
+            return cleanupFailedStart();
+        configureSink (discoverySink.get(), requestedPort != 0);
+
+        activeAooSocket.store (&socket, std::memory_order_release);
+        directMode.store (requestedPort != 0, std::memory_order_release);
+        running.store (true, std::memory_order_release);
+
+        // ioLoop() is the sole driver of the AOO client. It owns
+        // handle_message(), send(), and handle_events().
+        ioThread = std::thread ([this] { ioLoop(); });
+        return true;
+    }
+
+    bool cleanupFailedStart()
+    {
+        activeAooSocket.store (nullptr, std::memory_order_release);
+        directMode.store (false, std::memory_order_release);
+        client.reset();
+        teardownSinks();
+        closeSocket (socket);
+        socket = metroInvalidSocket;
+        stopAooLifetime();
+#if defined(_WIN32)
+        WSACleanup();
+#endif
+        return false;
+    }
+
+    void stop()
+    {
+        if (! running.exchange (false, std::memory_order_acq_rel)) return;
+        connected.store (false, std::memory_order_release);
+        joined.store (false, std::memory_order_release);
+        groupJoinPending.store (false, std::memory_order_release);
+        activeAooSocket.store (nullptr, std::memory_order_release);
+        directMode.store (false, std::memory_order_release);
+        if (client != nullptr) client->quit();
+        if (ioThread.joinable()) ioThread.join();
+        client.reset();
+        teardownSinks();
+        closeSocket (socket);
+        socket = metroInvalidSocket;
+        {
+            std::lock_guard<std::mutex> lock (stateMutex);
+            sources.clear();
+            peers.clear();
+        }
+        stopAooLifetime();
+#if defined(_WIN32)
+        WSACleanup();
+#endif
+    }
+
+    bool connectDirectPeer (const juce::String& peerHost, int peerPort, int sourceId)
+    {
+        if (! running.load (std::memory_order_acquire) || discoverySink == nullptr || peerHost.isEmpty() || peerPort <= 0 || peerPort > 65535)
+            return false;
+
+        sockaddr_in endpoint {};
+        endpoint.sin_family = AF_INET;
+        endpoint.sin_port = htons (static_cast<uint16_t> (peerPort));
+        if (inet_pton (AF_INET, peerHost.toRawUTF8(), &endpoint.sin_addr) != 1)
+            return false;
+
+        if (sourceId == AOO_ID_WILDCARD || sourceId == AOO_ID_NONE) return false;
+        auto* runtime = createRuntime (sourceId, &endpoint);
+        if (runtime == nullptr) return false;
+
+        {
+            std::lock_guard<std::mutex> lock (stateMutex);
+            auto existing = std::find_if (peers.begin(), peers.end(), [&endpoint] (const auto& peer) { return sameEndpoint (peer.endpoint.get(), &endpoint); });
+            if (existing == peers.end()) peers.push_back ({ std::make_shared<sockaddr_in> (endpoint), "USB", peerHost });
+        }
+        return true;
+    }
+
+    void disconnectDirectPeers ()
+    {
+        stop();
+    }
+
+    bool connectToServer (const juce::String& host, int port, const juce::String& username, const juce::String& password)
+    {
+        if (! running.load (std::memory_order_acquire) || client == nullptr) return false;
+        groupJoinPending.store (false, std::memory_order_release);
+        joined.store (false, std::memory_order_release);
+        connected.store (false, std::memory_order_release);
+        return client->connect (host.toRawUTF8(), port, username.toRawUTF8(), password.toRawUTF8()) > 0;
+    }
+
+    bool joinGroup (const juce::String& groupName, const juce::String& password, bool isPublic)
+    {
+        if (! running.load (std::memory_order_acquire) || client == nullptr) return false;
+        group = groupName;
+        pendingGroupPassword = password;
+        pendingGroupPublic = isPublic;
+        groupJoinPending.store (true, std::memory_order_release);
+        if (! connected.load (std::memory_order_acquire)) return true;
+        return queueGroupJoin();
+    }
+
+    bool queueGroupJoin()
+    {
+        if (! running.load (std::memory_order_acquire) || client == nullptr || ! connected.load (std::memory_order_acquire) || group.isEmpty()) return false;
+        const bool queued = client->group_join (group.toRawUTF8(), pendingGroupPassword.toRawUTF8(), pendingGroupPublic) > 0;
+        if (queued) groupJoinPending.store (false, std::memory_order_release);
+        return queued;
+    }
+
+    void leaveGroup (const juce::String& groupName)
+    {
+        groupJoinPending.store (false, std::memory_order_release);
+        if (client != nullptr) client->group_leave (groupName.toRawUTF8());
+        joined.store (false, std::memory_order_release);
+    }
+
+    void disconnect()
+    {
+        groupJoinPending.store (false, std::memory_order_release);
+        if (client != nullptr) client->disconnect();
+        connected.store (false, std::memory_order_release);
+        joined.store (false, std::memory_order_release);
+    }
+
+    void retryDirectInvites()
+    {
+        if (! directMode.load (std::memory_order_acquire))
+            return;
+
+        for (auto& slot : runtimeSlots)
+        {
+            auto* runtime = slot.load (std::memory_order_acquire);
+            if (runtime == nullptr || runtime->endpoint == nullptr
+                || runtime->sink == nullptr
+                || runtime->handshake == SourceRuntime::HandshakeState::Formatted)
+                continue;
+
+            const auto result = runtime->sink->invite_source (
+                runtime->endpoint.get(),
+                runtime->sourceId,
+                sendAooReply);
+
+            if (result > 0)
+            {
+                runtime->handshake = SourceRuntime::HandshakeState::Invited;
+                aooDiag ("DIRECT_USB invite retry sourceId="
+                         + juce::String (runtime->sourceId)
+                         + " endpoint=" + endpointDebug (runtime->endpoint.get()));
+            }
+        }
+    }
+
+    // Direct USB: how long the active UDP port must be quiet before packets from
+    // another port on the same peer address are accepted as the new endpoint.
+    static constexpr uint32_t kEndpointFailoverMs = 1500;
+
+    // Re-invite pacing for a Formatted direct peer that stopped sending
+    // (iPad unplugged, SonoBus restarted): a hosted AUv3 SonoBus may wait for
+    // an invite before it sends again. Start after this many quiet seconds,
+    // then invite every 2 s for the first 30 s of silence and every 10 s after
+    // that, so a source that was paused on purpose is not nagged forever.
+    static constexpr int kReinviteAfterSeconds = 3;
+
+    static bool shouldReinvite (int idleSeconds) noexcept
+    {
+        if (idleSeconds < kReinviteAfterSeconds) return false;
+        return idleSeconds < 30 ? (idleSeconds % 2 == 0) : (idleSeconds % 10 == 0);
+    }
+
+    // Once a second, io thread. Keeps the handshake state as it is (the UI
+    // already shows NO DATA / READY - NO PACKETS); it only re-sends the invite.
+    void reinviteIfPeerWentQuiet (SourceRuntime& runtime, uint32_t rxPackets)
+    {
+        if (! directMode.load (std::memory_order_acquire)
+            || runtime.handshake != SourceRuntime::HandshakeState::Formatted
+            || runtime.endpoint == nullptr || runtime.sink == nullptr)
+        {
+            runtime.idleSeconds = 0;
+            return;
+        }
+
+        if (rxPackets > 0)
+        {
+            runtime.idleSeconds = 0;
+            return;
+        }
+
+        ++runtime.idleSeconds;
+        if (! shouldReinvite (runtime.idleSeconds))
+            return;
+
+        const auto result = runtime.sink->invite_source (runtime.endpoint.get(), runtime.sourceId, sendAooReply);
+        aooDiag ("DIRECT_USB re-invite quiet peer idleSeconds=" + juce::String (runtime.idleSeconds)
+                 + " result=" + juce::String ((int) result)
+                 + " endpoint=" + endpointDebug (runtime.endpoint.get()));
+    }
+
+    // Below this the delivered signal counts as silence (about -80 dBFS).
+    static constexpr float kSilencePeak = 1.0e-4f;
+
+    // Derives the UI status for one source from the last second of counters.
+    // Runs on the io thread only, so the debounce counters need no locking.
+    static MetroNetworkAudio::LinkState computeLinkState (SourceRuntime& rt, uint32_t calls, uint32_t produced,
+                                                          float peak, uint32_t rxPackets)
+    {
+        using LS = MetroNetworkAudio::LinkState;
+
+        if (rt.handshake != SourceRuntime::HandshakeState::Formatted)
+        {
+            rt.silentSeconds = 0;
+            rt.noDataSeconds = 0;
+            return LS::WaitingForFormat;
+        }
+
+        if (calls == 0)   // no METRO track is pulling from this sink
+        {
+            rt.silentSeconds = 0;
+            rt.noDataSeconds = 0;
+            return LS::ReadyNoTrack;
+        }
+
+        rt.noDataSeconds = rxPackets == 0 ? rt.noDataSeconds + 1 : 0;
+        if (rt.noDataSeconds >= 2)
+            return LS::NoData;
+
+        if (produced == 0)
+            return LS::Buffering;
+
+        if (peak > kSilencePeak)
+        {
+            rt.silentSeconds = 0;
+            return LS::Receiving;
+        }
+
+        ++rt.silentSeconds;
+        // A short gap right after real audio still reads as Receiving.
+        if (rt.silentSeconds < 2 && rt.lastLinkState == LS::Receiving)
+            return LS::Receiving;
+        return LS::Silent;
+    }
+
+    void publishLinkState (const SourceRuntime& rt, MetroNetworkAudio::LinkState state, float peak, uint32_t rxPackets,
+                           uint32_t strayPackets, int strayPort)
+    {
+        std::lock_guard<std::mutex> lock (stateMutex);
+        for (auto& source : sources)
+        {
+            if (source.sourceKey != rt.sourceKey) continue;
+            source.linkState = state;
+            source.peakLevel = peak;
+            source.rxPacketsPerSec = (int) rxPackets;
+            source.strayPacketsPerSec = (int) strayPackets;
+            source.strayPort = strayPackets > 0 ? strayPort : 0;
+            break;
+        }
+    }
+
+    // Once a second: how much the audio callback actually pulled from each
+    // source. calls==0 on a Formatted source means no track/route is reading it;
+    // calls>0 with produced==0 means the sink has nothing decoded to hand back;
+    // produced>0 with peak==0 means silent audio is arriving.
+    void logAudioStats()
+    {
+        adaptJitterBuffers();
+
+        {
+            const auto blocks = hostBlocks.exchange (0, std::memory_order_relaxed);
+            const auto sum = hostSumMicros.exchange (0, std::memory_order_relaxed);
+            const auto mx = hostMaxMicros.exchange (0, std::memory_order_relaxed);
+            aooDiag ("HOST_STATS processBlockCalls=" + juce::String ((int) blocks)
+                     + " avgMicros=" + juce::String (blocks > 0 ? (int64_t) (sum / (int64_t) blocks) : 0)
+                     + " maxMicros=" + juce::String ((juce::int64) mx)
+                     + " lastBlock=" + juce::String (hostLastBlock.load (std::memory_order_relaxed))
+                     + " outPeak=" + juce::String (hostOutPeak.exchange (0.0f, std::memory_order_relaxed), 5));
+
+            juce::String types;
+            for (size_t t = 0; t < eventTypeCounts.size(); ++t)
+                if (const auto n = eventTypeCounts[t].exchange (0, std::memory_order_relaxed))
+                    types << " type" << juce::String ((int) t) << "=" << juce::String ((int) n);
+            if (types.isNotEmpty())
+                aooDiag ("EVENT_TYPES (sink events this second, by numeric type)" + types);
+        }
+
+        for (auto& slot : runtimeSlots)
+        {
+            auto* runtime = slot.load (std::memory_order_acquire);
+            if (runtime == nullptr || runtime->sink == nullptr) continue;
+
+            const auto calls = runtime->diagCalls.exchange (0, std::memory_order_relaxed);
+            const auto produced = runtime->diagProduced.exchange (0, std::memory_order_relaxed);
+            const auto peak = runtime->diagPeak.exchange (0.0f, std::memory_order_relaxed);
+            const auto hostSamples = runtime->diagHostSamples.load (std::memory_order_relaxed);
+            const auto rxPackets = runtime->diagRxPackets.exchange (0, std::memory_order_relaxed);
+            const auto rxBytes = runtime->diagRxBytes.exchange (0, std::memory_order_relaxed);
+
+            const auto linkState = computeLinkState (*runtime, calls, produced, peak, rxPackets);
+            runtime->lastLinkState = linkState;
+            reinviteIfPeerWentQuiet (*runtime, rxPackets);
+            const auto strayPackets = runtime->diagStrayPackets.exchange (0, std::memory_order_relaxed);
+            publishLinkState (*runtime, linkState, peak, rxPackets, strayPackets,
+                              runtime->lastStrayPort.load (std::memory_order_relaxed));
+
+            if (calls == 0 && runtime->handshake != SourceRuntime::HandshakeState::Formatted) continue;
+
+            aooDiag ("AUDIO_STATS endpoint=" + endpointString (runtime->endpoint.get())
+                     + " sourceKey=" + juce::String (runtime->sourceKey)
+                     + " rxPackets=" + juce::String ((int) rxPackets)
+                     + " rxBytes=" + juce::String ((int) rxBytes)
+                     + " audioCallbacks=" + juce::String ((int) calls)
+                     + " producedAudio=" + juce::String ((int) produced)
+                     + " peak=" + juce::String (peak, 5)
+                     + " hostBlock=" + juce::String (hostSamples)
+                     + " hostRate=" + juce::String (hostSampleRate.load (std::memory_order_relaxed), 1)
+                     + " aooRate=" + juce::String (kAooSampleRate)
+                     + " aooBlock=" + juce::String (aooBlockSize.load (std::memory_order_relaxed)));
+        }
+    }
+
+    void ioLoop()
+    {
+        std::array<char, AOO_MAXPACKETSIZE> packet {};
+        int directInviteTicks = 0;
+        auto lastAudioStatsMs = juce::Time::getMillisecondCounter();
+        while (running.load (std::memory_order_acquire))
+        {
+            if (juce::Time::getMillisecondCounter() - lastAudioStatsMs >= 1000)
+            {
+                lastAudioStatsMs = juce::Time::getMillisecondCounter();
+                logAudioStats();
+            }
+
+            if (directMode.load (std::memory_order_acquire) && ++directInviteTicks >= 25)
+            {
+                directInviteTicks = 0;
+                retryDirectInvites();
+            }
+
+            fd_set readSet;
+            FD_ZERO (&readSet);
+            FD_SET (socket, &readSet);
+            timeval timeout {};
+            timeout.tv_usec = 1000;
+            const auto ready = select (static_cast<int> (socket + 1), &readSet, nullptr, nullptr, &timeout);
+
+            if (ready > 0 && FD_ISSET (socket, &readSet))
+            {
+                // One wake-up can correspond to many queued UDP datagrams.
+                // Drain the non-blocking socket before sleeping again so a
+                // packet burst does not pay the select timeout per packet.
+                for (;;)
+                {
+                    sockaddr_in from {};
+                    socklen_t fromLength = sizeof (from);
+                    const auto n = recvfrom (socket, packet.data(), static_cast<int> (packet.size()), 0,
+                                             reinterpret_cast<sockaddr*> (&from), &fromLength);
+                    if (n <= 0)
+                        break;
+                    aooDiag ("RX packet bytes=" + juce::String (n)
+                             + " from=" + endpointDebug (&from)
+                             + " head="
+                             + juce::String::toHexString (reinterpret_cast<const uint8_t*> (packet.data()),
+                                                          static_cast<int> (std::min (n, 24))));
+
+                    if (directMode.load (std::memory_order_acquire) && ! isDirectPeerAddress (&from))
+                    {
+                        aooDiag ("RX direct USB filter dropped packet from=" + endpointDebug (&from));
+                        continue;
+                    }
+
+                    // In direct USB mode there is no AOO server/client
+                    // control session. Feeding peer packets through the network
+                    // client can consume them as server traffic before the
+                    // dedicated source sink sees them. The source sink is the
+                    // sole owner of direct-peer packets.
+                    if (! directMode.load (std::memory_order_acquire))
+                        client->handle_message (packet.data(), n, &from);
+
+                    // AOO identifies a sink source by the endpoint pointer, not
+                    // by the sockaddr value. recvfrom() gives us a new stack
+                    // address on every packet, while invites use persistent
+                    // endpoint objects. Route packets to those same persistent
+                    // endpoint objects so format/data replies match the invited
+                    // source descriptor instead of creating a second descriptor.
+                    auto discoveryEndpoint = findPeerEndpoint (&from);
+
+                    aooDiag ("RX discovery routing from="
+                             + endpointDebug (&from)
+                             + " persistentPeerEndpoint="
+                             + endpointDebug (discoveryEndpoint.get()));
+
+                    // Route each UDP packet to exactly one sink.
+                    // In Direct USB mode runtimes are created lazily from the
+                    // first real packet. This prevents a disconnected/no-USB
+                    // state from manufacturing a visible source in the UI.
+                    SourceRuntime* targetRuntime = nullptr;
+
+                    if (directMode.load (std::memory_order_acquire))
+                    {
+                        for (auto& slot : runtimeSlots)
+                        {
+                            auto* runtime = slot.load (std::memory_order_acquire);
+                            if (runtime != nullptr && runtime->endpoint != nullptr
+                                && samePeerAddress (runtime->endpoint.get(), &from))
+                            {
+                                targetRuntime = runtime;
+                                break;
+                            }
+                        }
+
+                        if (targetRuntime == nullptr)
+                        {
+                            targetRuntime = createRuntime (0, &from);
+                            if (targetRuntime != nullptr)
+                            {
+                                publishDirectRuntimeSource (targetRuntime);
+                                aooDiag ("RX direct USB created runtime from real peer packet"
+                                         " sourceId=0 endpoint=" + endpointDebug (&from));
+
+                                std::lock_guard<std::mutex> lock (stateMutex);
+                                peers.push_back ({ std::make_shared<sockaddr_in> (from), "USB",
+                                                   juce::String (inet_ntoa (from.sin_addr)) });
+                            }
+                        }
+                    }
+
+                    // runtimeSlots is the cross-thread publication mechanism.
+                    // Direct USB has exactly one AOO source identity per Apple
+                    // peer. Never send the same packet through discovery as well
+                    // as the dedicated runtime; discovery can manufacture a
+                    // second source (for example source id 1) for the same iPad.
+                    bool strayPacket = false;
+
+                    if (directMode.load (std::memory_order_acquire))
+                    {
+                        for (auto& slot : runtimeSlots)
+                        {
+                            auto* runtime = slot.load (std::memory_order_acquire);
+                            if (runtime == nullptr || runtime->sink == nullptr
+                                || runtime->endpoint == nullptr
+                                || ! samePeerAddress (runtime->endpoint.get(), &from))
+                                continue;
+
+                            const auto nowMs = juce::Time::getMillisecondCounter();
+
+                            if (! sameEndpoint (runtime->endpoint.get(), &from))
+                            {
+                                // Same peer address, different UDP port. Stay on the
+                                // active endpoint while it is still talking: mixing a
+                                // second socket's packets into this source would
+                                // interleave two streams. Only fail over when the
+                                // active port has gone quiet (the peer really moved).
+                                const auto lastMs = runtime->lastRxMs.load (std::memory_order_relaxed);
+                                const bool activeQuiet = lastMs == 0 || (nowMs - lastMs) >= kEndpointFailoverMs;
+
+                                if (! activeQuiet)
+                                {
+                                    runtime->diagStrayPackets.fetch_add (1, std::memory_order_relaxed);
+                                    runtime->lastStrayPort.store ((int) ntohs (from.sin_port), std::memory_order_relaxed);
+                                    strayPacket = true;
+                                    break;
+                                }
+
+                                aooDiag ("RX runtime endpoint failover from="
+                                         + endpointDebug (runtime->endpoint.get())
+                                         + " to=" + endpointDebug (&from));
+                                *runtime->endpoint = from;
+                            }
+
+                            runtime->lastRxMs.store (nowMs, std::memory_order_relaxed);
+                            targetRuntime = runtime;
+                            if (! runtime->directSourcePublished)
+                                publishDirectRuntimeSource (runtime);
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        for (auto& slot : runtimeSlots)
+                        {
+                            auto* runtime = slot.load (std::memory_order_acquire);
+                            if (runtime == nullptr || runtime->sink == nullptr
+                                || runtime->endpoint == nullptr
+                                || ! samePeerAddress (runtime->endpoint.get(), &from))
+                                continue;
+
+                            targetRuntime = runtime;
+                            break;
+                        }
+                    }
+
+                    // A second socket on the same peer: it was counted above and
+                    // must reach neither this source nor the discovery sink (which
+                    // would manufacture a second source for it).
+                    if (strayPacket)
+                        continue;
+
+                    if (targetRuntime != nullptr)
+                    {
+                        targetRuntime->diagRxPackets.fetch_add (1, std::memory_order_relaxed);
+                        targetRuntime->diagRxBytes.fetch_add ((uint32_t) n, std::memory_order_relaxed);
+                        observePacketArrival (*targetRuntime);
+                        aooDiag ("RX -> runtime"
+                                 " sourceId=" + juce::String (targetRuntime->sourceId)
+                                 + " endpoint=" + endpointDebug (targetRuntime->endpoint.get()));
+
+                        const auto handled = targetRuntime->sink->handle_message (
+                            packet.data(),
+                            n,
+                            targetRuntime->endpoint.get(),
+                            sendAooReply);
+                        aooDiag ("RX runtime handle_message result="
+                                 + juce::String (handled)
+                                 + " sourceId=" + juce::String (targetRuntime->sourceId)
+                                 + " bytes=" + juce::String (n));
+
+                        // Some hosted AUv3 SonoBus instances can complete the
+                        // AOO format exchange without surfacing the format event
+                        // on the sink event queue at the same moment as the
+                        // packet is handled. Query the sink immediately as a
+                        // second path. get_source_format() is harmless until
+                        // the remote format has actually arrived, so this also
+                        // removes a timing dependency from the UI metadata.
+                        if (directMode.load (std::memory_order_acquire)
+                            && targetRuntime->handshake != SourceRuntime::HandshakeState::Formatted)
+                        {
+                            const bool formatted = markFormat (
+                                this,
+                                targetRuntime->sourceKey,
+                                targetRuntime->sink.get(),
+                                targetRuntime->endpoint.get(),
+                                targetRuntime->sourceId);
+                            aooDiag ("RX runtime format probe result="
+                                     + juce::String (formatted ? 1 : 0)
+                                     + " sourceId=" + juce::String (targetRuntime->sourceId));
+                        }
+                    }
+                    else if (discoverySink != nullptr)
+                    {
+                        aooDiag ("RX -> discoverySink endpoint="
+                                 + endpointDebug (
+                                     discoveryEndpoint != nullptr
+                                         ? discoveryEndpoint.get()
+                                         : &from));
+
+                        discoverySink->handle_message (
+                            packet.data(),
+                            n,
+                            discoveryEndpoint != nullptr
+                                ? discoveryEndpoint.get()
+                                : &from,
+                            sendAooReply);
+                    }
+                }
+            }
+
+            if (! directMode.load (std::memory_order_acquire))
+                client->send();
+
+            if (discoverySink != nullptr) discoverySink->send();
+            for (auto& slot : runtimeSlots)
+            {
+                auto* runtime = slot.load (std::memory_order_acquire);
+                if (runtime != nullptr && runtime->sink != nullptr)
+                {
+                    const auto sent = runtime->sink->send();
+                    if (sent > 0)
+                        aooDiag ("TX runtime send result=" + juce::String (sent)
+                                 + " sourceId=" + juce::String (runtime->sourceId)
+                                 + " endpoint=" + endpointDebug (runtime->endpoint.get()));
+                }
+            }
+
+            if (! directMode.load (std::memory_order_acquire)
+                && client->events_available() > 0)
+                client->handle_events (clientEventHandler, this);
+
+            if (! directMode.load (std::memory_order_acquire)
+                && discoverySink != nullptr && discoverySink->events_available() > 0)
+                discoverySink->handle_events (discoveryEventHandler, this);
+
+            for (auto& slot : runtimeSlots)
+            {
+                auto* runtime = slot.load (std::memory_order_acquire);
+                if (runtime != nullptr && runtime->sink != nullptr
+                    && runtime->sink->events_available() > 0)
+                    runtime->sink->handle_events (sourceEventHandler, this);
+            }
+        }
+    }
+
+    static int32_t clientEventHandler (void* user, const aoo_event** events, int32_t count)
+    {
+        auto* self = static_cast<Impl*> (user);
+        for (int32_t i = 0; i < count; ++i)
+        {
+            if (events[i] == nullptr) continue;
+            switch (events[i]->type)
+            {
+                case AOONET_CLIENT_CONNECT_EVENT:
+                    self->connected.store (true, std::memory_order_release);
+                    if (self->groupJoinPending.load (std::memory_order_acquire)) self->queueGroupJoin();
+                    break;
+                case AOONET_CLIENT_GROUP_JOIN_EVENT:
+                {
+                    const auto* event = reinterpret_cast<const aoonet_client_group_event*> (events[i]);
+                    if (event->result > 0) self->joined.store (true, std::memory_order_release);
+                    break;
+                }
+                case AOONET_CLIENT_PEER_JOIN_EVENT:
+                {
+                    const auto* event = reinterpret_cast<const aoonet_client_peer_event*> (events[i]);
+                    if (event->result <= 0 || event->address == nullptr || event->length != sizeof (sockaddr_in)) break;
+                    auto endpoint = std::make_shared<sockaddr_in>();
+                    std::memcpy (endpoint.get(), event->address, sizeof (sockaddr_in));
+
+                    aooDiag ("PEER_JOIN endpoint=" + endpointDebug (endpoint.get())
+                             + " user="
+                             + juce::String (event->user != nullptr
+                                                  ? event->user : "<null>")
+                             + " group="
+                             + juce::String (event->group != nullptr
+                                                  ? event->group : "<null>"));
+
+                    {
+                        std::lock_guard<std::mutex> lock (self->stateMutex);
+                        auto it = std::find_if (self->peers.begin(), self->peers.end(), [&endpoint] (const auto& peer)
+                        {
+                            return sameEndpoint (peer.endpoint.get(), endpoint.get());
+                        });
+                        if (it == self->peers.end())
+                        {
+                            PeerInfo peer;
+                            peer.endpoint = endpoint;
+                            peer.group = event->group != nullptr ? juce::String::fromUTF8 (event->group) : juce::String();
+                            peer.user = event->user != nullptr ? juce::String::fromUTF8 (event->user) : juce::String();
+                            self->peers.push_back (std::move (peer));
+                        }
+                        else
+                        {
+                            if (event->group != nullptr) it->group = juce::String::fromUTF8 (event->group);
+                            if (event->user != nullptr) it->user = juce::String::fromUTF8 (event->user);
+                        }
+
+                        if (auto peer = self->findPeer (endpoint.get()))
+                        {
+                            for (auto& source : self->sources)
+                            {
+                                auto* runtime = self->findRuntime (source.sourceKey);
+                                if (runtime == nullptr || runtime->endpoint == nullptr)
+                                    continue;
+
+                                // A peer can expose multiple AOO sources. Only update
+                                // sources belonging to the peer that just joined; do not
+                                // overwrite every source with the last peer's name.
+                                if (runtime->endpoint->sin_addr.s_addr != endpoint->sin_addr.s_addr)
+                                    continue;
+
+                                source.user = peer->user;
+                                if (peer->group.isNotEmpty()) source.group = peer->group;
+                            }
+                        }
+                    }
+                    if (self->discoverySink != nullptr)
+                    {
+                        // SonoBus exposes each peer's main audio stream as AOO source 0.
+                        // Its bundled AOO fork explicitly rejects wildcard source messages,
+                        // so inviting AOO_ID_WILDCARD only creates a local -1 descriptor and
+                        // can never complete the remote format handshake.
+                        constexpr int32_t sonoBusMainSourceId = 0;
+
+                        aooDiag ("PEER_JOIN source invite sink="
+                                 + juce::String::toHexString (
+                                     static_cast<juce::int64> (
+                                         reinterpret_cast<uintptr_t> (
+                                             self->discoverySink.get())))
+                                 + " endpoint=" + endpointDebug (endpoint.get())
+                                 + " sourceId=" + juce::String (sonoBusMainSourceId));
+
+                        const auto result = self->discoverySink->invite_source (
+                            endpoint.get(), sonoBusMainSourceId, sendAooReply);
+
+                        aooDiag ("PEER_JOIN source invite result="
+                                 + juce::String (result));
+                    }
+                    notifySourceChange (self);
+                    break;
+                }
+                case AOONET_CLIENT_PEER_LEAVE_EVENT:
+                {
+                    const auto* event = reinterpret_cast<const aoonet_client_peer_event*> (events[i]);
+                    if (event->result <= 0 || event->address == nullptr || event->length != sizeof (sockaddr_in)) break;
+                    const auto* endpoint = static_cast<const sockaddr_in*> (event->address);
+                    const juce::String peerGroup = event->group != nullptr ? juce::String::fromUTF8 (event->group) : juce::String();
+                    const juce::String peerUser = event->user != nullptr ? juce::String::fromUTF8 (event->user) : juce::String();
+                    bool sourceChanged = false;
+                    {
+                        std::lock_guard<std::mutex> lock (self->stateMutex);
+                        self->peers.erase (std::remove_if (self->peers.begin(), self->peers.end(), [&] (const auto& peer)
+                        {
+                            return sameEndpoint (peer.endpoint.get(), endpoint);
+                        }), self->peers.end());
+
+                        for (auto& source : self->sources)
+                        {
+                            auto* runtime = self->findRuntime (source.sourceKey);
+                            if (runtime == nullptr || runtime->endpoint == nullptr) continue;
+                            const bool sameIp = runtime->endpoint->sin_addr.s_addr == endpoint->sin_addr.s_addr;
+                            const bool sameGroup = peerGroup.isEmpty() || source.group.isEmpty() || source.group == peerGroup;
+                            const bool sameUser = peerUser.isEmpty() || source.user.isEmpty() || source.user == peerUser;
+                            if (sameIp && sameGroup && sameUser && source.online)
+                            {
+                                source.online = false;
+                                sourceChanged = true;
+                            }
+                        }
+                    }
+                    if (sourceChanged) notifySourceChange (self);
+                    break;
+                }
+                case AOONET_CLIENT_DISCONNECT_EVENT:
+                {
+                    self->connected.store (false, std::memory_order_release);
+                    self->joined.store (false, std::memory_order_release);
+                    bool sourceChanged = false;
+                    {
+                        std::lock_guard<std::mutex> lock (self->stateMutex);
+                        for (auto& source : self->sources)
+                            if (source.online)
+                            {
+                                source.online = false;
+                                sourceChanged = true;
+                            }
+                    }
+                    if (sourceChanged) notifySourceChange (self);
+                    break;
+                }
+                default: break;
+            }
+        }
+        return 1;
+    }
+
+    static void notifySourceChange (Impl* self)
+    {
+        MetroNetworkAudio::SourceListener callback;
+        {
+            std::lock_guard<std::mutex> lock (self->stateMutex);
+            callback = self->listener;
+        }
+        if (callback) juce::MessageManager::callAsync (std::move (callback));
+    }
+
+    static bool markFormat (Impl* self,
+                            int64_t key,
+                            aoo::isink* sink,
+                            void* endpoint,
+                            int32_t sourceId)
+    {
+        if (sink == nullptr || endpoint == nullptr)
+            return false;
+
+        aooDiag ("get_source_format BEGIN"
+                 " key=" + juce::String (key)
+                 + " sourceId=" + juce::String (sourceId)
+                 + " endpoint="
+                 + endpointDebug (
+                     static_cast<const sockaddr_in*> (endpoint)));
+
+        aoo_format_storage format {};
+        const auto result =
+            sink->get_source_format (endpoint, sourceId, format);
+
+        aooDiag ("get_source_format RESULT result="
+                 + juce::String (result)
+                 + " sourceId=" + juce::String (sourceId)
+                 + " endpoint="
+                 + endpointDebug (
+                     static_cast<const sockaddr_in*> (endpoint))
+                 + " channels="
+                 + juce::String (format.header.nchannels)
+                 + " sampleRate="
+                 + juce::String (format.header.samplerate));
+
+        if (result <= 0
+            || format.header.nchannels <= 0
+            || format.header.samplerate <= 0.0)
+            return false;
+
+        bool changed = false;
+
+        {
+            std::lock_guard<std::mutex> lock (self->stateMutex);
+
+            for (auto& source : self->sources)
+            {
+                if (source.sourceKey != key)
+                    continue;
+
+                changed =
+                    source.channels != format.header.nchannels
+                    || source.sampleRate != format.header.samplerate
+                    || ! source.online;
+
+                source.channels = format.header.nchannels;
+                source.sampleRate = format.header.samplerate;
+                source.online = true;
+                break;
+            }
+        }
+
+        // Valid format completes the source handshake. This transition is
+        // terminal until the runtime is destroyed; it never calls
+        // invite_source() and therefore cannot create an invite/format loop.
+        if (auto* runtime = self->findRuntime (key))
+        {
+            if (runtime->handshake != SourceRuntime::HandshakeState::Formatted)
+            {
+                runtime->handshake =
+                    SourceRuntime::HandshakeState::Formatted;
+
+                aooDiag ("SOURCE_HANDSHAKE Invited -> Formatted"
+                         " key=" + juce::String (key)
+                         + " sourceId=" + juce::String (sourceId));
+            }
+        }
+
+        return changed;
+    }
+
+    static int32_t discoveryEventHandler (void* user, const aoo_event** events, int32_t count)
+    {
+        auto* self = static_cast<Impl*> (user);
+        bool changed = false;
+        for (int32_t i = 0; i < count; ++i)
+        {
+            if (events[i] == nullptr) continue;
+            switch (events[i]->type)
+            {
+                case AOO_SOURCE_ADD_EVENT:
+                {
+                    const auto* event = reinterpret_cast<const aoo_source_event*> (events[i]);
+                    if (event->endpoint == nullptr) break;
+
+                    aooDiag ("DISCOVERY SOURCE_ADD"
+                             " id=" + juce::String (event->id)
+                             + " endpoint="
+                             + endpointDebug (
+                                 static_cast<const sockaddr_in*> (
+                                     event->endpoint)));
+
+                    // Never expose a wildcard descriptor as a routable source. SonoBus
+                    // peers are invited explicitly as source 0, so a -1 event can only be
+                    // stale state from an older wildcard invitation.
+                    if (event->id == AOO_ID_WILDCARD) break;
+                    const auto* endpoint = static_cast<const sockaddr_in*> (event->endpoint);
+                    SourceInfo info;
+                    info.sourceKey = makeSourceKey (endpoint, event->id);
+                    info.sourceId = event->id;
+                    info.group = self->group;
+                    info.online = true;
+                    {
+                        std::lock_guard<std::mutex> lock (self->stateMutex);
+                        if (auto peer = self->findPeer (endpoint))
+                        {
+                            info.user = peer->user;
+                            if (peer->group.isNotEmpty()) info.group = peer->group;
+                        }
+                    }
+                    self->upsertSource (info);
+                    auto* runtime = self->createRuntime (event->id, endpoint);
+
+                    // SOURCE_ADD can arrive before the corresponding FORMAT event.
+                    // Populate metadata immediately when AOO already has it.
+                    if (runtime != nullptr && runtime->sink != nullptr)
+                    {
+                        aooDiag ("DISCOVERY SOURCE_ADD markFormat via runtime"
+                                 " runtime="
+                                 + juce::String::toHexString (
+                                     static_cast<juce::int64> (
+                                         reinterpret_cast<uintptr_t> (runtime)))
+                                 + " sink="
+                                 + juce::String::toHexString (
+                                     static_cast<juce::int64> (
+                                         reinterpret_cast<uintptr_t> (
+                                             runtime->sink.get())))
+                                 + " endpoint="
+                                 + endpointDebug (runtime->endpoint.get()));
+
+                        markFormat (self, info.sourceKey, runtime->sink.get(),
+                                    runtime->endpoint.get(), event->id);
+                    }
+
+                    changed = true;
+                    break;
+                }
+                case AOO_SOURCE_FORMAT_EVENT:
+                {
+                    const auto* event = reinterpret_cast<const aoo_source_event*> (events[i]);
+                    if (event->endpoint == nullptr || event->id == AOO_ID_WILDCARD) break;
+
+                    const auto* endpoint =
+                        static_cast<const sockaddr_in*> (event->endpoint);
+                    const auto key = makeSourceKey (endpoint, event->id);
+
+                    aooDiag ("DISCOVERY SOURCE_FORMAT"
+                             " id=" + juce::String (event->id)
+                             + " endpoint=" + endpointDebug (endpoint));
+
+                    // SOURCE_FORMAT is a state transition, not a reason to
+                    // create/invite another sink.
+                    auto* runtime = self->findRuntime (key);
+
+                    if (runtime != nullptr && runtime->sink != nullptr)
+                    {
+                        self->publishDirectRuntimeSource (runtime);
+                        markFormat (
+                            self,
+                            key,
+                            runtime->sink.get(),
+                            runtime->endpoint.get(),
+                            event->id);
+                    }
+                    else if (self->discoverySink != nullptr)
+                    {
+                        // Fallback only when no dedicated runtime exists.
+                        markFormat (
+                            self,
+                            key,
+                            self->discoverySink.get(),
+                            event->endpoint,
+                            event->id);
+                    }
+
+                    changed = true;
+                    break;
+                }
+                case AOO_BLOCK_LOST_EVENT:
+                {
+                    const auto* event = reinterpret_cast<const aoo_block_lost_event*> (events[i]);
+                    if (event->endpoint == nullptr) break;
+                    const auto key = makeSourceKey (static_cast<const sockaddr_in*> (event->endpoint), event->id);
+                    std::lock_guard<std::mutex> lock (self->stateMutex);
+                    for (auto& source : self->sources)
+                        if (source.sourceKey == key)
+                            source.packetLoss = std::min (1.0f, source.packetLoss + 0.001f * (float) event->count);
+                    changed = true;
+                    break;
+                }
+                default: break;
+            }
+        }
+        if (changed) notifySourceChange (self);
+        return 1;
+    }
+
+    static int32_t sourceEventHandler (void* user, const aoo_event** events, int32_t count)
+    {
+        auto* self = static_cast<Impl*> (user);
+        aooDiag ("RUNTIME events count=" + juce::String (count));
+        bool changed = false;
+        for (int32_t i = 0; i < count; ++i)
+        {
+            if (events[i] == nullptr) continue;
+            {
+                const int evType = (int) events[i]->type;
+                if (evType >= 0 && evType < (int) self->eventTypeCounts.size())
+                    self->eventTypeCounts[(size_t) evType].fetch_add (1, std::memory_order_relaxed);
+            }
+            switch (events[i]->type)
+            {
+                case AOO_SOURCE_FORMAT_EVENT:
+                {
+                    const auto* event = reinterpret_cast<const aoo_source_event*> (events[i]);
+                    if (event->endpoint == nullptr || event->id == AOO_ID_WILDCARD) break;
+
+                    const auto* endpoint =
+                        static_cast<const sockaddr_in*> (event->endpoint);
+
+                    // Direct USB source identity is the Apple peer address,
+                    // not the transient UDP source port and not an AOO
+                    // descriptor that may be reported differently by the
+                    // remote SonoBus build. Resolve the event back to the
+                    // single runtime for that peer, then use that runtime's
+                    // stable source key when publishing the format.
+                    SourceRuntime* runtime = nullptr;
+                    int64_t key = makeSourceKey (endpoint, event->id);
+
+                    if (self->directMode.load (std::memory_order_acquire))
+                    {
+                        for (auto& slot : self->runtimeSlots)
+                        {
+                            auto* candidate = slot.load (std::memory_order_acquire);
+                            if (candidate != nullptr
+                                && candidate->sink != nullptr
+                                && candidate->endpoint != nullptr
+                                && samePeerAddress (candidate->endpoint.get(), endpoint))
+                            {
+                                runtime = candidate;
+                                key = candidate->sourceKey;
+                                break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        runtime = self->findRuntime (key);
+                    }
+
+                    aooDiag ("RUNTIME SOURCE_FORMAT"
+                             " eventId=" + juce::String (event->id)
+                             + " endpoint=" + endpointDebug (endpoint)
+                             + " resolvedKey=" + juce::String (key)
+                             + " runtime=" + juce::String (runtime != nullptr ? 1 : 0));
+
+                    if (runtime != nullptr && runtime->sink != nullptr)
+                    {
+                        markFormat (
+                            self,
+                            key,
+                            runtime->sink.get(),
+                            runtime->endpoint.get(),
+                            event->id);
+                    }
+
+                    changed = true;
+                    break;
+                }
+                case AOO_BLOCK_LOST_EVENT:
+                {
+                    const auto* event = reinterpret_cast<const aoo_block_lost_event*> (events[i]);
+                    if (event->endpoint == nullptr) break;
+                    const auto key = makeSourceKey (static_cast<const sockaddr_in*> (event->endpoint), event->id);
+                    std::lock_guard<std::mutex> lock (self->stateMutex);
+                    for (auto& source : self->sources)
+                        if (source.sourceKey == key)
+                            source.packetLoss = std::min (1.0f, source.packetLoss + 0.001f * (float) event->count);
+                    changed = true;
+                    break;
+                }
+                case AOO_SOURCE_REMOVE_EVENT:
+                {
+                    const auto* event = reinterpret_cast<const aoo_source_event*> (events[i]);
+                    if (event->endpoint == nullptr) break;
+                    const auto key = makeSourceKey (static_cast<const sockaddr_in*> (event->endpoint), event->id);
+                    std::lock_guard<std::mutex> lock (self->stateMutex);
+                    for (auto& source : self->sources)
+                        if (source.sourceKey == key) source.online = false;
+                    changed = true;
+                    break;
+                }
+                default: break;
+            }
+        }
+        if (changed) notifySourceChange (self);
+        return 1;
+    }
+
+    void upsertSource (const MetroNetworkAudio::SourceInfo& info)
+    {
+        std::lock_guard<std::mutex> lock (stateMutex);
+        auto it = std::find_if (sources.begin(), sources.end(), [&info] (const auto& source) { return source.sourceKey == info.sourceKey; });
+        if (it == sources.end())
+            sources.push_back (info);
+        else
+        {
+            it->sourceId = info.sourceId;
+            if (info.user.isNotEmpty()) it->user = info.user;
+            if (info.peerAddress.isNotEmpty()) it->peerAddress = info.peerAddress;
+            if (info.group.isNotEmpty()) it->group = info.group;
+            it->online = true;
+        }
+    }
+
+    void refreshSourceFormats()
+    {
+        // Snapshot the AOO runtimes while holding the state lock, then query AOO
+        // without that lock. This keeps format polling independent from callbacks.
+        struct PendingQuery
+        {
+            int64_t sourceKey = 0;
+            int32_t sourceId = 0;
+            std::shared_ptr<sockaddr_in> endpoint;
+            aoo::isink* sink = nullptr;
+        };
+
+        std::vector<PendingQuery> queries;
+        {
+            std::lock_guard<std::mutex> lock (stateMutex);
+            for (const auto& source : sources)
+            {
+                if (source.channels > 0 && source.sampleRate > 0.0)
+                    continue;
+
+                auto* runtime = findRuntime (source.sourceKey);
+                if (runtime == nullptr || runtime->sink == nullptr || runtime->endpoint == nullptr)
+                    continue;
+
+                queries.push_back ({ source.sourceKey, runtime->sourceId, runtime->endpoint, runtime->sink.get() });
+            }
+        }
+
+        struct PendingFormat
+        {
+            int64_t sourceKey = 0;
+            int channels = 0;
+            double sampleRate = 0.0;
+        };
+
+        std::vector<PendingFormat> formats;
+        for (const auto& query : queries)
+        {
+            aoo_format_storage format {};
+            if (query.sink->get_source_format (query.endpoint.get(), query.sourceId, format) > 0
+                && format.header.nchannels > 0 && format.header.samplerate > 0.0)
+                formats.push_back ({ query.sourceKey, format.header.nchannels, static_cast<double> (format.header.samplerate) });
+        }
+
+        bool changed = false;
+        {
+            std::lock_guard<std::mutex> lock (stateMutex);
+            for (const auto& update : formats)
+            {
+                for (auto& source : sources)
+                {
+                    if (source.sourceKey != update.sourceKey)
+                        continue;
+
+                    const bool sourceChanged = source.channels != update.channels
+                                             || source.sampleRate != update.sampleRate
+                                             || ! source.online;
+                    source.channels = update.channels;
+                    source.sampleRate = update.sampleRate;
+                    source.online = true;
+                    changed = changed || sourceChanged;
+                    break;
+                }
+            }
+        }
+
+        if (changed) notifySourceChange (this);
+    }
+
+    bool processSourceChannel (juce::AudioBuffer<float>& destination, int numSamples, int64_t sourceKey, int sourceChannel)
+    {
+        destination.clear();
+        if (! running.load (std::memory_order_acquire) || numSamples <= 0 || sourceChannel < 0) return false;
+
+        // A stereo route reads AOO channels 1+2 with a single sink->process()
+        // per block. A mono route reads one channel and feeds it to both sides.
+        const bool stereo = MetroNetworkAudio::isStereoRoute (sourceChannel);
+        const int leftChannel = stereo ? 0 : sourceChannel;
+        const int rightChannel = stereo ? 1 : sourceChannel;
+
+        auto* runtime = findRuntime (sourceKey);
+        if (runtime == nullptr || runtime->sink == nullptr
+            || leftChannel >= kAooChannels || rightChannel >= kAooChannels) return false;
+
+        // Never block: if the block size is being reconfigured, this callback
+        // is silent and the next one proceeds normally.
+        const juce::SpinLock::ScopedTryLockType gate (audioGate);
+        if (! gate.isLocked()) return false;
+
+        const int aooBlock = aooBlockSize.load (std::memory_order_relaxed);
+        if (runtime->scratch.size() < (size_t) kAooChannels * (size_t) aooBlock) return false;
+
+        runtime->diagCalls.fetch_add (1, std::memory_order_relaxed);
+        runtime->diagHostSamples.store (numSamples, std::memory_order_relaxed);
+
+        bool produced = false;
+        float blockPeak = 0.0f;
+        int offset = 0;
+        while (offset < numSamples)
+        {
+            const int block = std::min (aooBlock, numSamples - offset);
+            for (int c = 0; c < kAooChannels; ++c)
+            {
+                runtime->pointers[(size_t) c] = runtime->scratch.data() + (size_t) c * (size_t) aooBlock;
+                std::fill (runtime->pointers[(size_t) c], runtime->pointers[(size_t) c] + block, 0.0f);
+            }
+
+            if (runtime->sink->process (runtime->pointers.data(), block, aoo_osctime_get()) > 0)
+            {
+                const auto* srcL = runtime->pointers[(size_t) leftChannel];
+                const auto* srcR = runtime->pointers[(size_t) rightChannel];
+                if (destination.getNumChannels() > 0) destination.copyFrom (0, offset, srcL, block);
+                if (destination.getNumChannels() > 1) destination.copyFrom (1, offset, srcR, block);
+                const auto rangeL = juce::FloatVectorOperations::findMinAndMax (srcL, block);
+                blockPeak = juce::jmax (blockPeak, std::abs (rangeL.getStart()), std::abs (rangeL.getEnd()));
+                if (stereo)
+                {
+                    const auto rangeR = juce::FloatVectorOperations::findMinAndMax (srcR, block);
+                    blockPeak = juce::jmax (blockPeak, std::abs (rangeR.getStart()), std::abs (rangeR.getEnd()));
+                }
+                produced = true;
+            }
+            offset += block;
+        }
+
+        if (produced)
+        {
+            runtime->diagProduced.fetch_add (1, std::memory_order_relaxed);
+            auto prev = runtime->diagPeak.load (std::memory_order_relaxed);
+            while (blockPeak > prev
+                   && ! runtime->diagPeak.compare_exchange_weak (prev, blockPeak, std::memory_order_relaxed)) {}
+        }
+        return produced;
+    }
+
+    void processLegacyMix (juce::AudioBuffer<float>& destination, int numSamples)
+    {
+        destination.clear();
+        if (! running.load (std::memory_order_acquire) || discoverySink == nullptr || numSamples <= 0) return;
+        auto& channel = getNetworkAudioChannelState();
+        if (! channel.enabled.load (std::memory_order_relaxed) || channel.muted.load (std::memory_order_relaxed) || ! channel.monitor.load (std::memory_order_relaxed))
+        {
+            channel.publishPeak (0.0f, 0.0f);
+            return;
+        }
+
+        const float gain = channel.linearGain();
+        const float pan = channel.pan.load (std::memory_order_relaxed);
+        const float panAngle = (pan + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
+        const float leftGain = gain * std::cos (panAngle);
+        const float rightGain = gain * std::sin (panAngle);
+        float peakL = 0.0f, peakR = 0.0f;
+        int offset = 0;
+
+        const juce::SpinLock::ScopedTryLockType gate (audioGate);
+        if (! gate.isLocked()) return;   // block size being reconfigured: silent for this callback
+
+        const int aooBlock = aooBlockSize.load (std::memory_order_relaxed);
+        if (mixScratch.size() < (size_t) kAooChannels * (size_t) aooBlock) return;
+
+        while (offset < numSamples)
+        {
+            const int block = std::min (aooBlock, numSamples - offset);
+            for (int c = 0; c < kAooChannels; ++c)
+            {
+                mixPointers[(size_t) c] = mixScratch.data() + (size_t) c * (size_t) aooBlock;
+                std::fill (mixPointers[(size_t) c], mixPointers[(size_t) c] + block, 0.0f);
+            }
+
+            if (discoverySink->process (mixPointers.data(), block, aoo_osctime_get()) > 0)
+            {
+                const int sourceChannels = std::min (destination.getNumChannels(), kAooChannels);
+                for (int c = 0; c < sourceChannels; ++c)
+                    for (int i = 0; i < block; ++i)
+                    {
+                        const float sample = mixPointers[(size_t) c][i];
+                        if (c == 0) peakL = std::max (peakL, std::abs (sample));
+                        if (c == 1) peakR = std::max (peakR, std::abs (sample));
+                    }
+                if (sourceChannels > 0) destination.addFrom (0, offset, mixPointers[0], block, leftGain);
+                if (destination.getNumChannels() > 1) destination.addFrom (1, offset, sourceChannels > 1 ? mixPointers[1] : mixPointers[0], block, rightGain);
+                for (int c = 2; c < sourceChannels; ++c) destination.addFrom (c, offset, mixPointers[(size_t) c], block, gain);
+            }
+            offset += block;
+        }
+        channel.publishPeak (peakL * std::abs (leftGain), peakR * std::abs (rightGain));
+    }
+};
+
+MetroNetworkAudio::MetroNetworkAudio() : impl (std::make_unique<Impl> (*this)) {}
+MetroNetworkAudio::~MetroNetworkAudio() { stop(); }
+bool MetroNetworkAudio::start() { return impl != nullptr && impl->start(); }
+bool MetroNetworkAudio::startDirect (int localPort) { return impl != nullptr && impl->startDirect (localPort); }
+void MetroNetworkAudio::stop() { if (impl != nullptr) impl->stop(); }
+bool MetroNetworkAudio::isRunning() const noexcept { return impl != nullptr && impl->running.load (std::memory_order_acquire); }
+
+bool MetroNetworkAudio::isDirectMode() const noexcept { return impl != nullptr && impl->directMode.load (std::memory_order_acquire); }
+void MetroNetworkAudio::logDiagnostic (const juce::String& message) { aooDiag (message); }
+
+void MetroNetworkAudio::setLatencyProfile (LatencyProfile profile)
+{
+    if (impl == nullptr) return;
+    impl->latencyProfile.store (profile, std::memory_order_release);
+    impl->applyLatencyProfile();
+}
+
+MetroNetworkAudio::LatencyProfile MetroNetworkAudio::getLatencyProfile() const noexcept
+{
+    return impl != nullptr
+        ? impl->latencyProfile.load (std::memory_order_acquire)
+        : LatencyProfile::Normal;
+}
+
+// "192.168.99.x" .. "192.168.102.x" are the four reserved Apple USB networks,
+// one per attached device in slot order -> "USB 1" .. "USB 4".
+MetroNetworkAudio::HostTiming MetroNetworkAudio::getHostTiming() const noexcept
+{
+    HostTiming timing;
+    if (impl != nullptr)
+    {
+        timing.sampleRate = impl->hostSampleRate.load (std::memory_order_relaxed);
+        timing.blockSize = impl->hostBlockSize.load (std::memory_order_relaxed);
+        timing.aooBlockSize = impl->aooBlockSize.load (std::memory_order_relaxed);
+    }
+    return timing;
+}
+
+void MetroNetworkAudio::prepare (double sampleRate, int maxBlockSize)
+{
+    if (impl != nullptr) impl->prepare (sampleRate, maxBlockSize);
+}
+
+int MetroNetworkAudio::getAooBlockSize() const noexcept
+{
+    return impl != nullptr ? impl->aooBlockSize.load (std::memory_order_relaxed) : kAooDefaultBlockSize;
+}
+
+juce::String MetroNetworkAudio::defaultSourceLabel (const juce::String& peerAddress)
+{
+    const auto parts = juce::StringArray::fromTokens (peerAddress, ".", "");
+    if (parts.size() == 4 && parts[0] == "192" && parts[1] == "168")
+    {
+        const int subnet = parts[2].getIntValue();
+        if (subnet >= 99 && subnet <= 102)
+            return "USB " + juce::String (subnet - 98);
+    }
+    return peerAddress.isNotEmpty() ? "USB " + peerAddress : juce::String ("USB");
+}
+
+void MetroNetworkAudio::setSourceLabel (const juce::String& peerAddress, const juce::String& label)
+{
+    if (impl != nullptr) impl->setSourceLabel (peerAddress, label);
+}
+
+void MetroNetworkAudio::setSourceLabels (const juce::StringPairArray& labelsByAddress)
+{
+    if (impl != nullptr) impl->setSourceLabels (labelsByAddress);
+}
+
+juce::StringPairArray MetroNetworkAudio::getSourceLabels() const
+{
+    return impl != nullptr ? impl->getSourceLabels() : juce::StringPairArray();
+}
+
+bool MetroNetworkAudio::connectToServer (const juce::String& host, int port, const juce::String& username, const juce::String& password)
+{
+    return impl != nullptr && impl->connectToServer (host, port, username, password);
+}
+
+bool MetroNetworkAudio::connectDirectPeer (const juce::String& peerHost, int peerPort, int sourceId) { return impl != nullptr && impl->connectDirectPeer (peerHost, peerPort, sourceId); }
+void MetroNetworkAudio::disconnectDirectPeers() { if (impl != nullptr) impl->disconnectDirectPeers(); }
+
+bool MetroNetworkAudio::joinGroup (const juce::String& group, const juce::String& password, bool isPublic)
+{
+    return impl != nullptr && impl->joinGroup (group, password, isPublic);
+}
+
+void MetroNetworkAudio::leaveGroup (const juce::String& group) { if (impl != nullptr) impl->leaveGroup (group); }
+void MetroNetworkAudio::disconnect() { if (impl != nullptr) impl->disconnect(); }
+
+void MetroNetworkAudio::process (juce::AudioBuffer<float>& destination, int numSamples, double sampleRate)
+{
+    juce::ignoreUnused (sampleRate);
+    if (impl != nullptr) impl->processLegacyMix (destination, numSamples);
+}
+
+void MetroNetworkAudio::noteHostBlock (int numSamples, int64_t elapsedMicros, float outputPeak) noexcept
+{
+    if (impl != nullptr) impl->noteHostBlock (numSamples, elapsedMicros, outputPeak);
+}
+
+bool MetroNetworkAudio::processSourceChannel (juce::AudioBuffer<float>& destination, int numSamples, double sampleRate,
+                                              int64_t sourceKey, int sourceChannel)
+{
+    if (impl != nullptr)
+    {
+        impl->hostSampleRate.store (sampleRate, std::memory_order_relaxed);
+        impl->hostBlockSize.store (numSamples, std::memory_order_relaxed);
+    }
+    return impl != nullptr && impl->processSourceChannel (destination, numSamples, sourceKey, sourceChannel);
+}
+
+std::vector<MetroNetworkAudio::SourceInfo> MetroNetworkAudio::getSources() const
+{
+    if (impl == nullptr) return {};
+    impl->refreshSourceFormats();
+    std::lock_guard<std::mutex> lock (impl->stateMutex);
+    return impl->sources;
+}
+
+void MetroNetworkAudio::setSourceListener (SourceListener listener)
+{
+    if (impl == nullptr) return;
+    std::lock_guard<std::mutex> lock (impl->stateMutex);
+    impl->listener = std::move (listener);
+}

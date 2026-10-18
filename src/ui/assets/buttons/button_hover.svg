@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40">
+  <!--
+    Metro spec: flat fill, square corners, borders 1px only, no gloss/glow.
+    Replaces the old gradient+bevel hover sprite (which had a soft cyan
+    glow stroke). Hover state now differs from idle only by a slightly
+    lighter flat fill — no accent glow.
+  -->
+  <rect x="0.5" y="0.5" width="119" height="39" rx="0" fill="#232a35"/>
+  <rect x="0.5" y="0.5" width="119" height="39" rx="0" fill="none" stroke="#05060a" stroke-width="1"/>
+</svg>

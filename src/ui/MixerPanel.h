@@ -1,0 +1,293 @@
+#pragma once
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <array>
+#include <unordered_map>
+#include <vector>
+#include "../audio/SfzPlayer.h"   // Sf2PresetInfo
+#include "../network/NetworkTrackMeters.h"
+
+class DysektProcessor;
+
+/**
+ * MixerPanel — horizontal row mixer.
+ *
+ * Each row = one slice.  Columns: GAIN · PAN · FCUT · PRES · MUTE GRP · OUT
+ * Clicking a row fires CmdSelectSlice.
+ * Knobs write per-slice values directly (no global fallback from this panel).
+ * Scrollable — all slices visible.
+ *
+ * Below the slice rows sits the SF-PLAYER section:
+ *   • One header row  (SF-PLAYER label, master SF2 vol/pan, aggregate meter)
+ *   • N channel rows  (one per assigned preset — GAIN · PAN only)
+ * Channel rows are populated via setActiveChannels().
+ */
+class MixerPanel : public juce::Component,
+                   public juce::Timer
+{
+public:
+    /** Fixed panel height used by PluginEditor layout. */
+    static constexpr int kPanelH      = 260;
+    /** Height of the column-header row. */
+    static constexpr int kHeaderH     = 28;
+    /** Height of each slice row.
+        Bumped 38 -> 46 -> 52 to keep giving value text and knobs more
+        vertical room as fonts grow. Panel height (kPanelH) is unchanged, so
+        taller rows mean fewer rows fit before scrolling — an intentional
+        tradeoff for readability. */
+    static constexpr int kRowH        = 52;
+    /** Height of the master row at the bottom. */
+    static constexpr int kMasterH     = 56;
+    /** Height of the SF-PLAYER header row. */
+    static constexpr int kSf2RowH     = 52;
+    /** Height of the thin section-label divider drawn above the SF-PLAYER,
+        SFZ-PLAYER, and MASTER sections (v27 flat-metro layout rework —
+        replaces the old implicit ordering with an explicit labelled band,
+        so each section reads clearly at a glance). Not drawn above the
+        slice section — the column-header row's "SLICE" label already
+        serves that purpose. */
+    static constexpr int kSectionLabelH = 16;
+    /** Height of each per-channel sub-row under the SF-PLAYER row. */
+    static constexpr int kSf2ChRowH   = 42;
+    static constexpr int kNetRowH     = 52;   // Network Audio track row
+    /** Width of the slice name column. */
+    static constexpr int kNameColW    = 88;
+    /** Width of each knob column.
+        Widened from 84 -> 108 (24px/col x 8 cols = 192px reclaimed) so the
+        GAIN/PAN/FCUT/PRES/OUT knobs, sliders, and value text have more
+        breathing room. The peak meter (drawn in whatever space remains
+        after these columns) narrows by the same 192px as a direct
+        consequence — no separate meter cap needed, and no dead space is
+        introduced since the meter still fills 100% of what's left. */
+    static constexpr int kKnobColW    = 108;
+    /** Number of knob columns (GAIN PAN FCUT PRES MUTE CHRO OUT — meter is after). */
+    static constexpr int kNumCols     = 8;
+    /** Width of the horizontal peak meter column after OUT. */
+    static constexpr int kMeterColW   = 120;
+    /** Real gain parameter range in dB, matching ParamLayout.cpp's
+        masterVolume NormalisableRange(-100.0f, 24.0f) exactly, and the
+        -100..+24 clamp used by every gain drag/commit path in this file
+        (mouseDrag's ColGain cases, the text-editor commit handler).
+        toNormGain()/drawKnobInRow() must both derive the knob's 0 dB tick
+        position from these same two constants, or the knob's rotation and
+        the dB readout next to it silently fall out of sync — e.g. a gain
+        knob with only a ±24 dB visual sweep pins at its end-stop for any
+        value below -24 dB, even though the number keeps counting down to
+        -100. */
+    static constexpr float kGainMinDb = -100.0f;
+    static constexpr float kGainMaxDb =   24.0f;
+    /** Gap between a knob's right edge and its value text. Shared by every
+        row type (slice, master, SF-PLAYER, SFZ-PLAYER, and their sub-rows)
+        so none of them can drift back to a cramped, hard-to-read gap. */
+    static constexpr int kValueTextGap = 14;
+
+    explicit MixerPanel (DysektProcessor& p);
+    ~MixerPanel() override;
+
+    /** Fired when the user clicks a row that corresponds to one of the three
+     *  player tabs, so the owner can switch the main UI to match.
+     *  @param uiMode  0 = Slicer (slice row), 1 = SFZ-PLAYER (sfzPlayer2 row),
+     *                 2 = SF2-PLAYER (SF-PLAYER header or channel row).
+     *  Not fired for clicks on the master row — no player tab corresponds
+     *  to the overall output. */
+    std::function<void(int uiMode)> onTrackSelected;
+
+    /** Fired when an SFZ-PLAYER mixer zone row is clicked; range is MIDI key inclusive. */
+    std::function<void(int loKey, int hiKey)> onSfzZoneSelected;
+
+    /** Highlight the matching SFZ zone row; pass a negative range to clear. */
+    void setSelectedSfzZoneRange (int loKey, int hiKey)
+    {
+        if (selectedSfzZoneLo == loKey && selectedSfzZoneHi == hiKey) return;
+        selectedSfzZoneLo = loKey;
+        selectedSfzZoneHi = hiKey;
+        repaint();
+    }
+
+    /** Fired on any click within an SF2 per-channel sub-row, in addition to
+     *  onTrackSelected(2) above — lets the owner also select the matching
+     *  arranger track (see ArrangeView::selectTrackForSfChannel). Channel is
+     *  the FluidSynth channel index, 0-based. */
+    std::function<void(int channel0Based)> onSf2ChannelSelected;
+
+    /** Fired whenever a channel's mute badge is toggled from this panel, so
+     *  the owner can mirror the state onto the matching arranger track's
+     *  mute (see SequencerEngine::findSfTrackForChannel). Channel is
+     *  0-based; muted is the new mute state. */
+    std::function<void(int channel0Based, bool muted)> onSf2ChannelMuted;
+
+    void paint   (juce::Graphics&) override;
+    void resized () override;
+
+    void mouseDown        (const juce::MouseEvent&) override;
+    void mouseDrag        (const juce::MouseEvent&) override;
+    void mouseUp          (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove   (const juce::MouseEvent&,
+                           const juce::MouseWheelDetails&) override;
+
+    /** Called from editor timer — snapshot version check, repaint if stale. */
+    void updateFromSnapshot();
+
+    /** Called when the SF2 preset→channel assignment changes.
+        Rebuilds the per-channel sub-rows under the SF-PLAYER row. */
+    void setActiveChannels (const std::vector<Sf2PresetInfo>& presets,
+                            const std::unordered_map<int,int>& presetChannels);
+
+    // Timer (drives hold decay, polls Network Audio meters, repaints while active)
+    void timerCallback() override;
+
+private:
+    // ── Column layout ─────────────────────────────────────────────────────
+public:
+    /// Resolves the theme colour key represented by whatever's under this
+    /// point (a slice row's colour tint, or a knob/badge drawn in accent),
+    /// for the Theme Editor's PICK mode (see PluginEditor::resolveThemeKeyAt).
+    /// Returns an empty string when nothing specific is identifiable, so the
+    /// caller can fall back to the panel's own general theme tag.
+    juce::String themeKeyAt (juce::Point<int> p) const;
+
+private:
+    int selectedSfzZoneLo = -1;
+    int selectedSfzZoneHi = -1;
+
+    enum Col { ColGain=0, ColPan, ColFcut, ColPres, ColMute, ColChro, ColLegato, ColOut };
+
+    // ── Hit-test cell ─────────────────────────────────────────────────────
+    struct Cell {
+        int  row       { -1 };    // >=0 = slice index; -1 = master; -2 = sf2 header; -3 = sfz2 (real SFZ-Player) row; -4- = sf2 channel
+        Col  col       { ColGain };
+        juce::Rectangle<int> bounds;
+        bool isMaster  { false };
+        bool isSf2     { false }; // true = SF-PLAYER header row
+        bool isSf2Ch   { false }; // true = SF2 per-channel sub-row
+        bool isSfz2    { false }; // true = SFZ-Player (sfzPlayer2 / real .sfz engine) row
+        bool isSfz2Ch  { false }; // true = per-zone sub-row under the SFZ-Player row
+        bool isNet     { false }; // true = Network Audio track row (a SequencerEngine Audio track)
+        int  netTrack  { -1 };    // SequencerEngine track index when isNet
+        int  sf2Channel{ -1 };    // FluidSynth channel index (0-based) when isSf2Ch
+        int  sfz2ZoneIdx{ -1 };   // sliceManager2 slice index (real, not display-row) when isSfz2Ch
+    };
+
+    // ── Drawing helpers ───────────────────────────────────────────────────
+    void drawHeader       (juce::Graphics&) const;
+    void drawSliceRow     (juce::Graphics&, int rowY, int sliceIdx, bool selected) const;
+    void drawMasterRow    (juce::Graphics&, int rowY) const;
+    void drawSf2Row       (juce::Graphics&, int rowY) const;
+    void drawSf2ChannelRow(juce::Graphics&, int rowY, int channel,
+                           const Sf2PresetInfo& preset) const;
+    /** Row for sfzPlayer2 — the real .sfz-file engine ("SFZ-PLAYER" tab).
+        Only occupies space (and is drawn) once a .sfz file is loaded, so a
+        mixer track appears automatically as soon as the SFZ-Player has
+        something to play. */
+    void drawSfz2Row      (juce::Graphics&, int rowY) const;
+    /** Per-zone sub-row under the SFZ-Player row, for zones with
+        Slice::showInMixer set on sliceManager2 — mirrors drawSf2ChannelRow
+        (GAIN/PAN only) but reads/writes the zone's own slice fields instead
+        of a FluidSynth channel strip. */
+    void drawSfz2ChannelRow (juce::Graphics&, int ry, int zoneIdx) const;
+    /** One Network Audio track (SequencerEngine TrackType::Audio with a network route).
+     *  Reads/writes the SequencerEngine track state directly — no parallel gain/pan/mute. */
+    void drawNetworkRow   (juce::Graphics&, int ry, int trackIndex, int netRowIdx) const;
+    void drawKnobInRow (juce::Graphics&, int cx, int cy, float norm,
+                        bool locked, bool isMaster = false,
+                        bool isGain = false) const;
+    void drawKnobValueText (juce::Graphics&, int knobCx, Col col, int ry, int rowH,
+                            const juce::String& text, juce::Colour colour,
+                            float fontHeight) const;
+    void drawMuteBadge (juce::Graphics&, int cx, int cy,
+                        int muteGroup, bool locked, bool dimmed) const;
+    void drawChroBadge (juce::Graphics&, int cx, int cy, int channel, bool locked) const;
+    void drawMeter     (juce::Graphics&, int x, int y, int w, int h,
+                        float peakL, float peakR, juce::Colour tint, int sliceIdx) const;
+    /** Thin flat divider band with an upper-case label, drawn immediately
+        above a section's first row (see kSectionLabelH). */
+    void drawSectionLabel (juce::Graphics&, int y, const juce::String& text) const;
+
+    juce::String fmtGain (float db)      const;
+    juce::String fmtPan  (float pan)     const;
+    juce::String fmtFcut (float hz)      const;
+    juce::String fmtPres (float res)     const;
+    juce::String fmtOut  (int bus)       const;
+    juce::String fmtMute (int mg)        const;
+
+    float toNormGain (float db)   const;
+    float toNormPan  (float pan)  const;
+    float toNormFcut (float hz)   const;
+    float toNormPres (float res)  const;
+    float toNormOut  (int bus)    const;
+
+    float fromNormFcut (float n) const;
+
+    int   colX        (Col col) const;
+    int   rowY        (int sliceIdx) const;   // top Y of a slice row in the scroll area
+    int   masterRowY  () const;
+    int   sf2RowY     () const;
+    int   sf2ChRowY   (int chRowIdx) const;   // top Y of a per-channel sub-row (0-based index)
+    int   sf2TotalH   () const;               // kSf2RowH + N * kSf2ChRowH
+    int   sfz2RowY    () const;               // top Y of the sfzPlayer2 row, sits below the sf2 section
+    int   sfz2ChRowY  (int chRowIdx) const;   // top Y of a per-zone sub-row (0-based index into visible zones)
+    int   sfz2TotalH  () const;               // kSf2RowH (+ N * kSf2ChRowH for visible zones) when sfzPlayer2 has a file loaded, else 0
+    /** SequencerEngine track indices of the active Network Audio tracks, in track order. */
+    std::vector<int> collectNetworkTracks() const;
+    int   netTotalH   () const;               // kNetRowH * number of network audio tracks (0 when none)
+    int   netRowY     (int netRowIdx) const;  // top Y of a network row (0-based index into collectNetworkTracks())
+    Cell  hitTest     (juce::Point<int> pos) const;
+
+    // ── Drag state ────────────────────────────────────────────────────────
+    struct DragState {
+        bool   active    { false };
+        bool   isMaster  { false };
+        bool   isSf2     { false };
+        bool   isSf2Ch   { false };
+        bool   isSfz2    { false };
+        bool   isSfz2Ch  { false };
+        bool   isNet     { false };
+        int    netTrack  { -1 };
+        int    sf2Channel{ -1 };
+        int    sliceIdx  { -1 };
+        int    sfz2ZoneIdx{ -1 };
+        Col    col       { ColGain };
+        int    startY    { 0 };
+        float  startVal  { 0.f };
+    } drag;
+
+    // ── Peak-hold for phosphor meter (UI-side, decays in timerCallback) ──
+    static constexpr int kMaxHoldSlices = 128;  // matches DysektProcessor::kMaxMeterSlices
+    // Network Audio rows get their own hold slots above the slice/SF2/SFZ slots so
+    // they can never collide with them (slot = kNetHoldBase + track index).
+    static constexpr int kNetHoldBase   = kMaxHoldSlices;
+    static constexpr int kTotalHoldSlots = kMaxHoldSlices + NetworkTrackMeters::kMaxTracks;
+    mutable std::array<float, kTotalHoldSlots> holdL {};
+    mutable std::array<float, kTotalHoldSlots> holdR {};
+
+    // Smoothed meter levels used for stable, continuous rendering. These are
+    // intentionally separate from the peak-hold registers so the live bars
+    // never blink when the audio snapshot briefly drops between UI frames.
+    mutable std::array<float, kTotalHoldSlots> meterL {};
+    mutable std::array<float, kTotalHoldSlots> meterR {};
+
+    // Latest Network Audio peaks (linear), refreshed by timerCallback() from
+    // NetworkTrackMeters reader 1 (the Mixer's own read cursor).
+    std::array<float, NetworkTrackMeters::kMaxTracks> netPeakL {};
+    std::array<float, NetworkTrackMeters::kMaxTracks> netPeakR {};
+
+    // ── Scroll ────────────────────────────────────────────────────────────
+    int   scrollPixels { 0 };   // vertical scroll offset in pixels
+
+    // ── State cache ───────────────────────────────────────────────────────
+    uint32_t cachedVersion { 0xFFFFFFFF };
+    int      cachedNumSlices { -1 };
+
+    // ── SF2 preset→channel map ────────────────────────────────────────────
+    // Populated by setActiveChannels(); drives per-channel sub-rows.
+    // Each entry: { presetInfo, fluidChannel }
+    struct Sf2ChEntry { Sf2PresetInfo preset; int channel; };
+    std::vector<Sf2ChEntry> sf2Channels;
+
+    // ── Text editor for double-click ──────────────────────────────────────
+    std::unique_ptr<juce::TextEditor> textEditor;
+
+    DysektProcessor& processor;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MixerPanel)
+};

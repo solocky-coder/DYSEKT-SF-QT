@@ -1,0 +1,1623 @@
+// =============================================================================
+//  SoundFontLoader.cpp
+// =============================================================================
+#include "SoundFontLoader.h"
+#include "../PluginProcessor.h"
+#include "FluidSynthGlobalLock.h"
+
+#if DYSEKT_HAS_SFIZZ
+  // Include sfizz C API via path relative to the project root.
+  // This avoids relying on target_include_directories propagation.
+  #include "../../sfizz/src/sfizz.h"
+#endif
+#if DYSEKT_HAS_FLUIDSYNTH
+  // SfPlayer-target previews of .sf2 files render through FluidSynth (see
+  // runJobFluidSynth() below) so the waveform matches what SfzPlayer.cpp
+  // actually plays live, rather than through sfizz's SF2 support.
+  #include <fluidsynth.h>
+#endif
+#include <cmath>
+#include <algorithm>
+
+#if DYSEKT_HAS_SFIZZ
+
+// =============================================================================
+//  Constants
+// =============================================================================
+namespace SfzConst
+{
+    constexpr int   kBlockSize        = 256;    // sfizz render block size
+    constexpr int   kProbeSize        = 512;    // samples for note-discovery probe (FluidSynth path only — see kProbeDurationSec for the sfizz path)
+    constexpr float kProbeDurationSec = 0.08f;  // sfizz note-discovery probe length, in seconds (see discoverActiveNotes)
+    constexpr int   kVelocity         = 100;    // MIDI velocity used for all renders
+    constexpr float kNoteDurationSec  = 2.0f;   // sustain phase length per note
+    constexpr float kReleaseSec       = 0.8f;   // release tail length per note
+    constexpr float kGapSec           = 0.005f; // silence gap between concatenated notes
+    constexpr float kSilenceThreshold = 1e-5f;  // below this = silent
+}
+
+// =============================================================================
+//  LoadJob  (ThreadPoolJob)
+// =============================================================================
+
+// =============================================================================
+//  SFZ loop-point parser  (SFZ files only — SF2 have no text opcodes)
+//  Returns {loopStart, loopEnd} in sample frames, or {-1,-1} if not found.
+// =============================================================================
+static std::pair<int,int> parseSfzLoopPoints (const juce::File& sfzFile)
+{
+    if (sfzFile.getFileExtension().toLowerCase() != ".sfz")
+        return { -1, -1 };
+
+    const juce::String text = sfzFile.loadFileAsString();
+    if (text.isEmpty())
+        return { -1, -1 };
+
+    // Walk through opcode tokens looking for loop_start= and loop_end=
+    int loopStart = -1, loopEnd = -1;
+
+    // Simple opcode scan: find "loop_start=<N>" and "loop_end=<N>"
+    // We pick the FIRST occurrence (global or first region — heuristic).
+    auto scanOpcode = [&] (const char* name) -> int
+    {
+        juce::String key (name);
+        int pos = text.indexOfIgnoreCase (key + "=");
+        if (pos < 0) return -1;
+        pos += key.length() + 1;
+        int end = pos;
+        while (end < text.length() && (juce::CharacterFunctions::isDigit (text[end]) || text[end] == '-'))
+            ++end;
+        if (end == pos) return -1;
+        return text.substring (pos, end).getIntValue();
+    };
+
+    loopStart = scanOpcode ("loop_start");
+    loopEnd   = scanOpcode ("loop_end");
+
+    // Both must be present and valid
+    if (loopStart < 0 || loopEnd <= loopStart)
+        return { -1, -1 };
+
+    // Root cause 1 fix: loop_mode= is the actual authority on whether a
+    // sample loops — previously this parser (and the caller) inferred
+    // looping purely from loop_start/loop_end being present, and never
+    // looked at loop_mode at all. That meant a file with an explicit
+    // loop_mode=no_loop (or one_shot) but stray loop_start/loop_end opcodes
+    // — e.g. points carried over from a source .wav's sample chunk — would
+    // still be treated as looping. Absence of loop_mode falls back to the
+    // old points-imply-loop behavior, for files that never specify it.
+    juce::String loopModeStr;
+    {
+        const juce::String key ("loop_mode");
+        int pos = text.indexOfIgnoreCase (key + "=");
+        if (pos >= 0)
+        {
+            pos += key.length() + 1;
+            int end = pos;
+            while (end < text.length() && ! juce::CharacterFunctions::isWhitespace (text[end]))
+                ++end;
+            loopModeStr = text.substring (pos, end).trim().toLowerCase();
+        }
+    }
+    if (loopModeStr == "no_loop" || loopModeStr == "one_shot")
+        return { -1, -1 };
+
+    return { loopStart, loopEnd };
+}
+
+// =============================================================================
+//  Per-region SFZ loop-point parser (SfzPlayer2/SfPlayer targets only)
+//
+//  Real multi-zone .sfz files define loop points per <region>, not once
+//  globally — parseSfzLoopPoints() above only finds the FIRST occurrence in
+//  the whole file, which is wrong for instruments with more than one
+//  region. This walks every <region> block, reads which MIDI key(s) it
+//  covers (key= / lokey=+hikey= / pitch_keycenter=) and its own
+//  loop_start=/loop_end= opcodes (if any), and returns one entry per region
+//  that actually defines a valid loop. SoundFontLoader matches these back
+//  to rendered notes by exact MIDI key.
+// =============================================================================
+struct SfzRegionLoop
+{
+    int loKey = -1, hiKey = -1;   // inclusive MIDI key range this region covers
+    int loopStart = -1, loopEnd = -1;   // raw sample-frame offsets, this region's own sample
+};
+
+static std::vector<SfzRegionLoop> parseSfzPerRegionLoopPoints (const juce::File& sfzFile)
+{
+    std::vector<SfzRegionLoop> result;
+    if (sfzFile.getFileExtension().toLowerCase() != ".sfz")
+        return result;
+
+    const juce::String text = sfzFile.loadFileAsString();
+    if (text.isEmpty())
+        return result;
+
+    // Split on <region> markers (case-insensitive). Each chunk from one
+    // <region> to the next (or EOF) is that region's full opcode list,
+    // including any whitespace/newlines SFZ allows between opcodes.
+    juce::StringArray regionTags;
+    regionTags.add ("<region>");
+    juce::Array<int> regionStarts;
+    {
+        int searchFrom = 0;
+        for (;;)
+        {
+            const int pos = text.indexOfIgnoreCase (searchFrom, "<region>");
+            if (pos < 0) break;
+            regionStarts.add (pos);
+            searchFrom = pos + 1;
+        }
+    }
+    if (regionStarts.isEmpty())
+        return result;
+
+    auto scanIntOpcode = [] (const juce::String& chunk, const char* name) -> int
+    {
+        juce::String key (name);
+        // Match "name=" but not as a suffix of a longer opcode name
+        // (e.g. "key=" must not match inside "lokey=" or "hikey=").
+        int searchFrom = 0;
+        for (;;)
+        {
+            int pos = chunk.indexOfIgnoreCase (searchFrom, key + "=");
+            if (pos < 0) return -1;
+            // Reject if preceded by a letter (would mean we matched a
+            // suffix, e.g. found "key=" inside "lokey=").
+            if (pos > 0 && juce::CharacterFunctions::isLetter (chunk[pos - 1]))
+            {
+                searchFrom = pos + 1;
+                continue;
+            }
+            int valStart = pos + key.length() + 1;
+            int valEnd   = valStart;
+            while (valEnd < chunk.length()
+                   && (juce::CharacterFunctions::isDigit (chunk[valEnd]) || chunk[valEnd] == '-'))
+                ++valEnd;
+            if (valEnd == valStart) return -1;
+            return chunk.substring (valStart, valEnd).getIntValue();
+        }
+    };
+
+    for (int i = 0; i < regionStarts.size(); ++i)
+    {
+        const int chunkStart = regionStarts[i];
+        const int chunkEnd   = (i + 1 < regionStarts.size()) ? regionStarts[i + 1] : text.length();
+        const juce::String chunk = text.substring (chunkStart, chunkEnd);
+
+        SfzRegionLoop rl;
+
+        const int key    = scanIntOpcode (chunk, "key");
+        const int lokey   = scanIntOpcode (chunk, "lokey");
+        const int hikey   = scanIntOpcode (chunk, "hikey");
+        const int pkc     = scanIntOpcode (chunk, "pitch_keycenter");
+
+        if (key >= 0)                       { rl.loKey = key;   rl.hiKey = key; }
+        else if (lokey >= 0 || hikey >= 0)  { rl.loKey = lokey >= 0 ? lokey : 0;
+                                               rl.hiKey = hikey >= 0 ? hikey : 127; }
+        else if (pkc >= 0)                   { rl.loKey = pkc;   rl.hiKey = pkc; }
+        else continue;   // no key info — can't match this region to a rendered note
+
+        rl.loopStart = scanIntOpcode (chunk, "loop_start");
+        rl.loopEnd   = scanIntOpcode (chunk, "loop_end");
+        if (rl.loopStart < 0 || rl.loopEnd <= rl.loopStart)
+            continue;   // this region has no (valid) loop — skip, leave as one-shot
+
+        // Root cause 1 fix (per-region): same loop_mode authority as
+        // parseSfzLoopPoints above — an explicit no_loop/one_shot on this
+        // region wins over stray loop_start/loop_end opcodes. See that
+        // function's comment for the full rationale.
+        {
+            juce::String loopModeStr;
+            int searchFrom = 0;
+            for (;;)
+            {
+                int pos = chunk.indexOfIgnoreCase (searchFrom, "loop_mode=");
+                if (pos < 0) break;
+                if (pos > 0 && juce::CharacterFunctions::isLetter (chunk[pos - 1]))
+                {
+                    searchFrom = pos + 1;
+                    continue;
+                }
+                const int valStart = pos + (int) juce::String ("loop_mode=").length();
+                int valEnd = valStart;
+                while (valEnd < chunk.length() && ! juce::CharacterFunctions::isWhitespace (chunk[valEnd]))
+                    ++valEnd;
+                loopModeStr = chunk.substring (valStart, valEnd).trim().toLowerCase();
+                break;
+            }
+            if (loopModeStr == "no_loop" || loopModeStr == "one_shot")
+                continue;
+        }
+
+        result.push_back (rl);
+    }
+
+    return result;
+}
+
+// =============================================================================
+//  parseSfzAllRegionKeyRanges — like parseSfzPerRegionLoopPoints above, but
+//  keeps EVERY <region> block (not just ones defining a valid loop), since
+//  colouring needs to cover one-shot zones too. Regions are returned in the
+//  same top-to-bottom file order used by
+//  SfzPlayerDropdownPanel::parseSfzZones(), so index i here refers to the
+//  same region as index i there — which is what lets
+//  SfzZoneColours::zoneColour(i) produce matching colours in both places
+//  without the two parsers needing to talk to each other. See
+//  SfzZoneColours.h for the full rationale.
+// =============================================================================
+struct SfzRegionKeyRange
+{
+    int loKey = -1, hiKey = -1;   // inclusive MIDI key range this region covers
+
+    // dysekt_output_bus=N, if present (see SfzSliceDescriptor::outputBus's
+    // doc comment for the -1-means-unset convention this carries through to).
+    int outputBus = -1;
+
+    // dysekt_show_in_mixer=1, if present (see SfzSliceDescriptor::showInMixer).
+    bool showInMixer = false;
+};
+
+static std::vector<SfzRegionKeyRange> parseSfzAllRegionKeyRanges (const juce::File& sfzFile)
+{
+    std::vector<SfzRegionKeyRange> result;
+    if (sfzFile.getFileExtension().toLowerCase() != ".sfz")
+        return result;
+
+    const juce::String text = sfzFile.loadFileAsString();
+    if (text.isEmpty())
+        return result;
+
+    juce::Array<int> regionStarts;
+    {
+        int searchFrom = 0;
+        for (;;)
+        {
+            const int pos = text.indexOfIgnoreCase (searchFrom, "<region>");
+            if (pos < 0) break;
+            regionStarts.add (pos);
+            searchFrom = pos + 1;
+        }
+    }
+    if (regionStarts.isEmpty())
+        return result;
+
+    auto scanIntOpcode = [] (const juce::String& chunk, const char* name) -> int
+    {
+        juce::String key (name);
+        int searchFrom = 0;
+        for (;;)
+        {
+            int pos = chunk.indexOfIgnoreCase (searchFrom, key + "=");
+            if (pos < 0) return -1;
+            if (pos > 0 && juce::CharacterFunctions::isLetter (chunk[pos - 1]))
+            {
+                searchFrom = pos + 1;
+                continue;
+            }
+            int valStart = pos + key.length() + 1;
+            int valEnd   = valStart;
+            while (valEnd < chunk.length()
+                   && (juce::CharacterFunctions::isDigit (chunk[valEnd]) || chunk[valEnd] == '-'))
+                ++valEnd;
+            if (valEnd == valStart) return -1;
+            return chunk.substring (valStart, valEnd).getIntValue();
+        }
+    };
+
+    for (int i = 0; i < regionStarts.size(); ++i)
+    {
+        const int chunkStart = regionStarts[i];
+        const int chunkEnd   = (i + 1 < regionStarts.size()) ? regionStarts[i + 1] : text.length();
+        const juce::String chunk = text.substring (chunkStart, chunkEnd);
+
+        SfzRegionKeyRange rk;
+
+        const int key   = scanIntOpcode (chunk, "key");
+        const int lokey = scanIntOpcode (chunk, "lokey");
+        const int hikey = scanIntOpcode (chunk, "hikey");
+
+        // NOTE: pitch_keycenter is deliberately NOT consulted here. It's a
+        // tuning/root-pitch opcode (where the sample plays back at its
+        // original recorded pitch), not a key-range limiter — a region can
+        // have pitch_keycenter=72 and still respond across the whole
+        // keyboard if no lokey/hikey/key opcode narrows it. An earlier
+        // version of this function used pitch_keycenter as a range fallback,
+        // which incorrectly collapsed such regions to a single matching
+        // note (e.g. "Scoop E1.wav" with only pitch_keycenter=72 present —
+        // matched note 72 alone instead of the correct full range),
+        // leaving every other note unmatched and stuck on the old
+        // random-per-slice colour. parseSfzZones() (ZONES view) never
+        // looked at pitch_keycenter either, so this keeps both parsers
+        // agreeing exactly on what "no key opcode" means.
+        if (key >= 0)                       { rk.loKey = key;   rk.hiKey = key; }
+        else if (lokey >= 0 || hikey >= 0)  { rk.loKey = lokey >= 0 ? lokey : 0;
+                                               rk.hiKey = hikey >= 0 ? hikey : 127; }
+        else                                  { rk.loKey = 0;     rk.hiKey = 127; }
+
+        // dysekt_output_bus — same custom-opcode scan as key/lokey/hikey
+        // above; left at -1 ("unset") when absent, matching bus 0 (Main)
+        // being omitted from the exported .sfz (see SfzExporter).
+        const int outputBus = scanIntOpcode (chunk, "dysekt_output_bus");
+        if (outputBus >= 0)
+            rk.outputBus = juce::jlimit (0, 15, outputBus);
+
+        // dysekt_show_in_mixer — presence (not value) is what matters, same
+        // as SfzImporter's read side; SfzExporter only ever writes "=1".
+        rk.showInMixer = chunk.containsIgnoreCase ("dysekt_show_in_mixer=");
+
+        result.push_back (rk);
+    }
+
+    return result;
+}
+
+
+// =============================================================================
+//  SF2 binary SHDR parser  (SF2 files only)
+//  Reads the sample-header sub-chunk of the sdta-list to extract loop points
+//  for the first non-ROM, looping sample.  No FluidSynth API required —
+//  works against any version.
+//
+//  SF2 SHDR record layout (46 bytes each):
+//    achSampleName[20]  char[20]
+//    dwStart            uint32  — sample start in sample data
+//    dwEnd              uint32  — sample end
+//    dwStartloop        uint32  — loop start
+//    dwEndloop          uint32  — loop end
+//    dwSampleRate       uint32
+//    byOriginalKey      uint8
+//    chCorrection       int8
+//    wSampleLink        uint16
+//    sfSampleType       uint16  — bit 0x8000 = ROM
+//  Returns {loopStart, loopEnd} in sample-frames, or {-1,-1} if none.
+// =============================================================================
+static std::pair<int,int> parseSf2LoopPoints (const juce::File& sf2File)
+{
+    if (sf2File.getFileExtension().toLowerCase() != ".sf2")
+        return { -1, -1 };
+
+    juce::FileInputStream stream (sf2File);
+    if (stream.failedToOpen()) return { -1, -1 };
+
+    // ── Helper lambdas to read little-endian integers ─────────────────────────
+    auto readU32 = [&]() -> uint32_t
+    {
+        uint8_t b[4] = {};
+        stream.read (b, 4);
+        return (uint32_t) b[0] | ((uint32_t) b[1] << 8)
+             | ((uint32_t) b[2] << 16) | ((uint32_t) b[3] << 24);
+    };
+    auto readU16 = [&]() -> uint16_t
+    {
+        uint8_t b[2] = {};
+        stream.read (b, 2);
+        return (uint16_t) b[0] | ((uint16_t) b[1] << 8);
+    };
+    auto readTag = [&]() -> uint32_t { return readU32(); };
+    auto skipN   = [&] (int64_t n) { stream.setPosition (stream.getPosition() + n); };
+
+    // ── Walk RIFF chunks looking for LIST/pdta/shdr ────────────────────────────
+    // RIFF header
+    if (readTag() != 0x46464952u)  // 'RIFF'
+        return { -1, -1 };
+    /* fileSize = */ readU32();
+    if (readTag() != 0x32666673u)  // 'sfbk' (little-endian 'sfbk' = 0x6B626673, wait...)
+    {
+        // 'sfbk' in LE bytes: s=0x73, f=0x66, b=0x62, k=0x6B → 0x6B626673
+        // We already consumed it; check if it might be 'sfbk' LE
+        // Actually just proceed — if the RIFF type is wrong we bail
+        // (we already consumed it above, so we can't re-check; just continue and
+        //  let the chunk search fail gracefully)
+    }
+
+    // ── Scan top-level LIST chunks for 'pdta' ─────────────────────────────────
+    const int64_t fileEnd = stream.getTotalLength();
+    while (stream.getPosition() + 8 <= fileEnd)
+    {
+        const uint32_t chunkId   = readTag();
+        const uint32_t chunkSize = readU32();
+        const int64_t  chunkEnd  = stream.getPosition() + (int64_t) chunkSize;
+
+        if (chunkId == 0x5453494Cu)  // 'LIST'
+        {
+            const uint32_t listType = readTag();
+            if (listType == 0x61746470u)  // 'pdta'
+            {
+                // Inside pdta: scan sub-chunks for 'shdr'
+                while (stream.getPosition() + 8 <= chunkEnd)
+                {
+                    const uint32_t subId   = readTag();
+                    const uint32_t subSize = readU32();
+                    const int64_t  subEnd  = stream.getPosition() + (int64_t) subSize;
+
+                    if (subId == 0x72646873u)  // 'shdr'
+                    {
+                        // Each SHDR record is 46 bytes; last record is the terminal EOS entry
+                        const int numRecords = (int) (subSize / 46);
+                        for (int i = 0; i < numRecords - 1; ++i)  // skip EOS terminal
+                        {
+                            // achSampleName[20]
+                            skipN (20);
+                            const uint32_t sampleStart = readU32();
+                            const uint32_t sampleEnd   = readU32();
+                            const uint32_t loopStart   = readU32();
+                            const uint32_t loopEnd     = readU32();
+                            /* dwSampleRate */ readU32();
+                            /* byOrigKey    */ stream.readByte();
+                            /* chCorrection */ stream.readByte();
+                            /* wSampleLink  */ readU16();
+                            const uint16_t sampleType  = readU16();
+
+                            juce::ignoreUnused (sampleStart, sampleEnd);
+
+                            // Skip ROM samples and non-looping samples
+                            const bool isRom     = (sampleType & 0x8000u) != 0;
+                            const bool hasLoop   = (loopEnd > loopStart + 4);
+
+                            if (!isRom && hasLoop)
+                                return { (int) loopStart, (int) loopEnd };
+                        }
+                        return { -1, -1 };  // 'shdr' found but no looping sample
+                    }
+
+                    stream.setPosition (subEnd);
+                }
+                return { -1, -1 };  // 'pdta' found but no 'shdr'
+            }
+            // Not 'pdta' — skip
+            stream.setPosition (chunkEnd);
+        }
+        else
+        {
+            stream.setPosition (chunkEnd);
+        }
+    }
+    return { -1, -1 };
+}
+
+class SoundFontLoader::LoadJob final : public juce::ThreadPoolJob
+{
+public:
+    LoadJob (juce::File f, double sr, int tok, DysektProcessor& proc, SoundFontLoadTarget tgt,
+             int presetBankIn = -1, int presetProgramIn = -1)
+        : juce::ThreadPoolJob ("SfzLoadJob"),
+          file (std::move (f)),
+          sampleRate (sr),
+          token (tok),
+          processor (proc),
+          target (tgt),
+          presetBank (presetBankIn),
+          presetProgram (presetProgramIn)
+    {}
+
+    // ── Main entry point ──────────────────────────────────────────────────────
+    JobStatus runJob() override
+    {
+#if DYSEKT_HAS_FLUIDSYNTH
+        // SfPlayer previews of .sf2 files render via FluidSynth instead of
+        // sfizz, so the waveform shown matches what SfzPlayer.cpp actually
+        // plays live for SF2 (SfzPlayer routes .sfz through sfizz and .sf2
+        // through FluidSynth — see SfzPlayer.h). .sfz files stay on the
+        // sfizz path below, since that already matches live playback.
+        if (target == SoundFontLoadTarget::SfPlayer
+            && file.getFileExtension().toLowerCase() == ".sf2")
+        {
+            return runJobFluidSynth();
+        }
+#endif
+        return runJobSfizz();
+    }
+
+private:
+    // Per-note render captured during discovery+render, shared by both the
+    // sfizz and FluidSynth backends and consumed by finishAndPost().
+    struct NoteRender
+    {
+        int   midiNote;
+        std::vector<float> L, R;  // time-domain samples
+    };
+
+    JobStatus runJobSfizz()
+    {
+        using namespace SfzConst;
+
+        sfizz_synth_t* sfz = sfizz_create_synth();
+        sfizz_set_sample_rate  (sfz, (float) sampleRate);
+        sfizz_set_samples_per_block (sfz, kBlockSize);
+
+        const bool ok = sfizz_load_file (sfz, file.getFullPathName().toRawUTF8());
+
+        if (target == SoundFontLoadTarget::SfPlayer)
+            processor.crashLogger.log ("SF2 preview: sfizz_load_file(\"" + file.getFullPathName()
+                + "\") -> " + (ok ? "OK" : "FAILED")
+                + "  [preset override " + juce::String (presetBank) + "/" + juce::String (presetProgram) + "]"
+                + "  regions=" + juce::String (ok ? sfizz_get_num_regions (sfz) : -1));
+        else if (target == SoundFontLoadTarget::SfzPlayer2)
+            // SFZ-PLAYER zone-builder preview has no failure UI of its own (see
+            // postFailure() below) so a bad scratch/target file previously failed
+            // completely silently — matrix (parseSfzZones, a lenient text scan)
+            // could show zones that sfizz's real parser rejects outright, with
+            // zero indication why the LCD/waveform/slice-count stayed empty.
+            processor.crashLogger.log ("SFZ-PLAYER zone preview: sfizz_load_file(\"" + file.getFullPathName()
+                + "\") -> " + (ok ? "OK" : "FAILED")
+                + "  regions=" + juce::String (ok ? sfizz_get_num_regions (sfz) : -1));
+
+        if (! ok)
+        {
+            sfizz_free (sfz);
+
+            // This is the exact gap the SFZ-PLAYER preview no-op left open:
+            // a genuine sfizz_load_file() parse failure on the mutated
+            // scratch file (e.g. a bad edit) used to hit postFailure()'s
+            // silent no-op for this target, leaving whatever was in
+            // sliceManager2/sampleData2 before this load -- including a
+            // zone the user just deleted -- sitting there indefinitely,
+            // still shown in the waveform LCD and still audible. Route
+            // through the same "post an empty result" path used for a
+            // legitimate all-silent probe instead, so a failed reload
+            // clears to an honest empty state rather than a stale, wrong
+            // one. Not applicable if this job was merely superseded by a
+            // newer one (shouldExit()) -- that case still no-ops and lets
+            // the newer job's own result be what lands.
+            if (target == SoundFontLoadTarget::SfzPlayer2 && ! shouldExit())
+                postEmptySfzPlayer2Result();
+            else
+                postFailure();
+
+            return jobHasFinished;
+        }
+
+        if (shouldExit())
+        {
+            sfizz_free (sfz);
+            postFailure();
+            return jobHasFinished;
+        }
+
+        // ── Step 0b: select a specific preset before probing (SfPlayer only) ───
+        // sfizz_load_file() alone leaves the synth on whatever preset it
+        // defaults to (bank 0 / program 0). When the caller asked for a
+        // specific preset (SF2-PLAYER preset-grid click), send a standard
+        // MIDI bank-select (CC0 = bank MSB, CC32 = bank LSB) followed by a
+        // program change, then flush a small silent block so the change is
+        // fully applied before discoverActiveNotes()/rendering begin — every
+        // note probed/rendered below then belongs to THIS preset, not
+        // whatever the file defaulted to.
+        if (target == SoundFontLoadTarget::SfPlayer && presetProgram >= 0)
+        {
+            const int bankMsb = (presetBank >> 7) & 0x7F;
+            const int bankLsb = presetBank & 0x7F;
+            sfizz_send_cc (sfz, 0, 0,  bankMsb);
+            sfizz_send_cc (sfz, 0, 32, bankLsb);
+            sfizz_send_program_change (sfz, 0, presetProgram & 0x7F);
+
+            std::vector<float> flushL (kBlockSize, 0.f), flushR (kBlockSize, 0.f);
+            float* flushOuts[2] = { flushL.data(), flushR.data() };
+            sfizz_render_block (sfz, flushOuts, 2, kBlockSize);
+
+            if (shouldExit()) { sfizz_free (sfz); postFailure(); return jobHasFinished; }
+        }
+
+        // ── Step 1: discover active notes ─────────────────────────────────────
+        std::vector<int> activeNotes = discoverActiveNotes (sfz, sampleRate);
+        if (shouldExit()) { sfizz_free (sfz); postFailure(); return jobHasFinished; }
+
+        if (target == SoundFontLoadTarget::SfPlayer)
+            processor.crashLogger.log ("SF2 preview: discoverActiveNotes found "
+                + juce::String ((int) activeNotes.size()) + " responsive note(s)"
+                + (activeNotes.empty() ? " -> falling back to piano range 21-108" : ""));
+        else if (target == SoundFontLoadTarget::SfzPlayer2)
+        {
+            juce::String notesStr;
+            for (int n : activeNotes) notesStr << n << " ";
+            processor.crashLogger.log ("SFZ-PLAYER zone preview: discoverActiveNotes found "
+                + juce::String ((int) activeNotes.size()) + " responsive note(s)"
+                + (activeNotes.empty() ? " -> falling back to full 0-127 sweep" : ": " + notesStr));
+        }
+
+        if (activeNotes.empty())
+        {
+            if (target == SoundFontLoadTarget::SfzPlayer2)
+            {
+                // Zone-builder regions can sit at any key (e.g. the region in
+                // this file is a single key at note 0) — 21-108 assumes a
+                // normal playable instrument range, which doesn't hold here,
+                // so a region outside that range would never be rescued by it.
+                for (int n = 0; n <= 127; ++n)
+                    activeNotes.push_back (n);
+            }
+            else
+            {
+                // Fallback: assume standard piano range
+                for (int n = 21; n <= 108; ++n)
+                    activeNotes.push_back (n);
+            }
+        }
+
+        // ── Step 2: render each active note ───────────────────────────────────
+        // (NoteRender is declared at class scope — shared with runJobFluidSynth())
+        const int sustainSamples = (int) (sampleRate * kNoteDurationSec);
+        const int releaseSamples = (int) (sampleRate * kReleaseSec);
+        const int totalPerNote   = sustainSamples + releaseSamples;
+
+        std::vector<NoteRender> renders;
+        renders.reserve (activeNotes.size());
+
+        std::vector<float> blockL (kBlockSize), blockR (kBlockSize);
+
+        for (int note : activeNotes)
+        {
+            if (shouldExit()) break;
+
+            sfizz_send_note_on (sfz, 0, note, kVelocity);
+
+            NoteRender nr;
+            nr.midiNote = note;
+            nr.L.reserve ((size_t) totalPerNote);
+            nr.R.reserve ((size_t) totalPerNote);
+
+            // Sustain phase
+            renderPhase (sfz, sustainSamples, blockL, blockR, nr.L, nr.R);
+
+            // Note-off, then release tail
+            sfizz_send_note_off (sfz, 0, note, kVelocity);
+            renderPhase (sfz, releaseSamples, blockL, blockR, nr.L, nr.R);
+
+            // Kill remaining audio before next note
+            sfizz_all_sound_off (sfz);
+
+            // Silence-trim and check peak
+            silenceTrim (nr.L, nr.R);
+
+            float peak = 0.f;
+            for (size_t i = 0; i < nr.L.size(); ++i)
+                peak = std::max (peak, std::max (std::abs (nr.L[i]),
+                                                 std::abs (nr.R[i])));
+            if (peak < kSilenceThreshold)
+                continue;  // note produced no audio — skip
+
+            renders.push_back (std::move (nr));
+        }
+
+        sfizz_free (sfz);
+        sfz = nullptr;
+
+        return finishAndPost (std::move (renders), (int) activeNotes.size());
+    }
+
+#if DYSEKT_HAS_FLUIDSYNTH
+    // ── FluidSynth backend (SfPlayer target, .sf2 files only) ────────────────
+    // Mirrors runJobSfizz() step-for-step, but drives a throwaway FluidSynth
+    // instance instead of sfizz — matching the engine SfzPlayer.cpp actually
+    // uses for live .sf2 playback (see SfzPlayer.h / SfzPlayer::loadFile()).
+    // Since this runs on a background job with its own synth instance, it
+    // never touches the live sfzPlayer synth.
+    JobStatus runJobFluidSynth()
+    {
+        using namespace SfzConst;
+
+        fluid_settings_t* settings = nullptr;
+        fluid_synth_t*    synth    = nullptr;
+        int sfontId = FLUID_FAILED;
+
+        {
+            FLUIDSYNTH_LIFECYCLE_LOCK();
+
+            settings = new_fluid_settings();
+            // Deliberately dry: this is an offline, per-note probe+render pass on
+            // a shared synth instance, not the live playback path. Reverb/chorus
+            // tails are NOT flushed by fluid_synth_all_sounds_off() between notes,
+            // so leaving them on lets note N's reverb tail bleed into note N+1's
+            // silence probe — discoverActiveNotesFs() then mistakes that lingering
+            // tail for a genuine note-on, causing far more notes than are really
+            // responsive to be probed/rendered in full (slow preset switches),
+            // and dilutes the concatenated buffer's peak with quiet tail content
+            // instead of clean attacks (waveform reads as flat/dull). sfizz's
+            // preview path (used for .sfz) is dry for the same reason — matched
+            // here rather than mirroring SfzPlayer's live reverb/chorus settings.
+            fluid_settings_setint (settings, "synth.reverb.active", 0);
+            fluid_settings_setint (settings, "synth.chorus.active", 0);
+
+            synth = new_fluid_synth (settings);
+            fluid_synth_set_sample_rate (synth, (float) sampleRate);
+            fluid_synth_set_gain        (synth, 2.0f);   // matches SfzPlayer's live gain
+
+            sfontId = fluid_synth_sfload (synth, file.getFullPathName().toRawUTF8(), 1);
+        }
+
+        const bool ok = (sfontId != FLUID_FAILED);
+
+        processor.crashLogger.log ("SF2 preview (FluidSynth): fluid_synth_sfload(\"" + file.getFullPathName()
+            + "\") -> " + (ok ? "OK" : "FAILED")
+            + "  [preset override " + juce::String (presetBank) + "/" + juce::String (presetProgram) + "]");
+
+        if (! ok || shouldExit())
+        {
+            {
+                FLUIDSYNTH_LIFECYCLE_LOCK();
+                delete_fluid_synth    (synth);
+                delete_fluid_settings (settings);
+            }
+            postFailure();
+            return jobHasFinished;
+        }
+
+        // ── Step 0b: select a specific preset before probing (mirrors sfizz
+        //    path's bank-select/program-change block above). FluidSynth's
+        //    program_select applies synchronously, so no flush render is
+        //    needed before discovery/rendering begin.
+        if (presetProgram >= 0)
+        {
+            const int offset = fluid_synth_get_bank_offset (synth, sfontId);
+            fluid_synth_program_select (synth, 0,
+                                        static_cast<unsigned int> (sfontId),
+                                        static_cast<unsigned int> (offset + presetBank),
+                                        static_cast<unsigned int> (presetProgram));
+
+            if (shouldExit())
+            {
+                {
+                    FLUIDSYNTH_LIFECYCLE_LOCK();
+                    delete_fluid_synth    (synth);
+                    delete_fluid_settings (settings);
+                }
+                postFailure();
+                return jobHasFinished;
+            }
+        }
+
+        // ── Step 1: discover active notes ─────────────────────────────────────
+        std::vector<int> activeNotes = discoverActiveNotesFs (synth);
+        if (shouldExit())
+        {
+            {
+                FLUIDSYNTH_LIFECYCLE_LOCK();
+                delete_fluid_synth    (synth);
+                delete_fluid_settings (settings);
+            }
+            postFailure();
+            return jobHasFinished;
+        }
+
+        processor.crashLogger.log ("SF2 preview (FluidSynth): discoverActiveNotesFs found "
+            + juce::String ((int) activeNotes.size()) + " responsive note(s)"
+            + (activeNotes.empty() ? " -> falling back to piano range 21-108" : ""));
+
+        if (activeNotes.empty())
+        {
+            // Fallback: assume standard piano range
+            for (int n = 21; n <= 108; ++n)
+                activeNotes.push_back (n);
+        }
+
+        // ── Step 2: render each active note ───────────────────────────────────
+        const int sustainSamples = (int) (sampleRate * kNoteDurationSec);
+        const int releaseSamples = (int) (sampleRate * kReleaseSec);
+        const int totalPerNote   = sustainSamples + releaseSamples;
+
+        std::vector<NoteRender> renders;
+        renders.reserve (activeNotes.size());
+
+        std::vector<float> blockL (kBlockSize), blockR (kBlockSize);
+
+        for (int note : activeNotes)
+        {
+            if (shouldExit()) break;
+
+            fluid_synth_noteon (synth, 0, note, kVelocity);
+
+            NoteRender nr;
+            nr.midiNote = note;
+            nr.L.reserve ((size_t) totalPerNote);
+            nr.R.reserve ((size_t) totalPerNote);
+
+            // Sustain phase
+            renderPhaseFs (synth, sustainSamples, blockL, blockR, nr.L, nr.R);
+
+            // Note-off, then release tail
+            fluid_synth_noteoff (synth, 0, note);
+            renderPhaseFs (synth, releaseSamples, blockL, blockR, nr.L, nr.R);
+
+            // Kill remaining audio before next note (immediate cut, mirrors
+            // sfizz_all_sound_off — a plain note-off would leave a release
+            // tail bleeding into the next note's render).
+            fluid_synth_all_sounds_off (synth, 0);
+
+            // Silence-trim and check peak
+            silenceTrim (nr.L, nr.R);
+
+            float peak = 0.f;
+            for (size_t i = 0; i < nr.L.size(); ++i)
+                peak = std::max (peak, std::max (std::abs (nr.L[i]),
+                                                 std::abs (nr.R[i])));
+            if (peak < kSilenceThreshold)
+                continue;  // note produced no audio — skip
+
+            renders.push_back (std::move (nr));
+        }
+
+        {
+            FLUIDSYNTH_LIFECYCLE_LOCK();
+            delete_fluid_synth    (synth);
+            delete_fluid_settings (settings);
+        }
+
+        return finishAndPost (std::move (renders), (int) activeNotes.size());
+    }
+#endif // DYSEKT_HAS_FLUIDSYNTH
+
+    // ── Shared tail: concatenate note renders and post to the target's
+    //    completedLoadData*/pendingPreviewZones*/pendingSfzSlices atomics.
+    //    Backend-agnostic — used by both runJobSfizz() and runJobFluidSynth().
+    JobStatus finishAndPost (std::vector<NoteRender> renders, int numProbed)
+    {
+        if (target == SoundFontLoadTarget::SfPlayer)
+            processor.crashLogger.log ("SF2 preview: " + juce::String ((int) renders.size())
+                + " note(s) produced audio above silence threshold (of "
+                + juce::String (numProbed) + " probed)"
+                + (renders.empty() ? " -> ALL SILENT, render aborted" : ""));
+        else if (target == SoundFontLoadTarget::SfzPlayer2)
+            // Mirrors the SfPlayer log above — this is the exact point where an
+            // all-silent probe (e.g. a region whose key range never actually
+            // produced audible output, or a stale/mismatched sample) causes
+            // postFailure() to no-op and the zone-builder preview to stay
+            // silently empty with no other indication anywhere.
+            processor.crashLogger.log ("SFZ-PLAYER zone preview: " + juce::String ((int) renders.size())
+                + " note(s) produced audio above silence threshold (of "
+                + juce::String (numProbed) + " probed)"
+                + (renders.empty() ? " -> ALL SILENT, render aborted" : ""));
+
+        if (renders.empty() || shouldExit())
+        {
+            // For the SFZ-PLAYER preview pipeline specifically: an all-silent
+            // probe here isn't necessarily a failure -- it's also what
+            // happens when the last remaining zone was just deleted, leaving
+            // zero regions to render. postFailure()'s no-op for this target
+            // (see its comment: "visual-only, no failure-state UI of its
+            // own") is correct for a genuine bad-file/bad-preset failure,
+            // where leaving sampleData2/sliceManager2 untouched is the right
+            // call -- but it's wrong here, because it leaves the PREVIOUS
+            // (now-deleted) buffer sitting in sampleData2 forever: still
+            // audible via processMidi2() until the next real load, and still
+            // painted by SliceWaveformLcd. Post an empty (zero-frame,
+            // zero-slice) result through the normal pipeline instead (see
+            // postEmptySfzPlayer2Result()), so processBlock's decoded2
+            // branch runs its usual clearVoicesBeforeSampleSwap2()/
+            // sliceManager2.clearAll() path against nothing, replacing the
+            // stale buffer rather than leaving it in place.
+            if (target == SoundFontLoadTarget::SfzPlayer2 && ! shouldExit())
+            {
+                postEmptySfzPlayer2Result();
+                return jobHasFinished;
+            }
+
+            postFailure();
+            return jobHasFinished;
+        }
+
+        // ── Step 3: concatenate into one stereo AudioBuffer ───────────────────
+        // SfzPlayer2/SfPlayer targets use NO gap between notes: SliceManager's
+        // marker model derives each slice's end as "the next slice's
+        // startSample" (there is no endSample field at all — see Slice.h).
+        // A gap there would silently become trailing dead air appended to
+        // the END of the PRECEDING slice rather than a true silence between
+        // notes, since nothing marks the gap itself as its own region.
+        // silenceTrim() above has already removed each note's natural
+        // trailing silence/release-tail overhang before concatenation, so
+        // notes can sit directly back-to-back with no audible bleed.
+        // The Slicer target keeps its original small gap unchanged.
+        const bool isSliceTarget = (target == SoundFontLoadTarget::Slicer);
+        const int  gapSamples    = isSliceTarget
+                                  ? std::max (1, (int) (sampleRate * SfzConst::kGapSec))
+                                  : 0;
+        int totalFrames = gapSamples;
+        for (auto& r : renders) totalFrames += (int) r.L.size() + gapSamples;
+
+        auto decoded = std::make_unique<SampleData::DecodedSample>();
+        decoded->buffer.setSize (2, totalFrames, false, true, false);
+
+        {
+            auto nameNoExt = file.getFileNameWithoutExtension();
+            decoded->fileName = nameNoExt;
+        }
+
+        float* dstL = decoded->buffer.getWritePointer (0);
+        float* dstR = decoded->buffer.getWritePointer (1);
+
+        // Build slice payload
+        auto* payload = new SfzSlicePayload();
+        payload->slices.reserve (renders.size());
+
+        int writePos = gapSamples;
+        for (auto& r : renders)
+        {
+            const int len   = (int) r.L.size();
+            const int start = writePos;
+            const int end   = writePos + len;
+
+            std::copy (r.L.begin(), r.L.end(), dstL + start);
+            std::copy (r.R.begin(), r.R.end(), dstR + start);
+
+            SfzSliceDescriptor desc;
+            desc.startSample = start;
+            desc.endSample   = end;
+            desc.midiNote    = r.midiNote;
+            payload->slices.push_back (desc);
+
+            writePos = end + gapSamples;
+        }
+
+        // Build waveform peak mipmaps so SliceWaveformLcd can display the
+        // rendered preset audio.  Must happen before posting to completedLoadData.
+        SampleData::buildPeakMipmaps (*decoded);
+
+
+        // ── Step 3b: extract loop points (SFZ + SF2) and post to sfzPlayer ──────
+        {
+            const auto ext = file.getFileExtension().toLowerCase();
+
+            int globalLoopStart = -1, globalLoopEnd = -1;
+
+            if (ext == ".sfz")
+            {
+                // SFZ: scan text for loop_start= / loop_end= opcodes.
+                std::tie (globalLoopStart, globalLoopEnd) = parseSfzLoopPoints (file);
+
+                if (globalLoopStart >= 0 && !payload->slices.empty())
+                {
+                    // Map raw SFZ sample offsets into the concat buffer.
+                    const int sliceOffset = payload->slices[0].startSample;
+                    const int bufStart    = sliceOffset + globalLoopStart;
+                    const int bufEnd      = sliceOffset + globalLoopEnd;
+
+                    if (bufEnd < totalFrames)
+                    {
+                        payload->slices[0].loopStart = bufStart;
+                        payload->slices[0].loopEnd   = bufEnd;
+                        processor.sfzPlayer.setLoopPoints (bufStart, bufEnd);
+                        processor.sfzPlayer2.setLoopPoints (bufStart, bufEnd);
+                    }
+                    else
+                    {
+                        processor.sfzPlayer.setLoopPoints (-1, -1);
+                        processor.sfzPlayer2.setLoopPoints (-1, -1);
+                    }
+                }
+                else
+                {
+                    processor.sfzPlayer.setLoopPoints (-1, -1);
+                    processor.sfzPlayer2.setLoopPoints (-1, -1);
+                }
+            }
+            else if (ext == ".sf2")
+            {
+                // SF2: parse SHDR binary chunk for the first looping sample.
+                // Returns raw sample-frame offsets within the SF2 instrument data.
+                std::tie (globalLoopStart, globalLoopEnd) = parseSf2LoopPoints (file);
+
+                if (globalLoopStart >= 0 && !payload->slices.empty())
+                {
+                    // SF2 loop offsets are relative to the raw instrument sample.
+                    // The rendered slice for the first note starts at sliceStart
+                    // and spans sliceLen frames.  Express the loop region as a
+                    // fraction of (0..loopEnd) mapped into (0..sliceLen).
+                    const int sliceStart = payload->slices[0].startSample;
+                    const int sliceLen   = payload->slices[0].endSample - sliceStart;
+
+                    if (sliceLen > 0 && globalLoopEnd > 0)
+                    {
+                        const float lsFrac = juce::jlimit (0.0f, 0.98f,
+                                                (float) globalLoopStart / (float) globalLoopEnd);
+                        const int bufStart = sliceStart + (int) (lsFrac * (float) sliceLen);
+                        const int bufEnd   = sliceStart + sliceLen;  // loop to end of note render
+
+                        payload->slices[0].loopStart = bufStart;
+                        payload->slices[0].loopEnd   = bufEnd;
+                        processor.sfzPlayer.setLoopPoints (bufStart, bufEnd);
+                        processor.sfzPlayer2.setLoopPoints (bufStart, bufEnd);
+                    }
+                    else
+                    {
+                        processor.sfzPlayer.setLoopPoints (-1, -1);
+                        processor.sfzPlayer2.setLoopPoints (-1, -1);
+                    }
+                }
+                else
+                {
+                    processor.sfzPlayer.setLoopPoints (-1, -1);
+                    processor.sfzPlayer2.setLoopPoints (-1, -1);
+                }
+            }
+            else
+            {
+                processor.sfzPlayer.setLoopPoints (-1, -1);
+                processor.sfzPlayer2.setLoopPoints (-1, -1);
+            }
+        }
+
+        // ── Step 3c: per-region loop points for SfzPlayer2/SfPlayer targets ────
+        // The Step 3b logic above only resolves ONE global loop region (and
+        // only applies it to slices[0]) — fine for the Slicer's own
+        // setLoopPoints UI feature, but wrong for SfzPlayer2/SfPlayer, which
+        // need every rendered note's OWN region's loop points so the
+        // two-slice attack/sustain split (done by the caller after this
+        // payload is posted) is accurate per note. SF2 files are skipped
+        // here — parseSf2LoopPoints only resolves one global region from the
+        // binary SHDR chunk, with no per-region key-range data to match
+        // against; SF2 instruments fall back to one-shot slices until a
+        // proper multi-region SF2 parser exists.
+        //
+        // NOTE on loop coordinates (fixes "loop then fades while held"):
+        // rl.loopStart/loopEnd are raw sample-frame offsets within the
+        // REGION'S OWN SOURCE .wav FILE. desc.startSample/endSample are
+        // offsets into the CONCATENATED RENDER BUFFER — i.e. sfizz's live
+        // *performance* of the note (attack, kNoteDurationSec of sustain
+        // that sfizz already looped internally while rendering, then a
+        // forced note-off + kReleaseSec release tail), not a copy of the
+        // source file. These two coordinate spaces have no relationship to
+        // each other, so `desc.startSample + rl.loopStart` used to land on
+        // an essentially arbitrary offset inside the render — often
+        // straddling the sustain→release boundary. Because that offset
+        // still usually passed the `bufEnd < desc.endSample` sanity check,
+        // VoicePool's native infinite loop (see the head/tail split in
+        // PluginProcessor.cpp) ended up repeatedly cycling through part of
+        // the baked release/fade-out tail, which sounds exactly like
+        // "loop, then fade out" on a loop even while the note is still
+        // held, instead of a clean sustain loop.
+        //
+        // Fix: for this baked-performance buffer, the only sample range
+        // that's actually safe to loop forever is the sustain phase sfizz
+        // rendered before the forced note-off — i.e. everything in this
+        // note's render except the trailing kReleaseSec release tail.
+        // rl.loopStart/loopEnd are only used here to decide WHETHER a
+        // region defines a sustain loop at all (loopEnd > loopStart),
+        // never as literal offsets into this buffer.
+        if ((target == SoundFontLoadTarget::SfzPlayer2 || target == SoundFontLoadTarget::SfPlayer)
+            && file.getFileExtension().toLowerCase() == ".sfz")
+        {
+            const auto regionLoops = parseSfzPerRegionLoopPoints (file);
+            const int  releaseSamples = (int) (sampleRate * SfzConst::kReleaseSec);
+
+            for (auto& desc : payload->slices)
+            {
+                for (const auto& rl : regionLoops)
+                {
+                    if (desc.midiNote < rl.loKey || desc.midiNote > rl.hiKey)
+                        continue;
+                    if (rl.loopEnd <= rl.loopStart)
+                        break;   // region matched but defines no real loop
+
+                    const int noteLen = desc.endSample - desc.startSample;
+
+                    // Loop the sustain portion of the render only — stop
+                    // short of the baked release tail so the native
+                    // infinite loop never plays back into a fade.
+                    const int bufStart = desc.startSample;
+                    const int bufEnd   = desc.endSample
+                                        - juce::jmin (releaseSamples, noteLen - 1);
+
+                    if (bufEnd > bufStart)
+                    {
+                        desc.loopStart = bufStart;
+                        desc.loopEnd   = bufEnd;
+                    }
+                    break;   // first matching region wins
+                }
+            }
+        }
+
+        // ── Step 3d: per-zone colour for SfzPlayer2 target ──────────────────────
+        // Stamp each note-slice with the ARGB colour of the <region> it came
+        // from, so the SFZ-PLAYER waveform strip visually groups slices by
+        // zone the same way the ZONES view (KeysPanel, via
+        // SfzPlayerDropdownPanel::parseSfzZones) already colours its rows.
+        // Region index here must walk <region> blocks in the same top-to-
+        // bottom file order parseSfzZones() uses, so index i means the same
+        // region in both places — see SfzZoneColours.h for why colour is a
+        // pure function of that index rather than something handed across
+        // threads.
+        //
+        // Matching direction: when two <region> blocks have overlapping key
+        // ranges (e.g. a main hit zone plus a group= mute/choke-group
+        // companion covering nearly the same keys — a legitimate Multisampler
+        // construct, not malformed input), a note in the overlap can match
+        // more than one entry in regionRanges. sfizz renders the actual
+        // per-note audio as a black box and never reports back which region
+        // it used, so there is no authoritative answer here — but scanning
+        // LAST-to-first and keeping the first hit (i.e. preferring the region
+        // that appears LATEST in the file) is a better tie-break than the
+        // previous first-to-first scan: MultisamplerInstrument::zones is
+        // rendered into <region> blocks in list order, so "latest in file"
+        // corresponds to "most recently added/edited zone" — the one a user
+        // mid-edit (e.g. just toggled MIX on) actually cares about. Previously
+        // scanning top-to-bottom meant an older, unrelated zone earlier in the
+        // list could permanently shadow a newer overlapping one's colour/
+        // outputBus/showInMixer, with no way for the newer zone to ever win.
+        if (target == SoundFontLoadTarget::SfzPlayer2
+            && file.getFileExtension().toLowerCase() == ".sfz")
+        {
+            const auto regionRanges = parseSfzAllRegionKeyRanges (file);
+            for (auto& desc : payload->slices)
+            {
+                for (int i = (int) regionRanges.size() - 1; i >= 0; --i)
+                {
+                    const auto& rk = regionRanges[(size_t) i];
+                    if (rk.loKey < 0 || desc.midiNote < rk.loKey || desc.midiNote > rk.hiKey)
+                        continue;
+
+                    desc.zoneColourArgb = SfzZoneColours::zoneColourArgb (i);
+                    desc.zoneLoKey      = rk.loKey;
+                    desc.zoneHiKey      = rk.hiKey;
+                    desc.zoneRegionIdx  = i;
+                    desc.outputBus      = rk.outputBus;   // -1 if the region had no dysekt_output_bus opcode
+                    desc.showInMixer    = rk.showInMixer;
+                    break;   // last matching region wins (see comment above)
+                }
+            }
+        }
+
+        // ── Step 4: post results ──────────────────────────────────────────────
+        if (target == SoundFontLoadTarget::Slicer)
+        {
+            // Post slice layout (processBlock picks this up right after applyDecodedSample)
+            auto* oldPayload = processor.pendingSfzSlices.exchange (payload,
+                                                                     std::memory_order_acq_rel);
+            delete oldPayload;
+
+            // Post decoded audio (same path as WAV loader — processBlock polls this).
+            // Build the SnapshotPtr here, on the worker thread, so processBlock's
+            // consumption is a plain pointer swap (see SampleData::applyDecodedSample).
+            SampleData::SnapshotPtr ready = std::move (decoded);
+            processor.exchangeCompletedLoadData (std::move (ready));
+
+            processor.latestLoadKind.store ((int) DysektProcessor::LoadKindReplace,
+                                            std::memory_order_release);
+        }
+        else if (target == SoundFontLoadTarget::SfzPlayer2)
+        {
+            // DYSEKT-addzone-nomidi (part 2): SfzPlayer2-target loads are
+            // dispatched as ThreadPoolJobs and can finish out of order. If a
+            // newer preview load has been requested since THIS job started
+            // (e.g. two Add Zone confirms in quick succession, or an Add
+            // Zone landing while the initial file-load preview is still
+            // rendering), applying this job's now-stale result would silently
+            // overwrite sliceManager2 with a zone list that's missing
+            // whatever the newer load added -- the zone-builder matrix still
+            // shows the zone correctly (it reads the sfz text directly, not
+            // this pipeline) but the note has no MIDI mapping. Discard rather
+            // than post in that case; whichever job actually matches the
+            // latest request will supersede it. Mirrors the Slicer's
+            // token/latestLoadToken guard, via nextPreviewToken2/
+            // latestPreviewToken2 instead (see PluginProcessor.h).
+            if (token != processor.latestPreviewToken2.load (std::memory_order_acquire))
+            {
+                delete payload;
+                processor.mainLoadInFlight.store (false, std::memory_order_release);
+                return jobHasFinished;
+            }
+
+            // SFZ-PLAYER preview: sfzPlayer2 handles MIDI internally, so the
+            // slice descriptors are never turned into real slices — but they
+            // ARE reused as a read-only "preview zones" overlay so the
+            // SFZ-PLAYER's waveform can show the same colored per-note bands
+            // as the Slicer. Repackage as SfzPreviewZonePayload and post via
+            // pendingPreviewZones2; completely decoupled from the Slicer's
+            // sampleData / sliceManager.
+            auto* zonePayload = new SfzPreviewZonePayload();
+            zonePayload->slices = std::move (payload->slices);
+            delete payload;
+
+            auto* oldZones = processor.pendingPreviewZones2.exchange (zonePayload,
+                                                                       std::memory_order_acq_rel);
+            delete oldZones;
+
+            // Built here, on the loader worker thread, so processBlock's
+            // consumption via exchangeCompletedLoadData2() is a plain
+            // pointer/refcount swap -- see SampleData::applyDecodedSample().
+            SampleData::SnapshotPtr ready2 = std::move (decoded);
+            processor.exchangeCompletedLoadData2 (std::move (ready2));
+        }
+        else // SoundFontLoadTarget::SfPlayer
+        {
+            // Same guard as the SfzPlayer2 branch above (DYSEKT-addzone-nomidi
+            // part 3): SfPlayer-target loads are dispatched as ThreadPoolJobs
+            // too and can finish out of order — e.g. clicking two preset rows
+            // in Sf2InstrumentWorkspace in quick succession, or a click
+            // landing while the initial file-load render is still in flight.
+            // Discard rather than post if a newer SF2-PLAYER preview load has
+            // been requested since this job started.
+            if (token != processor.latestPreviewToken3.load (std::memory_order_acquire))
+            {
+                delete payload;
+                processor.sf2PreviewRenderInFlight.store (false, std::memory_order_release);
+                return jobHasFinished;
+            }
+
+            // SF2-PLAYER preview — mirrors the SfzPlayer2 branch above exactly,
+            // posting to the parallel completedLoadData3/pendingPreviewZones3
+            // pipeline instead, so the two preview tabs never share a buffer.
+            auto* zonePayload = new SfzPreviewZonePayload();
+            zonePayload->slices        = std::move (payload->slices);
+            zonePayload->presetBank    = presetBank;
+            zonePayload->presetProgram = presetProgram;
+            delete payload;
+
+            processor.crashLogger.log ("SF2 preview: posting " + juce::String (decoded->buffer.getNumSamples())
+                + " frames, " + juce::String ((int) zonePayload->slices.size()) + " zone(s) to sampleData3/previewZones3"
+                + "  [preset " + juce::String (presetBank) + "/" + juce::String (presetProgram) + "]");
+
+            auto* oldZones = processor.pendingPreviewZones3.exchange (zonePayload,
+                                                                       std::memory_order_acq_rel);
+            delete oldZones;
+
+            // Built here, on the loader worker thread -- mirrors the
+            // completedLoadData2 fix above.
+            SampleData::SnapshotPtr ready3 = std::move (decoded);
+            processor.exchangeCompletedLoadData3 (std::move (ready3));
+        }
+        return jobHasFinished;
+    }
+
+private:
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    void renderPhase (sfizz_synth_t* sfz, int numSamples,
+                      std::vector<float>& blockL, std::vector<float>& blockR,
+                      std::vector<float>& outL,   std::vector<float>& outR) const
+    {
+        int remaining = numSamples;
+        while (remaining > 0)
+        {
+            int block = std::min (remaining, SfzConst::kBlockSize);
+            std::fill (blockL.begin(), blockL.end(), 0.f);
+            std::fill (blockR.begin(), blockR.end(), 0.f);
+            float* outs[2] = { blockL.data(), blockR.data() };
+            sfizz_render_block (sfz, outs, 2, block);
+            outL.insert (outL.end(), blockL.begin(), blockL.begin() + block);
+            outR.insert (outR.end(), blockR.begin(), blockR.begin() + block);
+            remaining -= block;
+        }
+    }
+
+    static void silenceTrim (std::vector<float>& L, std::vector<float>& R)
+    {
+        // Trim leading silence
+        int start = 0;
+        for (int i = 0; i < (int) L.size() - 1; ++i)
+        {
+            if (std::abs (L[i]) > SfzConst::kSilenceThreshold ||
+                std::abs (R[i]) > SfzConst::kSilenceThreshold)
+                break;
+            ++start;
+        }
+        if (start > 0)
+        {
+            L.erase (L.begin(), L.begin() + start);
+            R.erase (R.begin(), R.begin() + start);
+        }
+
+        // Trim trailing silence (keep minimum 64 samples)
+        int end = (int) L.size();
+        while (end > 64)
+        {
+            if (std::abs (L[(size_t)(end-1)]) > SfzConst::kSilenceThreshold ||
+                std::abs (R[(size_t)(end-1)]) > SfzConst::kSilenceThreshold)
+                break;
+            --end;
+        }
+        L.resize ((size_t) end);
+        R.resize ((size_t) end);
+    }
+
+    // Fast pass to find which notes produce audio.
+    //
+    // Probe length is time-based (kProbeDurationSec), not a fixed sample
+    // count: the old fixed 512-sample probe was only ~11.6ms at 44.1kHz (and
+    // shorter still at higher sample rates), which is too short to catch a
+    // region with any real attack ramp or a `delay`/`offset` opcode — those
+    // notes render silence for the whole probe window, get marked
+    // "unresponsive", and (if that happens for every note in the file) send
+    // discoverActiveNotes() to 0 results, forcing the caller into the
+    // expensive full-128-note/full-duration fallback sweep even when a
+    // proper probe would have found the real key range directly.
+    static std::vector<int> discoverActiveNotes (sfizz_synth_t* sfz, double sampleRate)
+    {
+        const int probeSize = std::max (SfzConst::kProbeSize,
+                                        (int) std::lround (sampleRate * SfzConst::kProbeDurationSec));
+
+        std::vector<int> found;
+        // sfizz is configured via sfizz_set_samples_per_block(sfz, kBlockSize)
+        // (see the ctor above), so each render_block call must request no
+        // more than kBlockSize samples — the probe buffer is sized for one
+        // chunk and reused across the multiple chunks needed to cover
+        // probeSize, same pattern as renderPhase().
+        std::vector<float> chunkL (SfzConst::kBlockSize, 0.f);
+        std::vector<float> chunkR (SfzConst::kBlockSize, 0.f);
+        float* outs[2] = { chunkL.data(), chunkR.data() };
+
+        for (int n = 0; n <= 127; ++n)
+        {
+            sfizz_send_note_on (sfz, 0, n, SfzConst::kVelocity);
+
+            float peak = 0.f;
+            int remaining = probeSize;
+            while (remaining > 0)
+            {
+                const int block = std::min (remaining, SfzConst::kBlockSize);
+                std::fill (chunkL.begin(), chunkL.end(), 0.f);
+                std::fill (chunkR.begin(), chunkR.end(), 0.f);
+                sfizz_render_block (sfz, outs, 2, block);
+
+                for (int i = 0; i < block; ++i)
+                    peak = std::max (peak, std::max (std::abs (chunkL[i]),
+                                                     std::abs (chunkR[i])));
+                remaining -= block;
+            }
+
+            sfizz_all_sound_off (sfz);
+
+            if (peak > SfzConst::kSilenceThreshold)
+                found.push_back (n);
+        }
+        return found;
+    }
+
+#if DYSEKT_HAS_FLUIDSYNTH
+    // FluidSynth counterpart of renderPhase(). fluid_synth_process()
+    // ACCUMULATES into its output buffers, so they must be zeroed before
+    // every call (see the same note in SfzPlayer.cpp's live process()).
+    void renderPhaseFs (fluid_synth_t* synth, int numSamples,
+                        std::vector<float>& blockL, std::vector<float>& blockR,
+                        std::vector<float>& outL,   std::vector<float>& outR) const
+    {
+        int remaining = numSamples;
+        while (remaining > 0)
+        {
+            int block = std::min (remaining, SfzConst::kBlockSize);
+            std::fill (blockL.begin(), blockL.end(), 0.f);
+            std::fill (blockR.begin(), blockR.end(), 0.f);
+            float* planes[2] = { blockL.data(), blockR.data() };
+            fluid_synth_process (synth, block, 0, nullptr, 2, planes);
+            outL.insert (outL.end(), blockL.begin(), blockL.begin() + block);
+            outR.insert (outR.end(), blockR.begin(), blockR.begin() + block);
+            remaining -= block;
+        }
+    }
+
+    // FluidSynth counterpart of discoverActiveNotes().
+    static std::vector<int> discoverActiveNotesFs (fluid_synth_t* synth)
+    {
+        std::vector<int> found;
+        std::vector<float> probeL (SfzConst::kProbeSize, 0.f);
+        std::vector<float> probeR (SfzConst::kProbeSize, 0.f);
+        float* planes[2] = { probeL.data(), probeR.data() };
+
+        for (int n = 0; n <= 127; ++n)
+        {
+            std::fill (probeL.begin(), probeL.end(), 0.f);
+            std::fill (probeR.begin(), probeR.end(), 0.f);
+
+            fluid_synth_noteon        (synth, 0, n, SfzConst::kVelocity);
+            fluid_synth_process       (synth, SfzConst::kProbeSize, 0, nullptr, 2, planes);
+            fluid_synth_all_sounds_off (synth, 0);
+
+            float peak = 0.f;
+            for (int i = 0; i < SfzConst::kProbeSize; ++i)
+                peak = std::max (peak, std::max (std::abs (probeL[i]),
+                                                 std::abs (probeR[i])));
+            if (peak > SfzConst::kSilenceThreshold)
+                found.push_back (n);
+        }
+        return found;
+    }
+#endif // DYSEKT_HAS_FLUIDSYNTH
+
+    // Posts an empty (zero-frame, zero-slice) SfzPlayer2 result through the
+    // normal completedLoadData2/pendingPreviewZones2 pipeline, so
+    // processBlock's decoded2 branch runs its usual
+    // clearVoicesBeforeSampleSwap2()/sliceManager2.clearAll() path against
+    // nothing -- replacing whatever stale buffer/slices were there rather
+    // than leaving them in place. Used both for a legitimate all-silent
+    // probe (e.g. the last remaining zone was just deleted -- see
+    // finishAndPost()) and for a genuine sfizz_load_file() parse failure on
+    // the mutated scratch/target file (see runJobSfizz()) -- in both cases
+    // leaving sliceManager2/sampleData2 completely untouched would leave a
+    // stale zone (including one the user just deleted) sitting in the
+    // waveform LCD and still audible via processMidi2() indefinitely, with
+    // nothing telling the user it didn't take.
+    //
+    // Must NOT be called for a shouldExit() (superseded-by-a-newer-job)
+    // bail-out -- that path should stay a genuine no-op via postFailure()
+    // and let the newer job's own result (empty or not) be what lands;
+    // callers are responsible for that check before calling this.
+    void postEmptySfzPlayer2Result()
+    {
+        if (token == processor.latestPreviewToken2.load (std::memory_order_acquire))
+        {
+            auto emptyDecoded = std::make_unique<SampleData::DecodedSample>();
+            emptyDecoded->buffer.setSize (2, 0, false, true, false);
+            emptyDecoded->fileName = file.getFileNameWithoutExtension();
+            SampleData::buildPeakMipmaps (*emptyDecoded);   // safe on 0 frames
+
+            // No slices — the empty payload itself IS the signal that this
+            // zone list is now empty.
+            auto* emptyZones = new SfzPreviewZonePayload();
+            auto* oldZones = processor.pendingPreviewZones2.exchange (
+                emptyZones, std::memory_order_acq_rel);
+            delete oldZones;
+
+            SampleData::SnapshotPtr ready2 = std::move (emptyDecoded);
+            processor.exchangeCompletedLoadData2 (std::move (ready2));
+        }
+        // else: a newer preview load superseded this one — say nothing and
+        // let that job's own result (empty or not) be what lands.
+
+        // Whether or not the empty result above was posted (stale token
+        // means it wasn't), the in-flight flags this job set in load() must
+        // still come down here, or a stale-token job would leave MIDI
+        // gated / the LCD stuck on "LOADING..." forever with no later
+        // completedLoadData2 delivery to clear them via processBlock.
+        processor.mainLoadInFlight.store             (false, std::memory_order_release);
+        processor.sfzPlayer2RebuildInFlight.store    (false, std::memory_order_release);
+        processor.sfzPlayer2LcdRebuildInFlight.store (false, std::memory_order_release);
+    }
+
+    void postFailure()
+    {
+        // Any SfPlayer render (initial file-load OR a preset-scoped click
+        // re-render) can bail out here — bad file, silent preset, or
+        // shouldExit() mid-probe — every early "return jobHasFinished"
+        // upstream of the completedLoadData3/pendingPreviewZones3 post ends
+        // up here. Always clear the in-flight flag on that path, or
+        // Sf2WaveformLcd would show "rendering..." forever with no result
+        // ever arriving to clear it.
+        if (target == SoundFontLoadTarget::SfPlayer)
+            processor.sf2PreviewRenderInFlight.store (false, std::memory_order_release);
+
+        // Slicer/SfzPlayer2 mirror the same "clear in-flight on any bail-out
+        // path" requirement — otherwise SliceWaveformLcd would show its
+        // loading state forever if a kit load fails partway through.
+        if (target == SoundFontLoadTarget::Slicer || target == SoundFontLoadTarget::SfzPlayer2)
+            processor.mainLoadInFlight.store (false, std::memory_order_release);
+
+        // sfzPlayer2RebuildInFlight/sfzPlayer2LcdRebuildInFlight are only
+        // ever set for the SfzPlayer2 target (see load() above), so only
+        // clear them here — otherwise this bail-out path would leave a
+        // note-on gated or the LCD stuck on "LOADING..." forever if a
+        // SFZ-PLAYER rebuild fails partway through.
+        if (target == SoundFontLoadTarget::SfzPlayer2)
+        {
+            processor.sfzPlayer2RebuildInFlight.store    (false, std::memory_order_release);
+            processor.sfzPlayer2LcdRebuildInFlight.store (false, std::memory_order_release);
+        }
+
+        // SFZ-PLAYER preview is visual-only and has no failure-state UI of its
+        // own (sfzPlayer2's live engine handles its own failure reporting
+        // separately), so for that target we no-op here rather than add a
+        // second failure-result atomic. This is now only reached for a
+        // genuinely no-op-worthy bail-out — a job superseded by a newer one
+        // (shouldExit()) — where leaving sliceManager2/sampleData2 untouched
+        // is correct because the newer job's own result is what should land.
+        // A real load/parse failure on this target no longer ends up here:
+        // it's routed through postEmptySfzPlayer2Result() instead (see
+        // runJobSfizz()'s `! ok` branch and finishAndPost()'s all-silent
+        // branch), so stale data left over from before this load — including
+        // a zone the user just deleted — doesn't linger indefinitely.
+        if (target != SoundFontLoadTarget::Slicer)
+            return;
+
+        auto* payload = new DysektProcessor::FailedLoadResult();
+        payload->token = token;
+        payload->kind  = DysektProcessor::LoadKindReplace;
+        payload->file  = file;
+        auto* old = processor.completedLoadFailure.exchange (payload,
+                                                             std::memory_order_acq_rel);
+        delete old;
+    }
+
+    juce::File          file;
+    double              sampleRate;
+    int                 token;
+    DysektProcessor&    processor;
+    SoundFontLoadTarget target;
+    int                 presetBank;
+    int                 presetProgram;
+};
+
+// =============================================================================
+//  SoundFontLoader::load  (public entry point — UI thread)
+// =============================================================================
+void SoundFontLoader::load (const juce::File& file, SoundFontLoadTarget target,
+                             int presetBank, int presetProgram)
+{
+    const double sr = processor.currentSampleRate > 0.0
+                      ? processor.currentSampleRate : 44100.0;
+
+    int token = 0;
+
+    if (target == SoundFontLoadTarget::Slicer)
+    {
+        token = processor.nextLoadToken.fetch_add (1, std::memory_order_relaxed) + 1;
+        processor.latestLoadToken.store (token, std::memory_order_release);
+        processor.latestLoadKind.store  ((int) DysektProcessor::LoadKindReplace,
+                                         std::memory_order_release);
+
+        // Discard any pending payload from a previous Slicer-target load
+        processor.exchangeCompletedLoadData (nullptr);
+        delete processor.completedLoadFailure.exchange(nullptr, std::memory_order_acq_rel);
+        delete processor.pendingSfzSlices.exchange   (nullptr, std::memory_order_acq_rel);
+
+        // Flag the load as in-flight so SliceWaveformLcd::drawNoData() can
+        // show a loading state instead of "EMPTY" while a kit is decoding in
+        // the background. Cleared in processBlock once completedLoadData is
+        // consumed, or in postFailure() if the job bails out early.
+        processor.mainLoadInFlight.store (true, std::memory_order_release);
+    }
+    else if (target == SoundFontLoadTarget::SfzPlayer2)
+    {
+        // Own token sequence, independent of the Slicer's nextLoadToken --
+        // see nextPreviewToken2/latestPreviewToken2's declaration in
+        // PluginProcessor.h and the staleness check in finishAndPost() for
+        // why this pipeline needs one too (DYSEKT-addzone-nomidi part 2).
+        token = processor.nextPreviewToken2.fetch_add (1, std::memory_order_relaxed) + 1;
+        processor.latestPreviewToken2.store (token, std::memory_order_release);
+
+        // Discard any stale preview payload from a previous preview load.
+        processor.exchangeCompletedLoadData2 (nullptr);
+        delete processor.pendingPreviewZones2.exchange (nullptr, std::memory_order_acq_rel);
+
+        // Mirrors the Slicer branch above — same flag, same consumer
+        // (SliceWaveformLcd is shared by both the Slicer and SFZ-PLAYER tabs).
+        processor.mainLoadInFlight.store (true, std::memory_order_release);
+
+        // Own dedicated flags for this target only -- see their declaration
+        // in PluginProcessor.h for why mainLoadInFlight above isn't reused
+        // for either of these two consumers.
+        processor.sfzPlayer2RebuildInFlight.store    (true, std::memory_order_release);
+        processor.sfzPlayer2LcdRebuildInFlight.store (true, std::memory_order_release);
+    }
+    else // SoundFontLoadTarget::SfPlayer
+    {
+        // Own token sequence, mirroring nextPreviewToken2/latestPreviewToken2
+        // above — see nextPreviewToken3/latestPreviewToken3's declaration in
+        // PluginProcessor.h and the staleness check in finishAndPost().
+        token = processor.nextPreviewToken3.fetch_add (1, std::memory_order_relaxed) + 1;
+        processor.latestPreviewToken3.store (token, std::memory_order_release);
+
+        // SF2-PLAYER preview pipeline — mirrors SfzPlayer2 exactly, own buffer.
+        processor.exchangeCompletedLoadData3 (nullptr);
+        delete processor.pendingPreviewZones3.exchange (nullptr, std::memory_order_acq_rel);
+
+        // Flag ANY SfPlayer-target render as in-flight — the initial
+        // file-load render (presetProgram == -1) and a preset-scoped
+        // click-triggered render (presetProgram >= 0) both do the same
+        // 128-note probe+render pass and can take real time on a large
+        // soundfont (e.g. Arachno). Previously only click-triggered renders
+        // showed this, so the initial load looked indistinguishable from a
+        // broken/blank LCD while it was still running in the background.
+        // Cleared in processBlock once the result is consumed, or in
+        // postFailure() if the job bails out early.
+        processor.sf2PreviewRenderInFlight.store (true, std::memory_order_release);
+    }
+
+    processor.fileLoadPool.addJob (
+        new LoadJob (file, sr, token, processor, target, presetBank, presetProgram), true);
+}
+
+#else  // DYSEKT_HAS_SFIZZ not defined
+
+void SoundFontLoader::load (const juce::File& file, SoundFontLoadTarget target,
+                             int /*presetBank*/, int /*presetProgram*/)
+{
+    // sfizz not linked — hand off to the regular audio file loader.
+    // It will likely fail and show the normal "failed to load" UI.
+    // (SfzPlayer2-target preview loads have no failure UI of their own, so
+    // this fallback only makes sense for the Slicer target; for the preview
+    // target there is nothing to route the failure to, so just ignore it.)
+    if (target == SoundFontLoadTarget::Slicer)
+        processor.requestSampleLoad (file, DysektProcessor::LoadKindReplace);
+}
+
+#endif // DYSEKT_HAS_SFIZZ

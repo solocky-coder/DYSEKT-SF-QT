@@ -1,0 +1,198 @@
+#pragma once
+#include "MidiClip.h"
+#include "AudioClip.h"
+#include "../audio/SfzPlayer.h"
+#include "../network/NetworkAudioInput.h"
+#include <juce_core/juce_core.h>
+#include <juce_graphics/juce_graphics.h>
+#include <atomic>
+#include <memory>
+#include <vector>
+#include <algorithm>
+
+enum class TrackType { MainSlice, ChromaticSlice, SfPlayer, Audio, NetworkMidi };
+
+struct ClipSlot
+{
+    std::atomic<int64_t> startTick { 0 };
+    MidiClip clip;
+    ClipSlot() = default;
+    ClipSlot (int64_t start, int64_t lengthTicks) : startTick (start) { clip.setLengthTicks (lengthTicks); }
+    JUCE_DECLARE_NON_COPYABLE (ClipSlot)
+    int64_t getStartTick() const noexcept { return startTick.load (std::memory_order_relaxed); }
+    int64_t endTick() const noexcept { return getStartTick() + clip.getLengthTicks(); }
+    void writeToStream (juce::MemoryOutputStream& s) const { s.writeInt64 (getStartTick()); clip.writeToStream (s); }
+    bool readFromStream (juce::MemoryInputStream& s) { startTick.store (s.readInt64(), std::memory_order_relaxed); return clip.readFromStream (s); }
+};
+
+struct SequencerTrack
+{
+    using ClipList = std::vector<std::shared_ptr<ClipSlot>>;
+    using AudioClipList = std::vector<AudioClip>;
+    SequencerTrack() = default;
+    JUCE_DECLARE_NON_COPYABLE (SequencerTrack)
+
+    TrackType type = TrackType::MainSlice;
+    std::atomic<bool> enabled { true };
+    std::atomic<bool> solo { false };
+    // Audio tracks only: whether this track records its network input while the
+    // transport records. Independent per track (several can be armed at once).
+    // Defaults to armed so a new network track records without extra setup;
+    // not saved with the project.
+    std::atomic<bool> audioRecordArm { true };
+    // Audio tracks only: whether this track is heard on the output. A track with
+    // monitor off still records if it is armed. Runtime only, not saved.
+    std::atomic<bool> monitor { true };
+    std::atomic<float> volumeDb { 0.0f };
+    std::atomic<float> pan { 0.0f };
+    juce::String name;
+    juce::Colour colour = juce::Colour (0xFF3A6080);
+
+    int sliceIdx = -1;
+    std::atomic<int> midiChannel { 0 };
+    Sf2PresetInfo preset;
+    bool isSfzInstrument = false;
+    // SFZ layer child track: plays only the notes of one layer (note range) of the
+    // SFZ instrument. Also has isSfzInstrument == true (same sfizz player, same
+    // MIDI channel as the parent), so everything that routes SFZ tracks keeps
+    // working. Set before the track is published; read-only afterwards.
+    bool isSfzLayer   = false;
+    std::atomic<int> layerLoKey { 0 };   // atomic: a resized zone updates it in place
+    std::atomic<int> layerHiKey { 127 };
+    // SFZ layer child track: whether its row is shown in the Arranger. Layer tracks default to
+    // HIDDEN so a multi-zone instrument doesn't flood the Arranger; the user opts layers in from
+    // the SFZ parent track's right-click menu. A layer that holds clips is always shown (see
+    // SequencerEngine::getTrackNesting), so recorded data can never vanish from view. Runtime
+    // only, not saved (stream format unchanged).
+    std::atomic<bool> layerShown { false };
+
+    int64_t networkRouteId = 0;
+    int32_t networkSourceId = 0;
+    int networkSourceChannel = 0;
+    int networkMidiDeviceId = 0;
+    // Audio tracks only: id of the Network MIDI device (see networkMidiDeviceId)
+    // whose children belong to this audio device. 0 = none yet. Saved from stream v6.
+    int linkedMidiDeviceId = 0;
+    bool networkMidiIsChild = false;
+    juce::String networkMidiPeer;
+
+    // Runtime audio-take metadata. Persisted from project stream version 4
+    // onward (see SequencerEngine.cpp's kStreamVersion4); older project
+    // files simply have no AudioClip block to read and load with an empty list.
+    std::shared_ptr<const AudioClipList> getAudioClips() const noexcept { return audioClipsSnapshot.load (std::memory_order_acquire); }
+    int getNumAudioClips() const noexcept { return (int) getAudioClips()->size(); }
+    const AudioClip* getAudioClip (int i) const noexcept
+    {
+        auto snap = getAudioClips();
+        return juce::isPositiveAndBelow (i, (int) snap->size()) ? &(*snap)[(size_t) i] : nullptr;
+    }
+    void addAudioClip (const AudioClip& clip)
+    {
+        if (! clip.isValid()) return;
+        auto next = std::make_shared<AudioClipList> (*getAudioClips());
+        next->push_back (clip);
+        std::sort (next->begin(), next->end(), [] (const auto& a, const auto& b) { return a.startTick < b.startTick; });
+        audioClipsSnapshot.store (std::move (next), std::memory_order_release);
+    }
+    void removeAudioClip (int index)
+    {
+        auto current = getAudioClips();
+        if (! juce::isPositiveAndBelow (index, (int) current->size())) return;
+        auto next = std::make_shared<AudioClipList> (*current);
+        next->erase (next->begin() + index);
+        audioClipsSnapshot.store (std::move (next), std::memory_order_release);
+    }
+    void setAudioClipStartTick (int index, int64_t newStartTick)
+    {
+        auto current = getAudioClips();
+        if (! juce::isPositiveAndBelow (index, (int) current->size())) return;
+        auto next = std::make_shared<AudioClipList> (*current);
+        (*next)[(size_t) index].startTick = juce::jmax ((int64_t) 0, newStartTick);
+        std::sort (next->begin(), next->end(), [] (const auto& a, const auto& b) { return a.startTick < b.startTick; });
+        audioClipsSnapshot.store (std::move (next), std::memory_order_release);
+    }
+
+    std::shared_ptr<const ClipList> getClips() const noexcept { return clipsSnapshot.load (std::memory_order_acquire); }
+    int getNumClips() const noexcept { return (int) getClips()->size(); }
+    std::shared_ptr<ClipSlot> getClipSlot (int i) const
+    {
+        auto snap = getClips();
+        return juce::isPositiveAndBelow (i, (int) snap->size()) ? (*snap)[(size_t) i] : nullptr;
+    }
+    int addClip (int64_t startTick, int64_t lengthTicks = MidiClip::kPPQ * 4 * 4)
+    {
+        auto newSlot = std::make_shared<ClipSlot> (startTick, lengthTicks);
+        auto next = std::make_shared<ClipList> (*getClips()); next->push_back (newSlot); sortAndPublish (std::move (next));
+        auto published = getClips();
+        for (size_t i = 0; i < published->size(); ++i) if ((*published)[i] == newSlot) return (int) i;
+        return (int) published->size() - 1;
+    }
+    void removeClip (int index)
+    {
+        auto current = getClips(); if (! juce::isPositiveAndBelow (index, (int) current->size())) return;
+        auto next = std::make_shared<ClipList> (*current); next->erase (next->begin() + index); publish (std::move (next));
+    }
+    void sortClips() { auto next = std::make_shared<ClipList> (*getClips()); sortAndPublish (std::move (next)); }
+
+    static std::shared_ptr<SequencerTrack> makeMain() { auto t = std::make_shared<SequencerTrack>(); t->type = TrackType::MainSlice; t->name = "MAIN"; t->colour = juce::Colour (0xFF25D9D9); return t; }
+    static std::shared_ptr<SequencerTrack> makeChromatic (int sliceIdxIn, int chromaticChannel, const juce::String& sliceName, juce::Colour sliceColour) { auto t = std::make_shared<SequencerTrack>(); t->type = TrackType::ChromaticSlice; t->sliceIdx = sliceIdxIn; t->midiChannel.store (chromaticChannel - 1); t->name = sliceName.isEmpty() ? ("CHROM " + juce::String (sliceIdxIn + 1)) : sliceName; t->colour = sliceColour; return t; }
+    static std::shared_ptr<SequencerTrack> makeSfPlayer (const Sf2PresetInfo& p, juce::Colour c) { auto t = std::make_shared<SequencerTrack>(); t->type = TrackType::SfPlayer; t->preset = p; t->midiChannel.store (15); t->name = p.name; t->colour = c; return t; }
+    static std::shared_ptr<SequencerTrack> makeSfzInstrument (const juce::String& n, juce::Colour c) { Sf2PresetInfo p; p.name = n; p.bank = 0; p.preset = 0; auto t = std::make_shared<SequencerTrack>(); t->type = TrackType::SfPlayer; t->preset = p; t->isSfzInstrument = true; t->midiChannel.store (15); t->name = n; t->colour = c; return t; }
+    static std::shared_ptr<SequencerTrack> makeSfzLayer (const juce::String& n, juce::Colour c, int midiChannel0Based, int loKey, int hiKey)
+    { auto t = makeSfzInstrument (n, c); t->isSfzLayer = true; t->layerLoKey.store (loKey); t->layerHiKey.store (hiKey); t->midiChannel.store (midiChannel0Based); return t; }
+    static std::shared_ptr<SequencerTrack> makeNetworkMidi (int id,const juce::String& peer,const juce::String& n,int ch,juce::Colour c) { auto t=std::make_shared<SequencerTrack>(); t->type=TrackType::NetworkMidi; t->networkMidiDeviceId=id; t->networkMidiPeer=peer; t->midiChannel.store(juce::jlimit(0,15,ch)); t->name=n; t->colour=c; return t; }
+    static std::shared_ptr<SequencerTrack> makeNetworkMidiChild (int id,const juce::String& n,int ch,juce::Colour c) { auto t=std::make_shared<SequencerTrack>(); t->type=TrackType::NetworkMidi; t->networkMidiDeviceId=id; t->networkMidiIsChild=true; t->midiChannel.store(juce::jlimit(0,15,ch)); t->name=n; t->colour=c; return t; }
+    static std::shared_ptr<SequencerTrack> makeAudio (const NetworkAudioInput& input, juce::Colour c = juce::Colour (0xFF406080)) { auto t = std::make_shared<SequencerTrack>(); t->type = TrackType::Audio; t->networkRouteId = input.routeId; t->networkSourceId = input.sourceId; t->networkSourceChannel = input.sourceChannel; t->name = input.sourceName.isNotEmpty() ? input.sourceName : ("NETWORK " + juce::String (input.sourceId) + " " + networkChannelLabel (input.sourceChannel)); t->colour = c; t->volumeDb.store (input.gainDb.load()); t->pan.store (input.pan.load()); return t; }
+
+    void writeToStream (juce::MemoryOutputStream& s) const
+    {
+        s.writeInt ((int) type); s.writeBool (enabled.load()); s.writeString (name); s.writeInt ((int) colour.getARGB()); s.writeInt (sliceIdx); s.writeInt (midiChannel.load());
+        s.writeInt (preset.bank); s.writeInt (preset.preset); s.writeString (preset.name);
+        auto snap = getClips(); s.writeInt ((int) snap->size()); for (auto& slot : *snap) slot->writeToStream (s);
+        s.writeBool (solo.load()); s.writeFloat (volumeDb.load()); s.writeFloat (pan.load());
+        if (type == TrackType::Audio) { s.writeInt64 (networkRouteId); s.writeInt (networkSourceId); s.writeInt (networkSourceChannel); s.writeInt (linkedMidiDeviceId); }
+        if (type == TrackType::NetworkMidi) { s.writeInt(networkMidiDeviceId); s.writeBool(networkMidiIsChild); s.writeString(networkMidiPeer); }
+        auto audioSnap = getAudioClips();
+        s.writeInt ((int) audioSnap->size());
+        for (auto& c : *audioSnap) c.writeToStream (s);
+        // Stream v7: SFZ instrument / layer info.
+        s.writeBool (isSfzInstrument); s.writeBool (isSfzLayer); s.writeInt (layerLoKey.load()); s.writeInt (layerHiKey.load());
+    }
+    bool readFromStream (juce::MemoryInputStream& s, bool hasExtendedFields = true, bool hasAudioClips = false, bool hasNetworkMidi = false, bool hasMidiLink = false, bool hasSfzLayer = false)
+    {
+        type = (TrackType) s.readInt(); enabled.store (s.readBool()); name = s.readString(); colour = juce::Colour ((juce::uint32) s.readInt()); sliceIdx = s.readInt(); midiChannel.store (s.readInt());
+        preset.bank = s.readInt(); preset.preset = s.readInt(); preset.name = s.readString();
+        const int n = s.readInt(); if (n < 0 || n > 1024) return false; auto next = std::make_shared<ClipList>(); next->reserve ((size_t) n);
+        for (int i = 0; i < n; ++i) { auto slot = std::make_shared<ClipSlot>(); if (! slot->readFromStream (s)) return false; next->push_back (std::move (slot)); }
+        sortAndPublish (std::move (next));
+        if (hasExtendedFields) { solo.store (s.readBool()); volumeDb.store (s.readFloat()); pan.store (s.readFloat()); }
+        if (type == TrackType::Audio) { networkRouteId = s.readInt64(); networkSourceId = s.readInt(); networkSourceChannel = s.readInt(); if (hasMidiLink) linkedMidiDeviceId = s.readInt(); }
+        if (hasNetworkMidi && type == TrackType::NetworkMidi) { networkMidiDeviceId=s.readInt(); networkMidiIsChild=s.readBool(); networkMidiPeer=s.readString(); }
+        if (hasAudioClips)
+        {
+            const int an = s.readInt(); if (an < 0 || an > 4096) return false;
+            auto audioNext = std::make_shared<AudioClipList>(); audioNext->reserve ((size_t) an);
+            for (int i = 0; i < an; ++i)
+            {
+                AudioClip c;
+                if (! c.readFromStream (s)) return false;
+                audioNext->push_back (c);
+            }
+            std::sort (audioNext->begin(), audioNext->end(), [] (const auto& a, const auto& b) { return a.startTick < b.startTick; });
+            audioClipsSnapshot.store (std::move (audioNext), std::memory_order_release);
+        }
+        if (hasSfzLayer)
+        {
+            isSfzInstrument = s.readBool(); isSfzLayer = s.readBool();
+            layerLoKey.store (juce::jlimit (0, 127, s.readInt())); layerHiKey.store (juce::jlimit (0, 127, s.readInt()));
+        }
+        return true;
+    }
+    bool readFromStreamV1 (juce::MemoryInputStream& s)
+    { type = (TrackType) s.readInt(); enabled.store (s.readBool()); name = s.readString(); colour = juce::Colour ((juce::uint32) s.readInt()); sliceIdx = s.readInt(); midiChannel.store (s.readInt()); preset.bank = s.readInt(); preset.preset = s.readInt(); preset.name = s.readString(); auto slot = std::make_shared<ClipSlot>(); slot->startTick.store (0); if (! slot->clip.readFromStream (s)) return false; auto next = std::make_shared<ClipList>(); next->push_back (std::move (slot)); publish (std::move (next)); return true; }
+private:
+    std::atomic<std::shared_ptr<const ClipList>> clipsSnapshot { std::make_shared<const ClipList>() };
+    std::atomic<std::shared_ptr<const AudioClipList>> audioClipsSnapshot { std::make_shared<const AudioClipList>() };
+    void publish (std::shared_ptr<const ClipList> next) { clipsSnapshot.store (std::move (next), std::memory_order_release); }
+    void sortAndPublish (std::shared_ptr<ClipList> next) { std::sort (next->begin(), next->end(), [] (const auto& a, const auto& b) { return a->getStartTick() < b->getStartTick(); }); publish (std::move (next)); }
+};

@@ -1,0 +1,2239 @@
+// SequencerEngine.cpp
+// tracktion Engine/Edit/Transport layer has been removed.
+// All note scheduling is done by DYSEKT-SF's own tick scheduler in processBlock().
+// MidiClip.cpp retains its tracktion hook (attachMidiList) for future use.
+//
+// Threading model (audio-thread hot path):
+//   - The track list (which tracks exist, in what order) is an immutable,
+//     atomically-swapped snapshot: Impl::TrackList behind
+//     std::atomic<std::shared_ptr<const TrackList>>. Structural edits
+//     (add/remove/reorder track) build a new vector and publish it with one
+//     atomic store; processBlock() does one atomic load per block and works
+//     from that local snapshot for the whole block. No lock is taken.
+//   - Each SequencerTrack's clip list is the same pattern one level down
+//     (see SequencerTrack::getClips()/addClip()/removeClip()).
+//   - Recording never touches MidiClip from the audio thread. It resolves a
+//     clip-relative tick and pushes a small POD event into a lock-free FIFO;
+//     drainRecordedEvents(), called from the message thread (ArrangeView's
+//     Timer), is the only place that still calls MidiClip::addNote()/
+//     setNoteDuration() for recording.
+
+#include <set>
+#include <map>
+#include "SequencerEngine.h"
+#include "../audio/SfzPlayer.h"
+
+#include <atomic>
+#include <algorithm>
+
+namespace
+{
+    bool isValidNetworkMidiPeer (const juce::String& text)
+    {
+        juce::StringArray parts;
+        parts.addTokens (text.trim(), ".", "");
+        if (parts.size() != 4)
+            return false;
+        for (const auto& part : parts)
+            if (part.isEmpty() || part.length() > 3 || ! part.containsOnly ("0123456789") || part.getIntValue() > 255)
+                return false;
+        return true;
+    }
+}
+#include <cmath>
+#include <array>
+#include <vector>
+#include <memory>
+
+// Stream version tags
+static constexpr int kStreamVersion1 = 1;  // legacy single-clip
+static constexpr int kStreamVersion2 = 2;  // multi-clip
+static constexpr int kStreamVersion3 = 3;  // + per-track solo/volumeDb/pan
+static constexpr int kStreamVersion4 = 4;  // + per-track recorded AudioClip list
+static constexpr int kStreamVersion5 = 5;
+static constexpr int kStreamVersion6 = 6;  // + audio track -> Network MIDI device link
+static constexpr int kStreamVersion7 = 7;  // + SFZ instrument / layer track info
+
+//==============================================================================
+struct SequencerEngine::Impl
+{
+    //==========================================================================
+    //  Track list — copy-on-write, atomically swapped (see file header).
+    //==========================================================================
+    using TrackList = std::vector<std::shared_ptr<SequencerTrack>>;
+
+    std::atomic<std::shared_ptr<const TrackList>> currentTracks
+        { std::make_shared<const TrackList>() };
+
+    std::shared_ptr<const TrackList> getTracks() const noexcept
+    {
+        return currentTracks.load (std::memory_order_acquire);
+    }
+
+    void publishTracks (std::shared_ptr<const TrackList> next)
+    {
+        currentTracks.store (std::move (next), std::memory_order_release);
+    }
+
+    double               currentTick = 0.0;
+    std::atomic<int64_t> playheadTick { 0 };
+    std::atomic<int64_t> loopStartTick { 0 };
+    // 0 means use the current project end, preserving the legacy full-song loop.
+    std::atomic<int64_t> loopEndTick   { 0 };
+
+    struct ActiveNote { int trackIdx; int clipIdx; int note; int channel; int networkDevice; };
+    juce::Array<ActiveNote> activeNotes;
+
+    std::atomic<bool>    playing      { false };
+    std::atomic<bool>    recording    { false };
+    // Recording is armed immediately, but actual capture waits for the
+    // configured count-in. The audio thread owns the countdown state.
+    std::atomic<int>     countInBars { 1 };
+    std::atomic<bool>    countInActive { false };
+    std::atomic<int64_t> countInRemainingTicks { 0 };
+    int64_t countInElapsedTicks = 0;
+    int     countInNextBeat = 0;
+    std::atomic<bool>    looping      { true  };
+    std::atomic<bool>    pendingPlay  { false };
+    std::atomic<bool>    pendingStop  { false };
+    std::atomic<bool>    pendingRewind{ false };
+    std::atomic<bool>    pendingSeek  { false };
+    std::atomic<int64_t> pendingSeekTick { 0 };
+
+    // Set by play() instead of pendingPlay when Link is enabled, so the
+    // audio thread can hold off flipping to "playing" until the requested
+    // beat-aligned quantum boundary actually arrives (see processBlock()).
+    // Only ever touched on the audio thread once set, aside from the
+    // message-thread writes in play()/stop() below.
+    std::atomic<bool>    awaitingLinkStart { false };
+    double               linkPhasePrev     = 0.0;
+    bool                 linkPhasePrimed   = false;
+    // Last-observed Link session play state, used purely to edge-detect a
+    // remote peer's Play/Stop in processBlock() (see isSessionPlaying()).
+    bool                 lastLinkSessionPlaying = false;
+    // Gates the remote-peer-reaction block below. Independent of
+    // AbletonLink::isEnabled() (tempo sync) — see
+    // SequencerEngine::setLinkFollowsTransport().
+    std::atomic<bool>    linkFollowsTransport { true };
+    // Set (message thread) whenever setLinkFollowsTransport() is called, so
+    // processBlock() (audio thread) can re-baseline lastLinkSessionPlaying
+    // itself instead of that plain bool being written cross-thread directly.
+    std::atomic<bool>    linkFollowBaselineDirty { false };
+    std::atomic<float>   internalBpm  { 120.f };
+    std::atomic<float>   hostBpm      { 120.f };
+    std::atomic<bool>    syncToHost   { false };
+    float                lastAppliedBpm = 0.f;
+
+    AbletonLink* abletonLink = nullptr;
+    SfzPlayer*   sfzPlayer   = nullptr;
+
+    std::atomic<bool> midiActivityFlags[SequencerEngine::kActivityFlagCount] = {};
+    // Keyzone-highlight feed (see SequencerEngine::notifySfzNoteOn). Bit n of [0] = note n, of [1] = note n+64.
+    std::atomic<uint64_t> sfzNoteLatch[2] = {};
+    std::atomic<uint64_t> sfzNoteHeld[2]  = {};
+    std::atomic<int>  selectedLiveChannel  { 0 };  // 1-based; 0 = disabled
+    std::atomic<SelectedLiveTarget> selectedLiveTarget {}; // player + channel for the selected track
+    // Note range of the selected live-input track: lo | (hi << 8). 0..127 unless an SFZ layer
+    // track is selected, which only plays/records its own zone's notes.
+    std::atomic<int>  selectedLiveNoteRange { 127 << 8 };
+    std::atomic<int>  recordingTrackIndex  { -1 }; // which track receives recorded MIDI (-1 = none)
+    std::atomic<SequencerEngine::AudioPeerResolver> audioPeerResolver{nullptr}; std::atomic<void*> audioPeerResolverCtx{nullptr}; std::atomic<SequencerEngine::NetworkMidiSink> netSink{nullptr}; std::atomic<void*> netSinkCtx{nullptr}; std::atomic<int> selectedNetworkMidiDevice{0}; std::atomic<int> netLinkState[64]{}; juce::MidiBuffer netScratch;
+    void sendNet(int id,const juce::MidiMessage&m) const noexcept { if(auto f=netSink.load(std::memory_order_acquire)) f(netSinkCtx.load(std::memory_order_relaxed),id,m); }
+    std::atomic<SequencerEngine::RecordMode> recordMode { SequencerEngine::RecordMode::Overdub };
+
+    //==========================================================================
+    //  Recorded-note FIFO  (audio thread writes, message thread drains)
+    //
+    //  Same shape as DysektProcessor's commandFifo, just flowing the other
+    //  direction: audio thread -> message thread instead of message thread ->
+    //  audio thread. Each entry carries an absolute (global) tick — the
+    //  audio thread no longer needs a target clip to exist at all, since
+    //  drainRecordedEvents() now creates/grows the destination clip itself
+    //  (Cubase-style: a clip is drawn the moment the first note-on arrives
+    //  on an armed+playing track, and grows to follow the playhead from
+    //  there). Resolving to clip-relative coordinates happens on the
+    //  message thread, once the target clip is known.
+    //==========================================================================
+    struct RecordedNoteEvent
+    {
+        int     trackIndex = -1;
+        int     note       = 60;
+        int     velocity   = 100;
+        bool    isNoteOn   = true;
+        int64_t tick       = 0;   // absolute/global tick, resolved at capture time
+    };
+
+    static constexpr int kRecordFifoSize = 1024;
+    juce::AbstractFifo recordFifo { kRecordFifoSize };
+    std::array<RecordedNoteEvent, kRecordFifoSize> recordBuffer;
+    std::atomic<int> droppedRecordEventCount { 0 };  // diagnostic only
+
+    /** Audio-thread only. */
+    void pushRecordedEvent (const RecordedNoteEvent& ev)
+    {
+        const auto scope = recordFifo.write (1);
+        if (scope.blockSize1 > 0)
+            recordBuffer[(size_t) scope.startIndex1] = ev;
+        else if (scope.blockSize2 > 0)
+            recordBuffer[(size_t) scope.startIndex2] = ev;
+        else
+            droppedRecordEventCount.fetch_add (1, std::memory_order_relaxed);  // FIFO full — dropped
+    }
+
+    // Tracks notes currently held during recording so we can set their real
+    // duration when the note-off arrives. MESSAGE-THREAD ONLY — used
+    // exclusively by SequencerEngine::drainRecordedEvents().
+    struct OpenRecNote { int trackIndex; int note; int64_t startTick; int noteIndexInClip; };
+    juce::Array<OpenRecNote> openRecNotes;
+
+    // The clip currently being drawn by live MIDI recording, if any.
+    // MESSAGE-THREAD ONLY — created, grown, and torn down exclusively by
+    // SequencerEngine::drainRecordedEvents(). Cubase-style: nothing exists
+    // until the first note-on arrives on an armed+playing track, at which
+    // point a clip starts right at that tick and drainRecordedEvents()
+    // stretches its length every call to keep its end following the
+    // playhead, until recording stops or the armed track changes.
+    struct LiveRecordClip
+    {
+        bool active         = false;
+        int  trackIndex     = -1;
+        std::shared_ptr<ClipSlot> slot;
+    } liveRecordClip;
+
+    //==========================================================================
+    Impl()
+    {
+        openRecNotes.ensureStorageAllocated (64); netScratch.ensureSize(8192);
+    }
+    ~Impl() = default;
+
+    //==========================================================================
+    static int midiChannelForTrack (const SequencerTrack& t) noexcept
+    {
+        switch (t.type)
+        {
+            case TrackType::MainSlice:      return 1;
+            case TrackType::ChromaticSlice: return t.midiChannel.load (std::memory_order_relaxed) + 1;
+            case TrackType::SfPlayer:       return t.midiChannel.load (std::memory_order_relaxed) + 1;
+            case TrackType::NetworkMidi: return (t.midiChannel.load()&15)+1;
+        }
+        return 1;
+    }
+
+    /** Compute the global end tick = rightmost clip end across all tracks. */
+    static int64_t computeMasterLenFor (const TrackList& tracks)
+    {
+        int64_t masterLen = MidiClip::kPPQ * 4 * 4;
+        for (auto& track : tracks)
+            for (auto& slot : *track->getClips())
+                masterLen = juce::jmax (masterLen, slot->endTick());
+        return masterLen;
+    }
+
+    // Pre-create the live-record clip before the audio thread reaches the
+    // first block of a recording pass. This is important at tick 0: if the
+    // first note creates the clip only from drainRecordedEvents(), that
+    // message-thread callback runs after the audio block containing tick 0,
+    // so playback would never see the note at the start boundary until the
+    // next loop.
+    void beginLiveRecordClip (int trackIndex)
+    {
+        if (liveRecordClip.active
+            || ! juce::isPositiveAndBelow (trackIndex, (int) currentTracks.load()->size()))
+            return;
+
+        auto tracks = getTracks();
+        if (! juce::isPositiveAndBelow (trackIndex, (int) tracks->size())) return;
+
+        auto& track = *(*tracks)[(size_t) trackIndex];
+        const int64_t globalTick = (int64_t) currentTick;
+        const auto mode = recordMode.load (std::memory_order_relaxed);
+
+        if (mode == SequencerEngine::RecordMode::Overdub)
+        {
+            auto clipsSnap = track.getClips();
+            for (auto& existing : *clipsSnap)
+            {
+                if (globalTick >= existing->getStartTick()
+                    && globalTick < existing->endTick())
+                {
+                    liveRecordClip = { true, trackIndex, existing };
+                    return;
+                }
+            }
+        }
+
+        const int newIdx = track.addClip (globalTick, MidiClip::kPPQ / 4);
+        auto newSlot = track.getClipSlot (newIdx);
+        liveRecordClip = { true, trackIndex, newSlot };
+    }
+
+    //==========================================================================
+    //  Audio-thread note rendering — processes one ClipSlot
+    //==========================================================================
+    void processClipSlot (juce::MidiBuffer& outMidi, SequencerTrack& track,
+                          int trackIdx, int clipIdx, const ClipSlot& slot,
+                          double playheadStart, double playheadEnd,
+                          int numSamples, double ticksPerSample, bool doLoop,
+                          int64_t loopStart, int64_t loopEnd)
+    {
+        const int ch = midiChannelForTrack (track);
+        const double clipStart = (double) slot.getStartTick();
+        const double clipEnd   = (double) slot.endTick();
+
+        double localStart = playheadStart;
+        double localEnd   = playheadEnd;
+
+        if (doLoop && loopEnd > loopStart)
+        {
+            const double loopLength = (double) (loopEnd - loopStart);
+            localStart = (double) loopStart + std::fmod (localStart - (double) loopStart, loopLength);
+            if (localStart < (double) loopStart) localStart += loopLength;
+            localEnd = localStart + (playheadEnd - playheadStart);
+        }
+
+        if (localEnd <= clipStart || localStart >= clipEnd)
+            return;
+
+        const double winStart = juce::jmax (localStart, clipStart);
+        const double winEnd   = juce::jmin (localEnd,   clipEnd);
+
+        const double clipLocalStart = winStart - clipStart;
+        const double clipLocalEnd   = winEnd   - clipStart;
+
+        const juce::ScopedReadLock cl (slot.clip.getLock());
+        // An SFZ layer track plays only the notes of its own zone (note range), even if its
+        // clip holds others (copied/pasted, or the zone was resized afterwards).
+        const bool isLayer = track.isSfzLayer;
+        const int  layerLo = track.layerLoKey.load (std::memory_order_relaxed);
+        const int  layerHi = track.layerHiKey.load (std::memory_order_relaxed);
+
+        for (const auto& n : slot.clip.getNotes())
+        {
+            if (isLayer && (n.note < layerLo || n.note > layerHi))
+                continue;
+
+            const double nStart = (double) n.startTick;
+            const double nEnd   = (double) n.endTick();
+
+            if (nStart >= clipLocalStart && nStart < clipLocalEnd)
+            {
+                const int sp = juce::jlimit (0, numSamples - 1,
+                    (int)((nStart - clipLocalStart + (winStart - localStart)) / ticksPerSample));
+                outMidi.addEvent (
+                    juce::MidiMessage::noteOn (ch, n.note, (juce::uint8) n.velocity), sp);
+                activeNotes.add ({ trackIdx, clipIdx, n.note, ch, track.type==TrackType::NetworkMidi ? track.networkMidiDeviceId : 0 });
+            }
+
+            if (nEnd > clipLocalStart && nEnd <= clipLocalEnd)
+            {
+                const int sp = juce::jlimit (0, numSamples - 1,
+                    (int)((nEnd - clipLocalStart + (winStart - localStart)) / ticksPerSample));
+                outMidi.addEvent (juce::MidiMessage::noteOff (ch, n.note), sp);
+                for (int i = activeNotes.size() - 1; i >= 0; --i)
+                    if (activeNotes[i].trackIdx == trackIdx
+                        && activeNotes[i].clipIdx == clipIdx
+                        && activeNotes[i].note == n.note)
+                        { activeNotes.remove (i); break; }
+            }
+        }
+    }
+
+    void flushAllActiveNotes (juce::MidiBuffer& outMidi, int samplePos)
+    {
+        for (const auto& an : activeNotes)
+        {
+            if (an.networkDevice != 0)
+                sendNet (an.networkDevice, juce::MidiMessage::noteOff (an.channel, an.note));
+            else
+                outMidi.addEvent (juce::MidiMessage::noteOff (an.channel, an.note), samplePos);
+        }
+        activeNotes.clear();
+    }
+};
+
+//==============================================================================
+SequencerEngine::SequencerEngine()  : impl (std::make_unique<Impl>()) {}
+SequencerEngine::~SequencerEngine() = default;
+
+//==============================================================================
+bool    SequencerEngine::isPlaying()        const noexcept { return impl->playing.load   (std::memory_order_relaxed); }
+bool    SequencerEngine::isLooping()        const noexcept { return impl->looping.load   (std::memory_order_relaxed); }
+bool    SequencerEngine::isRecording()      const noexcept { return impl->recording.load (std::memory_order_relaxed); }
+int     SequencerEngine::getCountInBars()   const noexcept { return impl->countInBars.load (std::memory_order_relaxed); }
+void    SequencerEngine::setCountInBars (int bars) noexcept
+{
+    impl->countInBars.store (juce::jlimit (1, 2, bars), std::memory_order_relaxed);
+}
+int64_t SequencerEngine::getPlayheadTick()  const noexcept { return impl->playheadTick.load (std::memory_order_relaxed); }
+double  SequencerEngine::getPlayheadBeats() const noexcept { return (double) getPlayheadTick() / (double) MidiClip::kPPQ; }
+float   SequencerEngine::getBpm()           const noexcept { return impl->internalBpm.load (std::memory_order_relaxed); }
+bool    SequencerEngine::getSyncToHost()    const noexcept { return impl->syncToHost.load (std::memory_order_relaxed); }
+
+int64_t SequencerEngine::getLengthTicks() const noexcept
+{
+    auto snap = impl->getTracks();
+    return Impl::computeMasterLenFor (*snap);
+}
+
+int64_t SequencerEngine::getLoopStartTick() const noexcept
+{
+    return impl->loopStartTick.load (std::memory_order_relaxed);
+}
+
+int64_t SequencerEngine::getLoopEndTick() const noexcept
+{
+    const auto configured = impl->loopEndTick.load (std::memory_order_relaxed);
+    return configured > 0 ? configured : getLengthTicks();
+}
+
+//==============================================================================
+void SequencerEngine::play()
+{
+
+    if (impl->abletonLink != nullptr && impl->abletonLink->isEnabled())
+    {
+        // Ask Link peers to start on the next bar, and actually wait for
+        // that same boundary ourselves instead of starting immediately —
+        // processBlock() flips pendingPlay only once the phase wraps.
+        impl->abletonLink->requestBeatAlignedStart (4.0);
+        impl->linkPhasePrimed = false;
+        // release: pairs with the acquire load in processBlock() below, so the
+        // audio thread is guaranteed to see the linkPhasePrimed write above
+        // before it observes awaitingLinkStart == true. Without this pairing,
+        // linkPhasePrimed/linkPhasePrev are plain (non-atomic) fields written
+        // on this (message) thread and read/written on the audio thread with
+        // no synchronizes-with relationship between them — a data race.
+        impl->awaitingLinkStart.store (true, std::memory_order_release);
+    }
+    else
+    {
+        impl->pendingPlay.store (true, std::memory_order_relaxed);
+    }
+}
+
+void SequencerEngine::stop()
+{
+    impl->countInActive.store (false, std::memory_order_relaxed);
+    impl->countInRemainingTicks.store (0, std::memory_order_relaxed);
+    if (impl->abletonLink != nullptr && impl->abletonLink->isEnabled())
+        impl->abletonLink->notifyStop();
+    impl->awaitingLinkStart.store (false, std::memory_order_relaxed);
+    impl->pendingStop.store (true, std::memory_order_relaxed);
+}
+
+void SequencerEngine::rewind()
+{
+    impl->pendingRewind.store (true, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setLooping (bool v)
+{
+    impl->looping.store (v, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setRecording (bool v)
+{
+    impl->recording.store (v, std::memory_order_relaxed);
+
+    // When recording is armed while transport is already running, establish
+    // the destination clip immediately so a note landing exactly on the
+    // current playhead (especially bar 1 / tick 0) exists before that audio
+    // block is rendered. If transport starts after arming, play() performs
+    // the same pre-creation step.
+    if (! v)
+    {
+        impl->countInActive.store (false, std::memory_order_relaxed);
+        impl->countInRemainingTicks.store (0, std::memory_order_relaxed);
+        impl->liveRecordClip = {};
+    }
+}
+
+void SequencerEngine::setRecordMode (RecordMode m) noexcept { impl->recordMode.store (m, std::memory_order_relaxed); }
+SequencerEngine::RecordMode SequencerEngine::getRecordMode() const noexcept { return impl->recordMode.load (std::memory_order_relaxed); }
+void SequencerEngine::setSyncToHost (bool v) { impl->syncToHost.store (v, std::memory_order_relaxed); }
+
+void SequencerEngine::setBpm (float b)
+{
+    const float clamped = juce::jlimit (20.f, 999.f, b);
+    impl->internalBpm.store (clamped, std::memory_order_relaxed);
+    if (impl->abletonLink != nullptr && impl->abletonLink->isEnabled())
+        impl->abletonLink->setBpm ((double) clamped);
+}
+
+void SequencerEngine::setHostBpm (float b)
+{
+    impl->hostBpm.store (juce::jlimit (20.f, 999.f, b), std::memory_order_relaxed);
+}
+
+void SequencerEngine::seekToTick (int64_t tick)
+{
+    impl->pendingSeekTick.store (tick, std::memory_order_relaxed);
+    impl->pendingSeek    .store (true, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setLoopRange (int64_t startTick, int64_t endTick)
+{
+    const auto start = juce::jmax ((int64_t) 0, startTick);
+    const auto end = juce::jmax (start + (int64_t) MidiClip::kPPQ, endTick);
+    impl->loopStartTick.store (start, std::memory_order_relaxed);
+    impl->loopEndTick.store (end, std::memory_order_relaxed);
+}
+
+void SequencerEngine::resetLoopRangeToDefault()
+{
+    // 0 is the documented sentinel for "always track current project end"
+    // (see getLoopEndTick()) — store it directly rather than routing through
+    // setLoopRange(), which clamps endTick to a concrete captured length and
+    // would freeze the loop at whatever the arrangement length happened to
+    // be at reset time.
+    impl->loopStartTick.store (0, std::memory_order_relaxed);
+    impl->loopEndTick.store   (0, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setLengthTicks (int64_t ticks)
+{
+    const int64_t clamped = juce::jmax ((int64_t) MidiClip::kPPQ, ticks);
+    auto snap = impl->getTracks();
+    for (auto& t : *snap)
+    {
+        auto slot = t->getClipSlot (0);
+        if (slot != nullptr)
+            slot->clip.setLengthTicks (clamped);
+    }
+}
+
+//==============================================================================
+//  Track management
+//==============================================================================
+int SequencerEngine::getNumTracks() const
+{
+    return (int) impl->getTracks()->size();
+}
+
+//==============================================================================
+// Audio clip management
+//
+// NOTE: SequencerTrack::addAudioClip()/removeAudioClip() return void (the COW
+// AudioClipList has no natural "index of the clip I just inserted" once the
+// insert re-sorts by startTick), while this API reports success as an int
+// index / bool. addAudioClip() below re-locates the clip after insertion by
+// exact field match; removeAudioClip()/setAudioClipStartTick() validate the
+// index against getNumAudioClips() before delegating, since the track-level
+// calls silently no-op on an out-of-range index rather than reporting it.
+
+int SequencerEngine::getNumAudioClips(int trackIndex) const
+{
+    auto snap = impl->getTracks();
+    if (! juce::isPositiveAndBelow(trackIndex, (int) snap->size()))
+        return 0;
+
+    const auto& track = *(*snap)[(size_t) trackIndex];
+    if (track.type != TrackType::Audio)
+        return 0;
+
+    return track.getNumAudioClips();
+}
+
+AudioClip SequencerEngine::getAudioClip(int trackIndex, int clipIndex) const
+{
+    auto snap = impl->getTracks();
+    if (! juce::isPositiveAndBelow(trackIndex, (int) snap->size()))
+        return {};
+
+    const auto& track = *(*snap)[(size_t) trackIndex];
+    if (track.type != TrackType::Audio)
+        return {};
+
+    if (const auto* clip = track.getAudioClip(clipIndex))
+        return *clip;
+    return {};
+}
+
+int SequencerEngine::addAudioClip(int trackIndex, const AudioClip& clip)
+{
+    if (! clip.isValid())
+        return -1;
+
+    auto snap = impl->getTracks();
+    if (! juce::isPositiveAndBelow(trackIndex, (int) snap->size()))
+        return -1;
+
+    auto& track = *(*snap)[(size_t) trackIndex];
+    if (track.type != TrackType::Audio)
+        return -1;
+
+    track.addAudioClip(clip);
+
+    // addAudioClip() keeps the list sorted by startTick, so re-derive the
+    // resulting index rather than assuming size()-1.
+    auto after = track.getAudioClips();
+    for (int i = 0; i < (int) after->size(); ++i)
+    {
+        const auto& c = (*after)[(size_t) i];
+        if (c.filePath == clip.filePath && c.startTick == clip.startTick
+            && c.lengthSamples == clip.lengthSamples)
+            return i;
+    }
+    return -1;
+}
+
+bool SequencerEngine::removeAudioClip(int trackIndex, int clipIndex)
+{
+    auto snap = impl->getTracks();
+    if (! juce::isPositiveAndBelow(trackIndex, (int) snap->size()))
+        return false;
+
+    auto& track = *(*snap)[(size_t) trackIndex];
+    if (track.type != TrackType::Audio)
+        return false;
+
+    if (! juce::isPositiveAndBelow(clipIndex, track.getNumAudioClips()))
+        return false;
+
+    track.removeAudioClip(clipIndex);
+    return true;
+}
+
+bool SequencerEngine::setAudioClipStartTick(int trackIndex,
+                                             int clipIndex,
+                                             int64_t newStartTick)
+{
+    auto snap = impl->getTracks();
+    if (! juce::isPositiveAndBelow(trackIndex, (int) snap->size()))
+        return false;
+
+    auto& track = *(*snap)[(size_t) trackIndex];
+    if (track.type != TrackType::Audio)
+        return false;
+
+    if (! juce::isPositiveAndBelow(clipIndex, track.getNumAudioClips()))
+        return false;
+
+    track.setAudioClipStartTick(clipIndex, juce::jmax((int64_t) 0, newStartTick));
+    return true;
+}
+
+bool SequencerEngine::addRecordedAudioClip(int trackIndex,
+                                            const juce::File& file,
+                                            double sampleRate,
+                                            int channels,
+                                            int64_t startTick,
+                                            int64_t lengthSamples)
+{
+    AudioClip clip;
+    clip.filePath      = file.getFullPathName();
+    clip.startTick     = juce::jmax((int64_t) 0, startTick);
+    clip.lengthSamples = lengthSamples;
+    clip.sampleRate    = sampleRate;
+    clip.channels      = channels;
+
+    return addAudioClip(trackIndex, clip) >= 0;
+}
+
+SequencerTrackInfo SequencerEngine::getTrackInfo (int i) const
+{
+    auto snap = impl->getTracks();
+    if (! juce::isPositiveAndBelow (i, (int) snap->size())) return {};
+    const auto& t = *(*snap)[(size_t) i];
+    SequencerTrackInfo info;
+    info.type        = t.type;
+    info.enabled     = t.enabled.load (std::memory_order_relaxed);
+    info.solo        = t.solo.load (std::memory_order_relaxed);
+    info.audioRecordArm = t.audioRecordArm.load (std::memory_order_relaxed);
+    info.monitor     = t.monitor.load (std::memory_order_relaxed);
+    info.volumeDb    = t.volumeDb.load (std::memory_order_relaxed);
+    info.pan         = t.pan.load (std::memory_order_relaxed);
+    info.name        = t.name;
+    info.colour      = t.colour;
+    info.sliceIdx    = t.sliceIdx;
+    info.midiChannel = t.midiChannel.load (std::memory_order_relaxed);
+    info.preset      = t.preset;
+    info.numClips    = t.getNumClips();
+    info.isSfzInstrument = t.isSfzInstrument;
+    info.isSfzLayer = t.isSfzLayer; info.layerLoKey = t.layerLoKey.load(); info.layerHiKey = t.layerHiKey.load();
+    info.layerShown = t.layerShown.load (std::memory_order_relaxed);
+    info.linkedMidiDeviceId=t.linkedMidiDeviceId; info.networkMidiDeviceId=t.networkMidiDeviceId; info.networkMidiIsChild=t.networkMidiIsChild; info.networkMidiPeer=t.networkMidiPeer;
+    return info;
+}
+
+void SequencerEngine::setTrackEnabled (int i, bool enabled)
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (i, (int) snap->size()))
+        (*snap)[(size_t) i]->enabled.store (enabled, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setSfzLayerShown (int i, bool shown)
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (i, (int) snap->size()) && (*snap)[(size_t) i]->isSfzLayer)
+        (*snap)[(size_t) i]->layerShown.store (shown, std::memory_order_relaxed);
+}
+
+int SequencerEngine::findSfTrackForChannel (int midiChannel0Based) const
+{
+    if (midiChannel0Based < 0 || midiChannel0Based > 15) return -1;
+    auto snap = impl->getTracks();
+    for (size_t i = 0; i < snap->size(); ++i)
+    {
+        const auto& t = *(*snap)[i];
+        if (t.type == TrackType::SfPlayer && ! t.isSfzInstrument
+            && t.midiChannel.load (std::memory_order_relaxed) == midiChannel0Based)
+            return (int) i;
+    }
+    return -1;
+}
+
+void SequencerEngine::setTrackSolo (int i, bool solo)
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (i, (int) snap->size()))
+        (*snap)[(size_t) i]->solo.store (solo, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setAudioRecordArm (int i, bool armed)
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (i, (int) snap->size()) && (*snap)[(size_t) i]->type == TrackType::Audio)
+        (*snap)[(size_t) i]->audioRecordArm.store (armed, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setAllAudioRecordArm (bool armed)
+{
+    auto snap = impl->getTracks();
+    for (auto& track : *snap)
+        if (track->type == TrackType::Audio)
+            track->audioRecordArm.store (armed, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setTrackVolumeDb (int i, float volumeDb)
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (i, (int) snap->size()))
+        (*snap)[(size_t) i]->volumeDb.store (volumeDb, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setTrackPan (int i, float pan)
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (i, (int) snap->size()))
+        (*snap)[(size_t) i]->pan.store (pan, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setTrackColour (int i, juce::Colour colour)
+{
+    // Plain assignment, not .store() — colour is a non-atomic juce::Colour
+    // field, safe to mutate here only because this method (like every
+    // other reader/writer of it) runs on the message thread exclusively.
+    // See SequencerTrack::colour's declaration comment.
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (i, (int) snap->size()))
+        (*snap)[(size_t) i]->colour = colour;
+}
+
+void SequencerEngine::addMainTrack()
+{
+    auto current = impl->getTracks();
+    if (! current->empty()) return;
+    auto next = std::make_shared<Impl::TrackList> (*current);
+    next->push_back (SequencerTrack::makeMain());
+    impl->publishTracks (std::move (next));
+}
+
+void SequencerEngine::addChromaticTrack (int sliceIdx, int chromaticChannel,
+                                          const juce::String& name, juce::Colour colour)
+{
+    auto current = impl->getTracks();
+    for (auto& t : *current)
+    {
+        if (t->type == TrackType::ChromaticSlice && t->sliceIdx == sliceIdx)
+        {
+            // The slice is the source of truth for this track's name and
+            // colour. This method is also called by the UI snapshot sync
+            // after a slice is renamed, so update the existing track rather
+            // than treating an already-created chromatic track as a no-op.
+            t->midiChannel.store (juce::jlimit (1, 16, chromaticChannel) - 1,
+                                  std::memory_order_relaxed);
+            t->name = name.isEmpty() ? ("CHROM " + juce::String (sliceIdx + 1)) : name;
+            t->colour = colour;
+            return;
+        }
+    }
+
+    auto next = std::make_shared<Impl::TrackList> (*current);
+    next->push_back (SequencerTrack::makeChromatic (sliceIdx, chromaticChannel, name, colour));
+    impl->publishTracks (std::move (next));
+}
+
+void SequencerEngine::removeChromaticTrack (int sliceIdx)
+{
+    auto current = impl->getTracks();
+    auto next = std::make_shared<Impl::TrackList> (*current);
+    next->erase (std::remove_if (next->begin(), next->end(),
+                    [sliceIdx] (const std::shared_ptr<SequencerTrack>& t)
+                    { return t->type == TrackType::ChromaticSlice && t->sliceIdx == sliceIdx; }),
+                 next->end());
+    impl->publishTracks (std::move (next));
+}
+
+void SequencerEngine::addSfTrack (const Sf2PresetInfo& preset, juce::Colour colour)
+{
+    auto current = impl->getTracks();
+    for (auto& t : *current)
+        if (t->type == TrackType::SfPlayer
+            && t->preset.bank   == preset.bank
+            && t->preset.preset == preset.preset) return;
+
+    // Assign the next available FluidSynth channel (0-15) to this track.
+    // 0-based channels 0 and 1 (MIDI channels 1 and 2) are reserved for the
+    // Slicer and SFZ-Player respectively — SF2 tracks must start at 0-based 2.
+    int sfCh = 2;
+    for (auto& t : *current)
+        if (t->type == TrackType::SfPlayer)
+            sfCh = juce::jmax (sfCh, t->midiChannel.load (std::memory_order_relaxed) + 1);
+    sfCh = juce::jlimit (2, 15, sfCh);
+
+    auto track = SequencerTrack::makeSfPlayer (preset, colour);
+    track->midiChannel.store (sfCh, std::memory_order_relaxed);
+
+    auto next = std::make_shared<Impl::TrackList> (*current);
+    next->push_back (track);
+    impl->publishTracks (std::move (next));
+
+    if (impl->sfzPlayer != nullptr)
+        impl->sfzPlayer->setPresetOnChannel (sfCh, preset.bank, preset.preset);
+}
+
+void SequencerEngine::removeSfTrack (int trackIndex)
+{
+    auto current = impl->getTracks();
+    if (! juce::isPositiveAndBelow (trackIndex, (int) current->size())
+        || (*current)[(size_t) trackIndex]->type != TrackType::SfPlayer)
+        return;
+
+    auto next = std::make_shared<Impl::TrackList> (*current);
+    next->erase (next->begin() + trackIndex);
+    impl->publishTracks (std::move (next));
+}
+
+void SequencerEngine::rebuildSfTracks (const std::vector<Sf2PresetInfo>& presets,
+                                        const juce::Colour* palette, int paletteSize)
+{
+    auto current = impl->getTracks();
+    auto next = std::make_shared<Impl::TrackList>();
+    next->reserve (current->size() + presets.size());
+    for (auto& t : *current)
+        if (t->type != TrackType::SfPlayer)
+            next->push_back (t);
+
+    // Channels already claimed by ChromaticSlice tracks must never be handed
+    // out to a new SF2 preset track — otherwise a chromatic slice's live and
+    // recorded MIDI ends up sharing a channel with (and triggering) an SF2
+    // preset. midiChannel on a ChromaticSlice track is stored 0-based.
+    uint32_t chromaOccupied = 0u;
+    for (auto& t : *current)
+        if (t->type == TrackType::ChromaticSlice)
+        {
+            const int ch0 = t->midiChannel.load (std::memory_order_relaxed) & 0xF;
+            chromaOccupied |= (1u << ch0);
+        }
+
+    // 0-based channels 0/1 (MIDI ch 1/2) are reserved for Slicer/SFZ-Player;
+    // sequential FluidSynth channels for SF2 tracks start at 0-based 2 and
+    // skip any channel already owned by a chromatic slice.
+    std::vector<int> assignedChannels;
+    assignedChannels.reserve (presets.size());
+    int nextCh = 2;
+    for (int i = 0; i < (int) presets.size(); ++i)
+    {
+        while (nextCh <= 15 && (chromaOccupied & (1u << nextCh)))
+            ++nextCh;
+        const int ch = juce::jmin (nextCh, 15);
+        assignedChannels.push_back (ch);
+        if (nextCh <= 15)
+            ++nextCh;
+
+        const juce::Colour col = paletteSize > 0
+            ? palette[i % paletteSize] : juce::Colour (0xFF406080);
+        auto track = SequencerTrack::makeSfPlayer (presets[i], col);
+        track->midiChannel.store (ch, std::memory_order_relaxed);
+        next->push_back (track);
+    }
+
+    impl->publishTracks (next);
+
+    if (impl->sfzPlayer != nullptr)
+        for (int i = 0; i < (int) presets.size(); ++i)
+            impl->sfzPlayer->setPresetOnChannel (assignedChannels[(size_t) i],
+                                                  presets[i].bank,
+                                                  presets[i].preset);
+}
+
+void SequencerEngine::addOrUpdateSfTrackOnChannel (const Sf2PresetInfo& preset,
+                                                    int midiChannel0Based,
+                                                    juce::Colour colour)
+{
+    // 0-based channels 0/1 (MIDI ch 1/2) are reserved for Slicer/SFZ-Player;
+    // SF2 tracks may only occupy 0-based channels 2-15.
+    const int ch = juce::jlimit (2, 15, midiChannel0Based);
+    bool needsPlayerUpdate = false;
+
+    auto current = impl->getTracks();
+
+    // If a track already exists for this preset, just update its channel —
+    // mutated in place (atomic), no snapshot rebuild needed.
+    for (auto& t : *current)
+    {
+        if (t->type == TrackType::SfPlayer
+            && t->preset.bank   == preset.bank
+            && t->preset.preset == preset.preset)
+        {
+            t->midiChannel.store (ch, std::memory_order_relaxed);
+            needsPlayerUpdate = true;
+            break;
+        }
+    }
+
+    if (! needsPlayerUpdate)
+    {
+        // New track for this preset on the chosen channel.
+        auto track = SequencerTrack::makeSfPlayer (preset, colour);
+        track->midiChannel.store (ch, std::memory_order_relaxed);
+
+        auto next = std::make_shared<Impl::TrackList> (*current);
+        next->push_back (track);
+        impl->publishTracks (std::move (next));
+        needsPlayerUpdate = true;
+    }
+
+    if (needsPlayerUpdate && impl->sfzPlayer != nullptr)
+        impl->sfzPlayer->setPresetOnChannel (ch, preset.bank, preset.preset);
+}
+
+void SequencerEngine::addSfzTrack (const juce::String& name, int midiChannel0Based,
+                                    juce::Colour colour)
+{
+    const int ch = juce::jlimit (0, 15, midiChannel0Based);
+    auto current = impl->getTracks();
+
+    // Only one SFZ-instrument track ever exists. If it's already there,
+    // update it in place — same shared_ptr, same track-list index — so a
+    // channel change, loading a different .sfz file, or an Add Zone edit
+    // to the currently-loaded MULTISAMPLER instrument doesn't disturb the
+    // current selection. See the "sanctioned exception" note on
+    // SequencerTrack::name/colour, and makeSfzInstrument()'s doc comment
+    // for why both the browser-load and Add Zone workflows share this one
+    // track instead of getting one each.
+    for (auto& t : *current)
+        if (t->type == TrackType::SfPlayer && t->isSfzInstrument && ! t->isSfzLayer)
+        {
+            t->name   = name;
+            t->colour = colour;
+            t->midiChannel.store (ch, std::memory_order_relaxed);
+            return;
+        }
+
+    // Nothing to replace yet — either the first SFZ load this session, or
+    // the MULTISAMPLER instrument just gained its first zone. Append fresh.
+    auto track = SequencerTrack::makeSfzInstrument (name, colour);
+    track->midiChannel.store (ch, std::memory_order_relaxed);
+
+    auto next = std::make_shared<Impl::TrackList> (*current);
+    next->push_back (track);
+    impl->publishTracks (std::move (next));
+}
+
+void SequencerEngine::removeSfzTrack()
+{
+    auto current = impl->getTracks();
+    auto next = std::make_shared<Impl::TrackList>();
+    next->reserve (current->size());
+    bool removedAny = false;
+    for (auto& t : *current)
+    {
+        if (t->type == TrackType::SfPlayer && t->isSfzInstrument) { removedAny = true; continue; }
+        next->push_back (t);
+    }
+    if (removedAny)
+        impl->publishTracks (std::move (next));
+}
+
+int SequencerEngine::syncSfzLayerTracks (const std::vector<SfzLayer>& inputLayers, int* droppedCount)
+{
+    if (droppedCount != nullptr) *droppedCount = 0;
+    auto current = impl->getTracks();
+
+    int parentIdx = -1;
+    for (size_t i = 0; i < current->size(); ++i)
+        if ((*current)[i]->type == TrackType::SfPlayer && (*current)[i]->isSfzInstrument && ! (*current)[i]->isSfzLayer)
+            { parentIdx = (int) i; break; }
+    if (parentIdx < 0) return 0;
+
+    // Enforce the project-wide 64-track budget without evicting clip-bearing
+    // layer tracks. Existing clip-bearing layers are admitted first, then new
+    // layers are admitted in note order. Non-layer tracks always retain priority.
+    constexpr int kMaxProjectTracks = 64;
+    int nonLayerTracks = 0;
+    for (const auto& t : *current)
+        if (! t->isSfzLayer) ++nonLayerTracks;
+
+    std::vector<bool> keep (inputLayers.size(), false);
+    int kept = 0;
+    auto layerMatchesTrack = [] (const SfzLayer& layer, const std::shared_ptr<SequencerTrack>& track)
+    {
+        return (track->layerLoKey.load() == layer.loKey && track->layerHiKey.load() == layer.hiKey)
+            || track->name == juce::String (layer.name);
+    };
+    for (size_t i = 0; i < inputLayers.size(); ++i)
+        for (const auto& t : *current)
+            if (t->isSfzLayer && t->getNumClips() > 0 && layerMatchesTrack (inputLayers[i], t))
+            {
+                if (! keep[i]) { keep[i] = true; ++kept; }
+                break;
+            }
+
+    const int layerCapacity = juce::jmax (0, kMaxProjectTracks - nonLayerTracks);
+    const int targetCount = juce::jmax (layerCapacity, kept);
+    for (size_t i = 0; i < inputLayers.size() && kept < targetCount; ++i)
+        if (! keep[i]) { keep[i] = true; ++kept; }
+
+    std::vector<SfzLayer> budgetedLayers;
+    budgetedLayers.reserve ((size_t) kept);
+    for (size_t i = 0; i < inputLayers.size(); ++i)
+        if (keep[i]) budgetedLayers.push_back (inputLayers[i]);
+    if (droppedCount != nullptr)
+        *droppedCount = (int) inputLayers.size() - (int) budgetedLayers.size();
+    const auto& layers = budgetedLayers;
+
+    const auto& parent = (*current)[(size_t) parentIdx];
+    const int ch = parent->midiChannel.load (std::memory_order_relaxed);
+
+    // One layer is just the whole instrument: no children needed.
+    const bool wantChildren = layers.size() >= 2;
+
+    // Match existing layer tracks to the layers so their clips survive: first by note
+    // range, then (a zone that was resized) by name. Unmatched ones are removed.
+    std::vector<std::shared_ptr<SequencerTrack>> assigned (layers.size());
+    std::vector<std::shared_ptr<SequencerTrack>> used;
+    auto isUsed = [&] (const std::shared_ptr<SequencerTrack>& t)
+    { return std::find (used.begin(), used.end(), t) != used.end(); };
+    if (wantChildren)
+    {
+        for (size_t i = 0; i < layers.size(); ++i)
+            for (auto& t : *current)
+                if (t->isSfzLayer && ! isUsed (t) && t->layerLoKey.load() == layers[i].loKey && t->layerHiKey.load() == layers[i].hiKey)
+                    { assigned[i] = t; used.push_back (t); break; }
+        for (size_t i = 0; i < layers.size(); ++i)
+            if (assigned[i] == nullptr)
+                for (auto& t : *current)
+                    if (t->isSfzLayer && ! isUsed (t) && t->name == juce::String (layers[i].name))
+                    {
+                        t->layerLoKey.store (layers[i].loKey); t->layerHiKey.store (layers[i].hiKey);
+                        assigned[i] = t; used.push_back (t); break;
+                    }
+    }
+
+    auto next = std::make_shared<Impl::TrackList>();
+    next->reserve (current->size() + layers.size());
+    int numLayerTracks = 0;
+    bool changed = false;
+    std::vector<std::shared_ptr<SequencerTrack>> orphanClipTracks;
+
+    for (auto& t : *current)
+    {
+        if (t->isSfzLayer)
+        {
+            if (! isUsed (t))
+            {
+                if (t->getNumClips() > 0)
+                    orphanClipTracks.push_back (t); // never discard user MIDI
+                else
+                    changed = true; // stale empty layer can be removed
+            }
+            continue; // layer tracks are reinserted below in note order
+        }
+
+        next->push_back (t);
+        if (t != parent) continue;
+
+        if (wantChildren)
+            for (size_t i = 0; i < layers.size(); ++i)
+            {
+                auto child = assigned[i];
+                if (child == nullptr)
+                {
+                    child = SequencerTrack::makeSfzLayer (layers[i].name, parent->colour.darker (0.25f), ch,
+                                                          layers[i].loKey, layers[i].hiKey);
+                    changed = true;
+                }
+                else
+                {
+                    if (child->midiChannel.load() != ch)
+                        child->midiChannel.store (ch);   // follows the parent's channel
+                    child->name = juce::String (layers[i].name);         // zone renamed
+                }
+                next->push_back (child);
+                ++numLayerTracks;
+            }
+    }
+
+    // Retain stale layer tracks that still contain clips, even if their source zone
+    // disappeared or changed identity. They remain nested under the SFZ parent.
+    for (const auto& orphan : orphanClipTracks)
+    {
+        next->push_back (orphan);
+        changed = true;
+    }
+
+    // Order of existing children may also have changed (layers are sorted by note range).
+    if (! changed)
+    {
+        std::vector<std::shared_ptr<SequencerTrack>> before, after;
+        for (auto& t : *current) if (t->isSfzLayer) before.push_back (t);
+        for (auto& t : *next)    if (t->isSfzLayer) after.push_back (t);
+        changed = (before != after) || next->size() != current->size();
+    }
+
+    if (changed)
+        impl->publishTracks (std::move (next));
+    return numLayerTracks + (int) orphanClipTracks.size();
+}
+
+//==============================================================================
+//  Clip management
+//==============================================================================
+int SequencerEngine::getNumClips (int trackIndex) const
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (trackIndex, (int) snap->size()))
+        return (*snap)[(size_t) trackIndex]->getNumClips();
+    return 0;
+}
+
+SequencerClipInfo SequencerEngine::getClipInfo (int trackIndex, int clipIndex) const
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (trackIndex, (int) snap->size()))
+    {
+        auto slot = (*snap)[(size_t) trackIndex]->getClipSlot (clipIndex);
+        if (slot != nullptr)
+            return { slot->getStartTick(), slot->clip.getLengthTicks() };
+    }
+    return {};
+}
+
+MidiClip* SequencerEngine::getClip (int trackIndex, int clipIndex)
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (trackIndex, (int) snap->size()))
+    {
+        auto slot = (*snap)[(size_t) trackIndex]->getClipSlot (clipIndex);
+        if (slot != nullptr) return &slot->clip;
+    }
+    return nullptr;
+}
+
+MidiClip& SequencerEngine::getClip()
+{
+    auto snap = impl->getTracks();
+    return (*snap)[0]->getClipSlot (0)->clip;
+}
+
+int SequencerEngine::addClip (int trackIndex, int64_t startTick, int64_t lengthTicks)
+{
+    auto snap = impl->getTracks();
+    if (! juce::isPositiveAndBelow (trackIndex, (int) snap->size())) return -1;
+    return (*snap)[(size_t) trackIndex]->addClip (startTick, lengthTicks);
+}
+
+void SequencerEngine::removeClip (int trackIndex, int clipIndex)
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (trackIndex, (int) snap->size()))
+        (*snap)[(size_t) trackIndex]->removeClip (clipIndex);
+}
+
+void SequencerEngine::setClipStartTick (int trackIndex, int clipIndex, int64_t newStartTick)
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (trackIndex, (int) snap->size()))
+    {
+        auto& track = *(*snap)[(size_t) trackIndex];
+        auto slot = track.getClipSlot (clipIndex);
+        if (slot != nullptr)
+        {
+            slot->startTick.store (juce::jmax ((int64_t) 0, newStartTick), std::memory_order_relaxed);
+            track.sortClips();
+        }
+    }
+}
+
+void SequencerEngine::setClipLengthTicks (int trackIndex, int clipIndex, int64_t newLength)
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (trackIndex, (int) snap->size()))
+    {
+        auto slot = (*snap)[(size_t) trackIndex]->getClipSlot (clipIndex);
+        if (slot != nullptr)
+            slot->clip.setLengthTicks (juce::jmax ((int64_t) MidiClip::kPPQ, newLength));
+    }
+}
+
+int64_t SequencerEngine::getTrackLengthTicks (int trackIndex) const noexcept
+{
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (trackIndex, (int) snap->size()))
+    {
+        auto slot = (*snap)[(size_t) trackIndex]->getClipSlot (0);
+        if (slot != nullptr) return slot->clip.getLengthTicks();
+    }
+    return MidiClip::kPPQ * 4 * 4;
+}
+
+void SequencerEngine::setTrackLengthTicks (int trackIndex, int64_t ticks)
+{
+    setClipLengthTicks (trackIndex, 0, ticks);
+}
+
+//==============================================================================
+void SequencerEngine::setAbletonLink (AbletonLink* l) noexcept { impl->abletonLink = l; }
+
+void SequencerEngine::setLinkFollowsTransport (bool shouldFollow) noexcept
+{
+    impl->linkFollowsTransport.store (shouldFollow, std::memory_order_relaxed);
+    // Re-baseline on the audio thread (see processBlock()) rather than
+    // touching the plain lastLinkSessionPlaying bool from here directly,
+    // so toggling this doesn't immediately react to whatever the session's
+    // play state already happens to be — only to a change from here on.
+    impl->linkFollowBaselineDirty.store (true, std::memory_order_relaxed);
+}
+
+bool SequencerEngine::getLinkFollowsTransport() const noexcept
+{
+    return impl->linkFollowsTransport.load (std::memory_order_relaxed);
+}
+void SequencerEngine::setSfzPlayer   (SfzPlayer*   p) noexcept { impl->sfzPlayer   = p; }
+
+void SequencerEngine::setSelectedSfLiveChannels (uint16_t channelMask) noexcept
+{
+    if (impl->sfzPlayer != nullptr)
+        impl->sfzPlayer->setLiveInputChannelMask (channelMask);
+}
+
+uint16_t SequencerEngine::getAllSfPlayerChannelMask() const noexcept
+{
+    uint16_t mask = 0;
+    auto snap = impl->getTracks();
+    for (auto& t : *snap)
+        if (t->type == TrackType::SfPlayer)
+        {
+            const int ch0 = t->midiChannel.load (std::memory_order_relaxed) & 0xF;
+            if (ch0 < 2)   // 0-based ch 0/1 (MIDI ch 1/2) reserved — never emit their bits
+                continue;
+            mask |= static_cast<uint16_t> (1u << ch0);
+        }
+    return mask;
+}
+
+uint16_t SequencerEngine::getSfzInstrumentChannelMask() const noexcept
+{
+    uint16_t mask = 0;
+    auto snap = impl->getTracks();
+    for (auto& t : *snap)
+        if (t->type == TrackType::SfPlayer && t->isSfzInstrument)
+        {
+            // t->midiChannel is stored 0-based, but this mask feeds
+            // sfzPlayer2ChannelMask, which processMidi2() tests directly
+            // against the 1-based MIDI channel number (no -1) — so the bit
+            // index here must be the 1-based channel, not the 0-based one.
+            const int ch1 = (t->midiChannel.load (std::memory_order_relaxed) & 0xF) + 1;
+            mask |= static_cast<uint16_t> (1u << ch1);
+        }
+    return mask;
+}
+
+//==============================================================================
+void SequencerEngine::setSelectedLiveChannel (int ch1Based) noexcept
+{
+    impl->selectedLiveChannel.store (ch1Based, std::memory_order_relaxed);
+}
+
+int SequencerEngine::getSelectedLiveChannel() const noexcept
+{
+    return impl->selectedLiveChannel.load (std::memory_order_relaxed);
+}
+
+void SequencerEngine::setSelectedTrack (int trackIndex) noexcept
+{
+    SelectedLiveTarget target;
+    int netDevice=0;
+    auto snap = impl->getTracks();
+    if (juce::isPositiveAndBelow (trackIndex, (int) snap->size()))
+    {
+        auto& t = *(*snap)[(size_t) trackIndex];
+        target.midiChannel = Impl::midiChannelForTrack (t);
+
+        switch (t.type)
+        {
+            case TrackType::MainSlice:
+            case TrackType::ChromaticSlice:
+                target.player = LiveTargetPlayer::slicer;
+                break;
+
+            case TrackType::SfPlayer:
+                target.player = t.isSfzInstrument ? LiveTargetPlayer::sfz
+                                                   : LiveTargetPlayer::sf2;
+                break;
+        }
+    }
+
+    int noteLo = 0, noteHi = 127;
+    if (juce::isPositiveAndBelow (trackIndex, (int) snap->size()) && (*snap)[(size_t) trackIndex]->isSfzLayer)
+    {
+        noteLo = juce::jlimit (0, 127, (*snap)[(size_t) trackIndex]->layerLoKey.load());
+        noteHi = juce::jlimit (noteLo, 127, (*snap)[(size_t) trackIndex]->layerHiKey.load());
+    }
+    impl->selectedLiveNoteRange.store (noteLo | (noteHi << 8), std::memory_order_relaxed);
+
+    impl->selectedNetworkMidiDevice.store(netDevice); impl->selectedLiveTarget.store (target, std::memory_order_relaxed);
+    // Keep the legacy channel-only accessor in sync for any remaining callers.
+    impl->selectedLiveChannel.store (target.midiChannel, std::memory_order_relaxed);
+}
+
+void SequencerEngine::getSelectedLiveNoteRange (int& lo, int& hi) const noexcept
+{
+    const int packed = impl->selectedLiveNoteRange.load (std::memory_order_relaxed);
+    lo = packed & 0xFF;
+    hi = (packed >> 8) & 0xFF;
+}
+
+SelectedLiveTarget SequencerEngine::getSelectedLiveTarget() const noexcept
+{
+    return impl->selectedLiveTarget.load (std::memory_order_relaxed);
+}
+
+void SequencerEngine::setRecordingTrack (int trackIndex) noexcept
+{
+    impl->recordingTrackIndex.store (trackIndex, std::memory_order_relaxed);
+    impl->openRecNotes.clearQuick();  // discard any held notes from previous selection
+    impl->liveRecordClip = {};
+
+    // If the user arms/selects the recording track while an already-playing
+    // recording pass is active, pre-create its destination immediately. This
+    // keeps the first boundary note in the same path as later notes.
+    if (impl->recording.load (std::memory_order_relaxed)
+        && impl->playing.load (std::memory_order_relaxed)
+        && ! impl->countInActive.load (std::memory_order_relaxed))
+        impl->beginLiveRecordClip (trackIndex);
+}
+
+int SequencerEngine::getRecordingTrackIndex() const noexcept
+{
+    return impl->recordingTrackIndex.load (std::memory_order_relaxed);
+}
+
+//==============================================================================
+//  drainRecordedEvents()  —  MESSAGE THREAD ONLY.
+//
+//  The only remaining caller of MidiClip::addNote()/setNoteDuration() for
+//  recording. Safe because it never runs on the audio thread.
+//==============================================================================
+void SequencerEngine::drainRecordedEvents()
+{
+    const auto scope = impl->recordFifo.read (impl->recordFifo.getNumReady());
+    auto snap = impl->getTracks();
+
+    // Finds (or lazily creates) the clip a recorded note-on should land in.
+    // This only runs once per recording pass — the first branch below
+    // reuses whatever was decided here for every event after that, so the
+    // mode only matters at the very start of a take.
+    const auto mode = impl->recordMode.load (std::memory_order_relaxed);
+    auto findOrCreateSessionSlot = [&] (int trackIndex, int64_t globalTick) -> std::shared_ptr<ClipSlot>
+    {
+        if (impl->liveRecordClip.active && impl->liveRecordClip.trackIndex == trackIndex)
+            return impl->liveRecordClip.slot;
+
+        if (! juce::isPositiveAndBelow (trackIndex, (int) snap->size())) return nullptr;
+        auto& track = *(*snap)[(size_t) trackIndex];
+
+        // Overdub: if the armed track already has a clip sitting under the
+        // playhead, merge new notes into it rather than starting a new one.
+        // Add: skip this search entirely — always lay down a brand-new clip
+        // below, so whatever was already there is left completely alone.
+        if (mode == RecordMode::Overdub)
+        {
+            auto clipsSnap = track.getClips();
+            for (auto& existing : *clipsSnap)
+            {
+                if (globalTick >= existing->getStartTick() && globalTick < existing->endTick())
+                {
+                    impl->liveRecordClip = { true, trackIndex, existing };
+                    return existing;
+                }
+            }
+        }
+
+        // Nothing to merge into (Overdub with empty space) or Add mode —
+        // draw a fresh clip starting at the playhead tick the first note-on
+        // landed on. Length grows below (both here, as notes come in, and
+        // once per drain call to keep pace with the playhead even between
+        // notes). In Add mode this may end up overlapping an existing clip
+        // on the same track — that's intentional, it's a separate take
+        // layered on top, not a punch-in.
+        const int newIdx = track.addClip (globalTick, MidiClip::kPPQ / 4);
+        auto newSlot = track.getClipSlot (newIdx);
+        impl->liveRecordClip = { true, trackIndex, newSlot };
+        return newSlot;
+    };
+
+    auto applyEvent = [&] (const Impl::RecordedNoteEvent& ev)
+    {
+        if (! juce::isPositiveAndBelow (ev.trackIndex, (int) snap->size())) return;
+
+        if (ev.isNoteOn)
+        {
+            auto slot = findOrCreateSessionSlot (ev.trackIndex, ev.tick);
+            if (slot == nullptr) return;
+
+            auto&         clip      = slot->clip;
+            const int64_t localTick = juce::jmax ((int64_t) 0, ev.tick - slot->getStartTick());
+            if (localTick >= clip.getLengthTicks())
+                clip.setLengthTicks (localTick + 1);
+
+            MidiNote n;
+            n.note         = ev.note;
+            n.velocity     = ev.velocity;
+            n.startTick    = localTick;
+            n.durationTick = MidiClip::kPPQ / 4;   // placeholder; corrected on note-off
+            const int idx  = clip.addNote (n);
+            impl->openRecNotes.add ({ ev.trackIndex, n.note, localTick, idx });
+        }
+        else
+        {
+            // A note-off can only belong to the currently open live-record
+            // clip for this track — if there isn't one (e.g. recording was
+            // stopped/re-armed between the note-on and note-off), just drop
+            // it rather than guessing at a clip.
+            if (! (impl->liveRecordClip.active && impl->liveRecordClip.trackIndex == ev.trackIndex))
+                return;
+
+            auto  slot = impl->liveRecordClip.slot;
+            auto& clip = slot->clip;
+            const int64_t localTick = juce::jmax ((int64_t) 0, ev.tick - slot->getStartTick());
+
+            for (int i = impl->openRecNotes.size() - 1; i >= 0; --i)
+            {
+                auto& orn = impl->openRecNotes.getReference (i);
+                if (orn.trackIndex == ev.trackIndex && orn.note == ev.note)
+                {
+                    int64_t dur = localTick - orn.startTick;
+                    if (dur <= 0) dur = MidiClip::kPPQ / 4;   // clock jitter guard
+                    clip.setNoteDuration (orn.noteIndexInClip, dur);
+                    impl->openRecNotes.remove (i);
+                    break;
+                }
+            }
+
+            if (localTick >= clip.getLengthTicks())
+                clip.setLengthTicks (localTick + 1);
+        }
+    };
+
+    for (int i = 0; i < scope.blockSize1; ++i)
+        applyEvent (impl->recordBuffer[(size_t) (scope.startIndex1 + i)]);
+    for (int i = 0; i < scope.blockSize2; ++i)
+        applyEvent (impl->recordBuffer[(size_t) (scope.startIndex2 + i)]);
+
+    // Keep the live-record clip's end following the playhead every drain
+    // tick, not just when a note happens to land — this is what makes the
+    // clip visibly grow in the arranger while recording, Cubase-style.
+    // Once recording stops (or the armed track changes), close the session
+    // out so the next recording pass starts its own new clip.
+    if (impl->liveRecordClip.active)
+    {
+        const int recTi = impl->recordingTrackIndex.load (std::memory_order_relaxed);
+        const bool stillRecordingThisTrack =
+            impl->recording.load (std::memory_order_relaxed)
+            && impl->playing.load  (std::memory_order_relaxed)
+            && recTi == impl->liveRecordClip.trackIndex;
+
+        if (stillRecordingThisTrack)
+        {
+            auto&         clip    = impl->liveRecordClip.slot->clip;
+            const int64_t nowTick = impl->playheadTick.load (std::memory_order_relaxed);
+            const int64_t grownLen = nowTick - impl->liveRecordClip.slot->getStartTick();
+            if (grownLen > clip.getLengthTicks())
+                clip.setLengthTicks (grownLen);
+        }
+        else
+        {
+            impl->liveRecordClip = {};
+        }
+    }
+}
+
+//==============================================================================
+void SequencerEngine::notifySfzNoteOn (int note) noexcept
+{
+    if (! juce::isPositiveAndBelow (note, 128)) return;
+    const int w = note < 64 ? 0 : 1;
+    const uint64_t bit = (uint64_t) 1 << (note & 63);
+    impl->sfzNoteLatch[w].fetch_or (bit, std::memory_order_relaxed);
+    impl->sfzNoteHeld [w].fetch_or (bit, std::memory_order_relaxed);
+}
+
+void SequencerEngine::notifySfzNoteOff (int note) noexcept
+{
+    if (! juce::isPositiveAndBelow (note, 128)) return;
+    const int w = note < 64 ? 0 : 1;
+    impl->sfzNoteHeld[w].fetch_and (~((uint64_t) 1 << (note & 63)), std::memory_order_relaxed);
+}
+
+void SequencerEngine::notifySfzAllNotesOff() noexcept
+{
+    impl->sfzNoteHeld[0].store (0, std::memory_order_relaxed);
+    impl->sfzNoteHeld[1].store (0, std::memory_order_relaxed);
+}
+
+void SequencerEngine::pollSfzNotes (uint64_t (&played)[2], uint64_t (&held)[2]) noexcept
+{
+    for (int w = 0; w < 2; ++w)
+    {
+        played[w] = impl->sfzNoteLatch[w].exchange (0, std::memory_order_relaxed);
+        held[w]   = impl->sfzNoteHeld [w].load (std::memory_order_relaxed);
+    }
+}
+
+//==============================================================================
+bool SequencerEngine::getMidiActivityAndClear (int trackIndex) noexcept
+{
+    if (! juce::isPositiveAndBelow (trackIndex, kActivityFlagCount))
+        return false;
+    return impl->midiActivityFlags[trackIndex].exchange (false, std::memory_order_relaxed);
+}
+
+//==============================================================================
+void SequencerEngine::processBlock (juce::MidiBuffer& outMidi, const juce::MidiBuffer& inMidi,
+                                    int numSamples, double sampleRate)
+{
+    const float fallbackBpm = impl->syncToHost.load (std::memory_order_relaxed)
+                                ? impl->hostBpm.load     (std::memory_order_relaxed)
+                                : impl->internalBpm.load (std::memory_order_relaxed);
+    const bool linkActive = (impl->abletonLink != nullptr && impl->abletonLink->isEnabled());
+    const float bpm = linkActive
+                        ? impl->abletonLink->getAudioBpm (fallbackBpm)
+                        : fallbackBpm;
+
+    // When Link is active, its session tempo is authoritative. Keep the
+    // engine's published BPM in lockstep with that realtime session value so
+    // UI, clip-length calculations, and standalone/network consumers don't
+    // continue using a stale host/internal tempo.
+    if (linkActive && bpm >= 20.f && bpm <= 999.f)
+        impl->internalBpm.store (bpm, std::memory_order_relaxed);
+
+    if (bpm >= 20.f && bpm != impl->lastAppliedBpm)
+        impl->lastAppliedBpm = bpm;
+
+    // The track selected for live input is also the visual MIDI destination.
+    // Mark it on *incoming* events even when transport is stopped: previously
+    // activity was set only while adding sequencer playback events, so the
+    // track LEDs misleadingly showed output/recorded MIDI but never a keyboard.
+    const int inputTi = impl->recordingTrackIndex.load (std::memory_order_relaxed);
+    if (! inMidi.isEmpty() && juce::isPositiveAndBelow (inputTi, kActivityFlagCount))
+        impl->midiActivityFlags[inputTi].store (true, std::memory_order_relaxed);
+
+    if (impl->pendingStop.exchange (false, std::memory_order_relaxed))
+    {
+        if (impl->playing.load (std::memory_order_relaxed))
+        {
+            impl->playing.store (false, std::memory_order_relaxed);
+            impl->flushAllActiveNotes (outMidi, 0);
+            impl->openRecNotes.clearQuick();
+        }
+    }
+    if (impl->pendingRewind.exchange (false, std::memory_order_relaxed))
+    {
+        impl->flushAllActiveNotes (outMidi, 0);
+        impl->openRecNotes.clearQuick();
+        impl->currentTick = 0.0;
+        impl->playheadTick.store (0, std::memory_order_relaxed);
+    }
+    if (impl->pendingSeek.exchange (false, std::memory_order_relaxed))
+    {
+        impl->flushAllActiveNotes (outMidi, 0);
+        impl->currentTick = (double) impl->pendingSeekTick.load (std::memory_order_relaxed);
+        impl->playheadTick.store ((int64_t) impl->currentTick, std::memory_order_relaxed);
+    }
+    if (impl->pendingPlay.exchange (false, std::memory_order_relaxed))
+    {
+        impl->playing.store (true, std::memory_order_relaxed);
+
+        // A record press arms recording; Play starts the transport with a
+        // musical count-in. The actual recording take starts exactly back at
+        // bar 1 after 1 or 2 full bars, so the first recorded note can never
+        // land in the transport's already-passed opening block.
+        if (impl->recording.load (std::memory_order_relaxed))
+        {
+            const int bars = juce::jlimit (1, 2,
+                impl->countInBars.load (std::memory_order_relaxed));
+            impl->countInRemainingTicks.store (
+                (int64_t) bars * MidiClip::kPPQ * 4, std::memory_order_relaxed);
+            impl->countInElapsedTicks = 0;
+            impl->countInNextBeat = 0;
+            impl->countInActive.store (true, std::memory_order_relaxed);
+            impl->liveRecordClip = {};
+        }
+    }
+    // ── React to a remote Link peer's Play/Stop ───────────────────────────
+    // Everything above only ever sends our own transport state to Link
+    // (requestBeatAlignedStart()/notifyStop() in play()/stop()). Nothing
+    // previously looked at isSessionPlaying(), so a peer pressing Play/Stop
+    // in another Link-enabled app had no effect here at all. Edge-detect it
+    // and either join in (beat-aligned, same path our own Play button uses)
+    // or stop, without touching the local send-side logic above.
+    if (impl->abletonLink != nullptr && impl->abletonLink->isEnabled()
+         && impl->linkFollowsTransport.load (std::memory_order_relaxed))
+    {
+        if (impl->linkFollowBaselineDirty.exchange (false, std::memory_order_relaxed))
+            impl->lastLinkSessionPlaying = impl->abletonLink->isSessionPlaying();
+
+        const bool sessionPlaying = impl->abletonLink->isSessionPlaying();
+        if (sessionPlaying != impl->lastLinkSessionPlaying)
+        {
+            if (sessionPlaying
+                && ! impl->playing.load (std::memory_order_relaxed)
+                && ! impl->awaitingLinkStart.load (std::memory_order_relaxed))
+            {
+                impl->awaitingLinkStart.store (true, std::memory_order_relaxed);
+                impl->linkPhasePrimed = false;
+            }
+            else if (! sessionPlaying && impl->playing.load (std::memory_order_relaxed))
+            {
+                impl->playing.store (false, std::memory_order_relaxed);
+                impl->awaitingLinkStart.store (false, std::memory_order_relaxed);
+                impl->flushAllActiveNotes (outMidi, 0);
+                impl->openRecNotes.clearQuick();
+            }
+            impl->lastLinkSessionPlaying = sessionPlaying;
+        }
+    }
+
+    // acquire: pairs with the release store in play() above, so that if we
+    // observe awaitingLinkStart == true here, the linkPhasePrimed = false
+    // write play() did on the message thread is guaranteed visible before we
+    // touch linkPhasePrimed/linkPhasePrev below.
+    if (impl->awaitingLinkStart.load (std::memory_order_acquire))
+    {
+        // Waiting on the quantum boundary requested by requestBeatAlignedStart().
+        // Detect arrival by watching the Link phase wrap back past zero —
+        // block-granularity, consistent with the rest of this lock-free
+        // transport, and needs no extra Link timing APIs beyond getPhase().
+        if (impl->abletonLink != nullptr && impl->abletonLink->isEnabled())
+        {
+            const double quantum = 4.0;
+            const double phase = impl->abletonLink->getPhase (quantum);
+            if (! impl->linkPhasePrimed)
+            {
+                impl->linkPhasePrimed = true;
+            }
+            else if (phase < impl->linkPhasePrev)
+            {
+                impl->awaitingLinkStart.store (false, std::memory_order_relaxed);
+                impl->playing.store (true, std::memory_order_relaxed);
+            }
+            impl->linkPhasePrev = phase;
+        }
+        else
+        {
+            // Link was disabled while we were waiting — fall back to starting now.
+            impl->awaitingLinkStart.store (false, std::memory_order_relaxed);
+            impl->playing.store (true, std::memory_order_relaxed);
+        }
+    }
+
+    if (! impl->playing.load (std::memory_order_relaxed)) return;
+    if (bpm < 1.f || sampleRate < 1.0) return;
+
+    const double ticksPerSample = (bpm / 60.0) * (double) MidiClip::kPPQ / sampleRate;
+
+    // Count-in is a real pre-roll: do not render arrangement clips or capture
+    // MIDI while it is active. At the end, reset to tick 0 and create the live
+    // recording clip before the first recording block is processed.
+    if (impl->countInActive.load (std::memory_order_relaxed))
+    {
+        const int64_t blockTicks = juce::jmax<int64_t> (1,
+            (int64_t) std::ceil (ticksPerSample * (double) numSamples));
+        const int64_t remaining = impl->countInRemainingTicks.load (std::memory_order_relaxed);
+        const int64_t blockStartElapsed = impl->countInElapsedTicks;
+        const int64_t blockEndElapsed = blockStartElapsed + blockTicks;
+        const int64_t beatTicks = MidiClip::kPPQ;
+
+        // Emit one internal metronome trigger at every quarter-note boundary.
+        // Channel 16 is reserved by the engine for this private transport
+        // signal; PluginProcessor consumes it into an audio click and never
+        // routes it to a musical destination.
+        while ((int64_t) impl->countInNextBeat * beatTicks < blockEndElapsed
+               && (int64_t) impl->countInNextBeat * beatTicks < (int64_t) (impl->countInRemainingTicks.load() + blockStartElapsed))
+        {
+            const int64_t clickTick = (int64_t) impl->countInNextBeat * beatTicks;
+            if (clickTick >= blockStartElapsed)
+            {
+                const int sampleOffset = juce::jlimit (0, numSamples - 1,
+                    (int) std::llround ((double) (clickTick - blockStartElapsed) / ticksPerSample));
+                const int barBeat = impl->countInNextBeat % 4;
+                const int velocity = (barBeat == 0) ? 120 : 92;
+                outMidi.addEvent (juce::MidiMessage::noteOn (16, 37, (juce::uint8) velocity),
+                                  sampleOffset);
+            }
+            ++impl->countInNextBeat;
+        }
+
+        impl->countInElapsedTicks = blockEndElapsed;
+        if (remaining > blockTicks)
+        {
+            impl->countInRemainingTicks.store (remaining - blockTicks, std::memory_order_relaxed);
+            return;
+        }
+
+        impl->countInRemainingTicks.store (0, std::memory_order_relaxed);
+        impl->countInActive.store (false, std::memory_order_relaxed);
+        impl->currentTick = 0.0;
+        impl->playheadTick.store (0, std::memory_order_relaxed);
+
+        if (impl->recording.load (std::memory_order_relaxed))
+            impl->beginLiveRecordClip (impl->recordingTrackIndex.load (std::memory_order_relaxed));
+    }
+
+    const bool   doLoop         = impl->looping.load (std::memory_order_relaxed);
+    const double blockEndTick   = impl->currentTick + ticksPerSample * numSamples;
+
+    // One atomic load for the whole block — zero locks in the hot path.
+    auto tracksSnap = impl->getTracks();
+    const int64_t masterLen = Impl::computeMasterLenFor (*tracksSnap);
+    const int64_t loopStart = impl->loopStartTick.load (std::memory_order_relaxed);
+    const int64_t configuredLoopEnd = impl->loopEndTick.load (std::memory_order_relaxed);
+    const int64_t loopEnd = configuredLoopEnd > loopStart ? configuredLoopEnd : masterLen;
+    const int64_t loopLength = juce::jmax ((int64_t) MidiClip::kPPQ, loopEnd - loopStart);
+
+    // Standard mixer convention: while any track is soloed, only soloed
+    // tracks are audible, regardless of their own enabled/mute state.
+    bool anySoloed = false;
+    for (auto& t : *tracksSnap)
+    {
+        if (t->solo.load (std::memory_order_relaxed)) { anySoloed = true; break; }
+    }
+
+    for (int ti = 0; ti < (int) tracksSnap->size(); ++ti)
+    {
+        auto& track = *(*tracksSnap)[(size_t) ti];
+        const bool audible = anySoloed ? track.solo.load (std::memory_order_relaxed)
+                                       : track.enabled.load (std::memory_order_relaxed);
+        if (! audible) continue;
+
+        const bool isNetTrack=track.type==TrackType::NetworkMidi;
+        juce::MidiBuffer& dest=isNetTrack?impl->netScratch:outMidi; if(isNetTrack) impl->netScratch.clear();
+        const int priorSize = dest.getNumEvents();
+        auto clipsSnap = track.getClips();
+
+        for (int ci = 0; ci < (int) clipsSnap->size(); ++ci)
+        {
+            impl->processClipSlot (dest, track, ti, ci, *(*clipsSnap)[(size_t) ci],
+                                   impl->currentTick, blockEndTick,
+                                   numSamples, ticksPerSample, doLoop, loopStart, loopEnd);
+        }
+
+        if (isNetTrack) for(const auto meta:impl->netScratch) impl->sendNet(track.networkMidiDeviceId,meta.getMessage());
+
+        if (dest.getNumEvents() > priorSize
+            && juce::isPositiveAndBelow (ti, kActivityFlagCount))
+            impl->midiActivityFlags[ti].store (true, std::memory_order_relaxed);
+    }
+
+    // ── MIDI input recording ──────────────────────────────────────────────────
+    // Cubase-style: the selected (record-armed) track captures all incoming
+    // MIDI regardless of channel. This never touches MidiClip on this thread
+    // — no target clip needs to exist yet at all. Each event is stamped with
+    // its absolute/global tick and pushed into the lock-free FIFO;
+    // drainRecordedEvents(), called from the message thread, is what
+    // actually creates/grows the destination clip and calls
+    // addNote()/setNoteDuration() on it.
+    const int recTi = impl->recordingTrackIndex.load (std::memory_order_relaxed);
+    if (impl->recording.load (std::memory_order_relaxed)
+        && impl->playing.load (std::memory_order_relaxed)
+        && juce::isPositiveAndBelow (recTi, (int) tracksSnap->size()))
+    {
+        // An SFZ layer track only records notes inside its layer's note range.
+        const auto& recTrack = *(*tracksSnap)[(size_t) recTi];
+        const int recLo = recTrack.isSfzLayer ? recTrack.layerLoKey.load() : 0;
+        const int recHi = recTrack.isSfzLayer ? recTrack.layerHiKey.load() : 127;
+
+        for (const auto meta : inMidi)
+        {
+            const auto msg = meta.getMessage();
+            if (msg.getChannel() == 16) continue;   // skip SFZ-internal channel
+            if ((msg.isNoteOn (true) || msg.isNoteOff (true))
+                && (msg.getNoteNumber() < recLo || msg.getNoteNumber() > recHi))
+                continue;
+
+            const double evTickGlobal = impl->currentTick + meta.samplePosition * ticksPerSample;
+
+            if (msg.isNoteOn (true))        // true = treat velocity-0 as note-off
+            {
+                Impl::RecordedNoteEvent ev;
+                ev.trackIndex = recTi;
+                ev.note       = msg.getNoteNumber();
+                ev.velocity   = msg.getVelocity();
+                ev.isNoteOn   = true;
+                ev.tick       = (int64_t) evTickGlobal;
+                impl->pushRecordedEvent (ev);
+            }
+            else if (msg.isNoteOff (true))
+            {
+                Impl::RecordedNoteEvent ev;
+                ev.trackIndex = recTi;
+                ev.note       = msg.getNoteNumber();
+                ev.velocity   = 0;
+                ev.isNoteOn   = false;
+                ev.tick       = (int64_t) evTickGlobal;
+                impl->pushRecordedEvent (ev);
+            }
+        }
+    }
+
+    if (doLoop && loopEnd > loopStart && blockEndTick >= (double) loopEnd)
+    {
+        const int loopSample = juce::jlimit (0, numSamples - 1,
+            (int)(((double) loopEnd - impl->currentTick) / ticksPerSample));
+        impl->flushAllActiveNotes (outMidi, loopSample);
+        impl->currentTick = (double) loopStart
+                          + std::fmod (blockEndTick - (double) loopStart, (double) loopLength);
+    }
+    else
+    {
+        impl->currentTick = blockEndTick;
+    }
+
+    impl->playheadTick.store ((int64_t) impl->currentTick, std::memory_order_relaxed);
+}
+
+//==============================================================================
+void SequencerEngine::writeToStream (juce::MemoryOutputStream& s) const
+{
+    s.writeInt   (kStreamVersion7);
+    s.writeFloat (impl->internalBpm.load (std::memory_order_relaxed));
+    s.writeBool  (impl->looping    .load (std::memory_order_relaxed));
+    s.writeBool  (impl->syncToHost .load (std::memory_order_relaxed));
+
+    auto snap = impl->getTracks();
+    s.writeInt ((int) snap->size());
+    for (auto& t : *snap)
+        t->writeToStream (s);
+}
+
+bool SequencerEngine::readFromStream (juce::MemoryInputStream& s)
+{
+    // Peek at first int — kStreamVersion2/3/4 mean multi-clip format,
+    // otherwise treat the bytes as a legacy float BPM (version 1).
+    const auto startPos = s.getPosition();
+    const int firstInt  = s.readInt();
+
+    float bpm;
+    bool  loop, sync;
+    int   n;
+    const bool isV2 = (firstInt == kStreamVersion2);
+    const bool isV3 = (firstInt == kStreamVersion3);
+    const bool isV4 = (firstInt == kStreamVersion4);
+    const bool isV5 = (firstInt == kStreamVersion5);
+    const bool isV6 = (firstInt == kStreamVersion6);
+    const bool isV7 = (firstInt == kStreamVersion7);
+
+    if (isV2 || isV3 || isV4 || isV5 || isV6 || isV7)
+    {
+        bpm  = s.readFloat();
+        loop = s.readBool();
+        sync = s.readBool();
+        n    = s.readInt();
+    }
+    else
+    {
+        // Legacy: firstInt was the raw bytes of a float BPM.
+        s.setPosition (startPos);
+        bpm  = s.readFloat();
+        loop = s.readBool();
+        sync = s.readBool();
+        s.readInt64();   // legacy clipLengthTicks — discard
+        n    = s.readInt();
+    }
+
+    if (bpm < 20.f || bpm > 999.f || n < 0 || n > 256) return false;
+
+    auto loaded = std::make_shared<Impl::TrackList>();
+    loaded->reserve ((size_t) n);
+    for (int i = 0; i < n; ++i)
+    {
+        auto t  = std::make_shared<SequencerTrack>();
+        bool ok = (isV2 || isV3 || isV4 || isV5 || isV6 || isV7) ? t->readFromStream (s, isV3 || isV4 || isV5 || isV6 || isV7, isV4 || isV5 || isV6 || isV7, isV5 || isV6 || isV7, isV6 || isV7, isV7) : t->readFromStreamV1 (s);
+        if (! ok) return false;
+        loaded->push_back (t);
+    }
+
+    impl->internalBpm.store (bpm,  std::memory_order_relaxed);
+    impl->looping    .store (loop, std::memory_order_relaxed);
+    impl->syncToHost .store (sync, std::memory_order_relaxed);
+
+    impl->publishTracks (std::move (loaded));
+
+    return true;
+}
+
+//==============================================================================
+// Network MIDI
+//==============================================================================
+void SequencerEngine::setNetworkAudioPeerResolver(AudioPeerResolver f,void*ctx) noexcept { if(!f) impl->audioPeerResolver.store(nullptr); impl->audioPeerResolverCtx.store(ctx); if(f) impl->audioPeerResolver.store(f); }
+void SequencerEngine::setNetworkMidiSink(NetworkMidiSink f,void*ctx) noexcept { if(!f) impl->netSink.store(nullptr); impl->netSinkCtx.store(ctx); if(f) impl->netSink.store(f); }
+void SequencerEngine::sendNetworkMidi(int id,const juce::MidiMessage&m) const noexcept { impl->sendNet(id,m); }
+int SequencerEngine::getSelectedNetworkMidiDevice() const noexcept { return impl->selectedNetworkMidiDevice.load(); }
+void SequencerEngine::setNetworkMidiLinkState(int id,int st) const noexcept { if(id>0) impl->netLinkState[id&63].store(st); }
+int SequencerEngine::getNetworkMidiLinkState(int id) const noexcept { return id>0?impl->netLinkState[id&63].load():0; }
+int SequencerEngine::addNetworkMidiTrack(const juce::String& peer,const juce::String& name){if(!isValidNetworkMidiPeer(peer.trim()))return-1;auto cur=impl->getTracks();int id=1;for(auto&t:*cur)id=juce::jmax(id,juce::jmax(t->networkMidiDeviceId,t->linkedMidiDeviceId)+1);auto t=SequencerTrack::makeNetworkMidi(id,peer.trim(),name.isNotEmpty()?name:("MIDI "+peer.trim()),0,juce::Colour(0xff2c8fa3));auto n=std::make_shared<Impl::TrackList>(*cur);n->push_back(t);impl->publishTracks(std::move(n));return(int)cur->size();}
+int SequencerEngine::addNetworkMidiChild(int idx,int ch){auto cur=impl->getTracks();if(!juce::isPositiveAndBelow(idx,(int)cur->size())||(*cur)[idx]->type!=TrackType::NetworkMidi)return-1;int id=(*cur)[idx]->networkMidiDeviceId,n=0,last=idx;uint32_t used=0;std::shared_ptr<SequencerTrack> p;for(size_t i=0;i<cur->size();++i){auto&t=(*cur)[i];if(t->type==TrackType::NetworkMidi&&t->networkMidiDeviceId==id){last=(int)i;used|=1u<<(t->midiChannel.load()&15);if(t->networkMidiIsChild)++n;else p=t;}}if(!p||n>=kMaxNetworkMidiChildren)return-1;if(ch<0||ch>15){ch=0;while(ch<16&&(used&(1u<<ch)))++ch;if(ch>=16)return-1;}auto x=SequencerTrack::makeNetworkMidiChild(id,p->name+" / Part "+juce::String(n+1),ch,p->colour.darker(.25f));auto v=std::make_shared<Impl::TrackList>(*cur);v->insert(v->begin()+last+1,x);impl->publishTracks(std::move(v));return last+1;}
+bool SequencerEngine::removeNetworkMidiTrack(int idx){auto cur=impl->getTracks();if(!juce::isPositiveAndBelow(idx,(int)cur->size())||(*cur)[idx]->type!=TrackType::NetworkMidi)return false;int id=(*cur)[idx]->networkMidiDeviceId;bool all=!(*cur)[idx]->networkMidiIsChild;auto v=std::make_shared<Impl::TrackList>();for(auto&t:*cur)if(!(t->type==TrackType::NetworkMidi&&t->networkMidiDeviceId==id&&(all||t==(*cur)[idx])))v->push_back(t);if(all)for(auto&t:*cur)if(t->type==TrackType::Audio&&t->linkedMidiDeviceId==id)t->linkedMidiDeviceId=0;impl->publishTracks(std::move(v));return true;}
+bool SequencerEngine::setNetworkMidiPeer(int idx,const juce::String& peer){auto cur=impl->getTracks();if(!juce::isPositiveAndBelow(idx,(int)cur->size())||(*cur)[idx]->type!=TrackType::NetworkMidi||!isValidNetworkMidiPeer(peer.trim()))return false;{const int id=(*cur)[idx]->networkMidiDeviceId;for(auto&t:*cur)if(t->type==TrackType::NetworkMidi&&t->networkMidiDeviceId==id)t->networkMidiPeer=peer.trim();}return true;}
+juce::String SequencerEngine::getNetworkMidiPeer(int idx)const{auto cur=impl->getTracks();if(!juce::isPositiveAndBelow(idx,(int)cur->size())||(*cur)[idx]->type!=TrackType::NetworkMidi)return {};return (*cur)[idx]->networkMidiPeer;}
+bool SequencerEngine::setNetworkMidiChannel(int idx,int ch){auto cur=impl->getTracks();if(!juce::isPositiveAndBelow(idx,(int)cur->size())||(*cur)[idx]->type!=TrackType::NetworkMidi||ch<0||ch>15)return false;(*cur)[idx]->midiChannel.store(ch);return true;}
+bool SequencerEngine::isNetworkMidiTrack(int idx)const noexcept{auto s=impl->getTracks();return juce::isPositiveAndBelow(idx,(int)s->size())&&(*s)[idx]->type==TrackType::NetworkMidi;}
+int SequencerEngine::getNetworkMidiChildCount(int idx)const{auto s=impl->getTracks();if(!juce::isPositiveAndBelow(idx,(int)s->size())||(*s)[idx]->type!=TrackType::NetworkMidi)return 0;int id=(*s)[idx]->networkMidiDeviceId,n=0;for(auto&t:*s)if(t->type==TrackType::NetworkMidi&&t->networkMidiDeviceId==id&&t->networkMidiIsChild)++n;return n;}
+int SequencerEngine::findNetworkMidiDevice(const juce::String& peer)const{auto s=impl->getTracks();for(auto&t:*s)if(t->type==TrackType::NetworkMidi&&!t->networkMidiIsChild&&t->networkMidiPeer==peer)return t->networkMidiDeviceId;return 0;}
+int SequencerEngine::addNetworkMidiChildForAudio (int audioIdx, const juce::String& defaultPeer)
+{
+    // The audio track is the parent: it owns a Network MIDI device id, and each
+    // call adds ONE child MIDI track on that device. The child's MIDI channel
+    // (1-16) is then chosen in the child's own inspector.
+    auto cur = impl->getTracks();
+    if (! juce::isPositiveAndBelow (audioIdx, (int) cur->size())) return -1;
+    auto audio = (*cur)[(size_t) audioIdx];
+    if (audio->type != TrackType::Audio) return -1;
+
+    if (audio->linkedMidiDeviceId <= 0)
+    {
+        int id = 1;
+        for (const auto& t : *cur)
+            id = juce::jmax (id, juce::jmax (t->networkMidiDeviceId, t->linkedMidiDeviceId) + 1);
+        audio->linkedMidiDeviceId = id;
+    }
+    const int id = audio->linkedMidiDeviceId;
+
+    int n = 0, insertAfter = audioIdx;
+    uint32_t used = 0;
+    // First child: start at the audio device's own IP (from the audio source) when the host
+    // can tell us; otherwise the default. Later children copy a sibling's (possibly edited) IP.
+    juce::String peer = defaultPeer.trim();
+    if (auto resolve = impl->audioPeerResolver.load (std::memory_order_acquire))
+    {
+        // networkRouteId is the audio source's unique key; the "source #n" number is not
+        // unique (two devices can both be source #0), so it is only a fallback.
+        const auto audioPeer = resolve (impl->audioPeerResolverCtx.load (std::memory_order_relaxed),
+                                        audio->networkRouteId, audio->networkSourceId).trim();
+        if (isValidNetworkMidiPeer (audioPeer)) peer = audioPeer;
+    }
+    for (size_t i = 0; i < cur->size(); ++i)
+    {
+        const auto& t = (*cur)[i];
+        if (t->type == TrackType::NetworkMidi && t->networkMidiDeviceId == id)
+        {
+            insertAfter = juce::jmax (insertAfter, (int) i);
+            used |= 1u << (t->midiChannel.load() & 15);
+            ++n;
+            if (t->networkMidiPeer.isNotEmpty()) peer = t->networkMidiPeer;
+        }
+    }
+    if (n >= kMaxNetworkMidiChildren || ! isValidNetworkMidiPeer (peer)) return -1;
+
+    int ch = 0;
+    while (ch < 16 && (used & (1u << ch))) ++ch;
+    if (ch >= 16) return -1;
+
+    // Name from the device label only (never the source/channel part of the audio name).
+    const auto deviceLabel = audio->name.contains (" | ") ? audio->name.upToFirstOccurrenceOf (" | ", false, false)
+                                                          : audio->name;
+    auto child = SequencerTrack::makeNetworkMidiChild (id, deviceLabel + " MIDI " + juce::String (n + 1), ch,
+                                                       audio->colour.darker (0.25f));
+    child->networkMidiPeer = peer;
+
+    auto next = std::make_shared<Impl::TrackList> (*cur);
+    next->insert (next->begin() + insertAfter + 1, child);
+    impl->publishTracks (std::move (next));
+    return insertAfter + 1;
+}
+
+std::vector<SequencerEngine::TrackNest> SequencerEngine::getTrackNesting() const
+{
+    auto cur = impl->getTracks();
+    std::vector<TrackNest> out (cur->size());
+    std::map<int, int> audioOfDevice;   // linked device id -> audio track index
+    for (size_t i = 0; i < cur->size(); ++i)
+    {
+        const auto& t = (*cur)[i];
+        if (t->type == TrackType::Audio && t->linkedMidiDeviceId > 0)
+        {
+            audioOfDevice[t->linkedMidiDeviceId] = (int) i;
+            out[i].deviceId = t->linkedMidiDeviceId;
+        }
+    }
+    for (size_t j = 0; j < cur->size(); ++j)
+    {
+        const auto& t = (*cur)[j];
+        if (t->type != TrackType::NetworkMidi || ! t->networkMidiIsChild) continue;
+        const auto it = audioOfDevice.find (t->networkMidiDeviceId);
+        if (it == audioOfDevice.end()) continue;
+        out[j].parentIndex = it->second;
+        out[j].deviceId    = t->networkMidiDeviceId;
+        ++out[(size_t) it->second].childCount;
+    }
+
+    // SFZ layer tracks nest under the (singleton) SFZ instrument track. They share one
+    // pseudo device id, chosen far above any Network MIDI device id.
+    constexpr int kSfzLayerNestId = 0x40000000;
+    int sfzParent = -1;
+    for (size_t i = 0; i < cur->size(); ++i)
+        if ((*cur)[i]->type == TrackType::SfPlayer && (*cur)[i]->isSfzInstrument && ! (*cur)[i]->isSfzLayer)
+            { sfzParent = (int) i; break; }
+    if (sfzParent >= 0)
+        for (size_t j = 0; j < cur->size(); ++j)
+            if ((*cur)[j]->isSfzLayer)
+            {
+                out[j].parentIndex = sfzParent;
+                out[j].deviceId    = kSfzLayerNestId;
+                out[(size_t) sfzParent].deviceId = kSfzLayerNestId;
+                // Hidden unless opted in; a layer that holds clips is always shown.
+                out[j].hidden = ! (*cur)[j]->layerShown.load (std::memory_order_relaxed)
+                                && (*cur)[j]->getNumClips() == 0;
+                if (! out[j].hidden)
+                    ++out[(size_t) sfzParent].childCount;
+            }
+    return out;
+}
+
+int SequencerEngine::getLinkedNetworkMidiChildCount (int audioIdx) const
+{
+    auto cur = impl->getTracks();
+    if (! juce::isPositiveAndBelow (audioIdx, (int) cur->size())) return 0;
+    const auto& audio = (*cur)[(size_t) audioIdx];
+    if (audio->type != TrackType::Audio || audio->linkedMidiDeviceId <= 0) return 0;
+    int n = 0;
+    for (const auto& t : *cur)
+        if (t->type == TrackType::NetworkMidi && t->networkMidiIsChild
+            && t->networkMidiDeviceId == audio->linkedMidiDeviceId) ++n;
+    return n;
+}
+
+//==============================================================================
+//  Network audio track routing
+//==============================================================================
+int SequencerEngine::addNetworkAudioTrack (int64_t routeId, int32_t sourceId, int sourceChannel,
+                                           const juce::String& sourceName, const juce::String& userName)
+{
+    if (routeId == 0 || sourceChannel < 0)
+        return -1;
+
+    auto current = impl->getTracks();
+    for (size_t i = 0; i < current->size(); ++i)
+    {
+        const auto& track = *(*current)[i];
+        if (track.type == TrackType::Audio
+            && track.networkRouteId == routeId
+            && track.networkSourceChannel == sourceChannel)
+            return (int) i;
+    }
+
+    NetworkAudioInput input;
+    input.routeId = routeId;
+    input.sourceKey = routeId;
+    input.sourceId = sourceId;
+    input.sourceChannel = sourceChannel;
+    input.sourceName = sourceName;
+    input.userName = userName;
+
+    auto track = SequencerTrack::makeAudio (input);
+    if (userName.isNotEmpty() && sourceName.isNotEmpty())
+        track->name = userName + " | " + sourceName + " " + networkChannelLabel (sourceChannel);
+    else if (sourceName.isNotEmpty())
+        track->name = sourceName + " " + networkChannelLabel (sourceChannel);
+
+    const int newTrackIndex = (int) current->size();
+    auto next = std::make_shared<Impl::TrackList> (*current);
+    next->push_back (std::move (track));
+    impl->publishTracks (std::move (next));
+    return newTrackIndex;
+}
+
+bool SequencerEngine::setNetworkAudioTrackRoute (int trackIndex, int64_t routeId,
+                                                  int32_t sourceId, int sourceChannel)
+{
+    auto snap = impl->getTracks();
+    if (! juce::isPositiveAndBelow (trackIndex, (int) snap->size())
+        || (*snap)[(size_t) trackIndex]->type != TrackType::Audio
+        || routeId == 0 || sourceChannel < 0)
+        return false;
+
+    auto& track = *(*snap)[(size_t) trackIndex];
+    track.networkRouteId = routeId;
+    track.networkSourceId = sourceId;
+    track.networkSourceChannel = sourceChannel;
+    return true;
+}
+
+int SequencerEngine::renameNetworkAudioTracks (int64_t sourceKey, const juce::String& oldLabel, const juce::String& newLabel)
+{
+    if (sourceKey == 0 || oldLabel.isEmpty() || newLabel.isEmpty() || oldLabel == newLabel)
+        return 0;
+
+    // Auto-generated network track names are "<label> | <source> <channel>".
+    // Only those are rewritten; a name the user chose by hand is left alone.
+    const auto oldPrefix = oldLabel + " | ";
+    int renamed = 0;
+    auto snap = impl->getTracks();
+    for (const auto& trackPtr : *snap)
+    {
+        auto& track = *trackPtr;
+        if (track.type == TrackType::Audio
+            && track.networkRouteId == sourceKey
+            && track.name.startsWith (oldPrefix))
+        {
+            track.name = newLabel + track.name.substring (oldLabel.length());
+            ++renamed;
+        }
+    }
+
+    // MIDI children are named "<device label> MIDI n": keep them in step with the label.
+    std::set<int> linkedDevices;
+    for (const auto& trackPtr : *snap)
+        if (trackPtr->type == TrackType::Audio && trackPtr->networkRouteId == sourceKey
+            && trackPtr->linkedMidiDeviceId > 0)
+            linkedDevices.insert (trackPtr->linkedMidiDeviceId);
+    for (const auto& trackPtr : *snap)
+    {
+        auto& track = *trackPtr;
+        if (track.type == TrackType::NetworkMidi && track.networkMidiIsChild
+            && linkedDevices.count (track.networkMidiDeviceId) > 0
+            && track.name.startsWith (oldLabel + " "))
+            track.name = newLabel + track.name.substring (oldLabel.length());
+    }
+    return renamed;
+}
+
+static bool isRoutedFrom (const SequencerTrack& t, int64_t sourceKey) noexcept
+{
+    return t.type == TrackType::Audio && t.networkRouteId == sourceKey;
+}
+
+SequencerEngine::NetworkSourceState SequencerEngine::getNetworkSourceState (int64_t sourceKey) const
+{
+    NetworkSourceState state;
+    if (sourceKey == 0)
+        return state;
+
+    bool allMuted = true, allArmed = true, allMonitor = true;
+    auto snap = impl->getTracks();
+    for (const auto& trackPtr : *snap)
+    {
+        const auto& t = *trackPtr;
+        if (! isRoutedFrom (t, sourceKey))
+            continue;
+        if (state.numTracks == 0)
+            state.gainDb = t.volumeDb.load (std::memory_order_relaxed);
+        ++state.numTracks;
+        allMuted   = allMuted   && ! t.enabled.load (std::memory_order_relaxed);
+        allArmed   = allArmed   && t.audioRecordArm.load (std::memory_order_relaxed);
+        allMonitor = allMonitor && t.monitor.load (std::memory_order_relaxed);
+        state.solo = state.solo || t.solo.load (std::memory_order_relaxed);
+    }
+
+    if (state.numTracks > 0)
+    {
+        state.muted = allMuted;
+        state.recordArmed = allArmed;
+        state.monitor = allMonitor;
+    }
+    return state;
+}
+
+void SequencerEngine::setNetworkSourceGainDb (int64_t sourceKey, float gainDb)
+{
+    if (sourceKey == 0) return;
+    // Same -60..+6 dB range as the Arranger and Mixer track gain controls.
+    const float clamped = juce::jlimit (-60.0f, 6.0f, gainDb);
+    auto snap = impl->getTracks();
+    for (const auto& trackPtr : *snap)
+        if (isRoutedFrom (*trackPtr, sourceKey))
+            trackPtr->volumeDb.store (clamped, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setNetworkSourceMuted (int64_t sourceKey, bool muted)
+{
+    if (sourceKey == 0) return;
+    auto snap = impl->getTracks();
+    for (const auto& trackPtr : *snap)
+        if (isRoutedFrom (*trackPtr, sourceKey))
+            trackPtr->enabled.store (! muted, std::memory_order_relaxed);   // enabled == not muted
+}
+
+void SequencerEngine::setNetworkSourceSolo (int64_t sourceKey, bool solo)
+{
+    if (sourceKey == 0) return;
+    auto snap = impl->getTracks();
+    for (const auto& trackPtr : *snap)
+        if (isRoutedFrom (*trackPtr, sourceKey))
+            trackPtr->solo.store (solo, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setNetworkSourceRecordArm (int64_t sourceKey, bool armed)
+{
+    if (sourceKey == 0) return;
+    auto snap = impl->getTracks();
+    for (const auto& trackPtr : *snap)
+        if (isRoutedFrom (*trackPtr, sourceKey))
+            trackPtr->audioRecordArm.store (armed, std::memory_order_relaxed);
+}
+
+void SequencerEngine::setNetworkSourceMonitor (int64_t sourceKey, bool monitor)
+{
+    if (sourceKey == 0) return;
+    auto snap = impl->getTracks();
+    for (const auto& trackPtr : *snap)
+        if (isRoutedFrom (*trackPtr, sourceKey))
+            trackPtr->monitor.store (monitor, std::memory_order_relaxed);
+}
+
+bool SequencerEngine::isAnyTrackSoloed() const noexcept
+{
+    auto snap = impl->getTracks();
+    for (const auto& trackPtr : *snap)
+        if (trackPtr->solo.load (std::memory_order_relaxed))
+            return true;
+    return false;
+}
+
+bool SequencerEngine::isNetworkAudioTrack (int trackIndex) const noexcept
+{
+    auto snap = impl->getTracks();
+    return juce::isPositiveAndBelow (trackIndex, (int) snap->size())
+        && (*snap)[(size_t) trackIndex]->type == TrackType::Audio;
+}
+
+bool SequencerEngine::getNetworkAudioRoute (int trackIndex, int64_t& routeId,
+                                             int32_t& sourceId, int& sourceChannel) const noexcept
+{
+    auto snap = impl->getTracks();
+    if (! juce::isPositiveAndBelow (trackIndex, (int) snap->size())
+        || (*snap)[(size_t) trackIndex]->type != TrackType::Audio)
+        return false;
+
+    const auto& track = *(*snap)[(size_t) trackIndex];
+    routeId = track.networkRouteId;
+    sourceId = track.networkSourceId;
+    sourceChannel = track.networkSourceChannel;
+    return routeId != 0;
+}
+
