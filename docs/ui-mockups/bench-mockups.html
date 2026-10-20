@@ -1,0 +1,353 @@
+<title>AVIX Bench Mockups</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap">
+<style>
+/* Layout concept: "Bench" — light work surface, white instrument cards, left icon rail,
+   slim top bar with centred transport, right inspector, bottom dock. 1440x900 stage scaled to fit.
+   Color: ground / canvas / panel / ink / one cobalt accent + semantic rec/ok/warn.
+   Type: Bricolage Grotesque (display), Instrument Sans (UI), DM Mono (readouts). */
+:root{
+  --ground:#D9DEE5; --canvas:#EBEEF3; --panel:#FFFFFF; --panel2:#F4F6F9; --line:#D6DCE5;
+  --ink:#121826; --ink2:#566073; --ink3:#8A93A4; --accent:#3A4DFF; --on-accent:#FFFFFF;
+  --rec:#E5484D; --ok:#22A06B; --warn:#E39B2A; --wave:var(--accent);
+  --f-display:'Bricolage Grotesque','Segoe UI',system-ui,sans-serif;
+  --f-ui:'Instrument Sans','Segoe UI',system-ui,sans-serif;
+  --f-mono:'DM Mono',ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#05070B; --canvas:#0C1018; --panel:#141926; --panel2:#1A2030; --line:#262E42;
+  --ink:#E8ECF5; --ink2:#9BA6BC; --ink3:#66718A; --accent:#8090FF; --on-accent:#0C1018;
+  --rec:#FF6369; --ok:#3DD598; --warn:#F0B14A; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --ground:#05070B; --canvas:#0C1018; --panel:#141926; --panel2:#1A2030; --line:#262E42;
+  --ink:#E8ECF5; --ink2:#9BA6BC; --ink3:#66718A; --accent:#8090FF; --on-accent:#0C1018;
+  --rec:#FF6369; --ok:#3DD598; --warn:#F0B14A; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--f-ui);font-size:14px;
+  padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1500px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.head{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between}
+.head h1{font:800 26px/1.1 var(--f-display);margin:0;letter-spacing:-.01em}
+.head p{margin:4px 0 0;color:var(--ink2);max-width:62ch}
+.ctl{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
+.seg button{border:0;background:none;padding:6px 11px;border-radius:7px;color:var(--ink2);font-weight:500;white-space:nowrap}
+.seg button[aria-pressed="true"],.seg button.on{background:var(--ink);color:var(--panel)}
+.sw{display:flex;gap:6px}
+.sw button{width:24px;height:24px;border-radius:50%;border:2px solid var(--panel);box-shadow:0 0 0 1px var(--line)}
+.sw button[aria-pressed="true"]{box-shadow:0 0 0 2px var(--ink)}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.tabs button{border:1px solid var(--line);background:var(--panel);padding:7px 13px;border-radius:999px;white-space:nowrap;color:var(--ink2);font-weight:500}
+.tabs button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.frame{width:100%;overflow:hidden;border-radius:14px;border:1px solid var(--line);position:relative}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.notes div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.notes b{display:block;font:700 12px var(--f-display);color:var(--ink3);margin-bottom:4px;letter-spacing:.04em}
+.notes p{margin:0;color:var(--ink2);line-height:1.45}
+
+/* ---------- stage ---------- */
+.stage{width:1440px;height:900px;transform-origin:0 0;background:var(--canvas);display:grid;grid-template-columns:72px 1fr;font-size:13px;user-select:none}
+.rail{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px}
+.logo{width:40px;height:40px;border-radius:12px;background:var(--ink);color:var(--panel);display:grid;place-items:center;font:800 18px var(--f-display);margin-bottom:12px;letter-spacing:-.04em}
+.rail button{width:48px;height:48px;border:0;border-radius:14px;background:none;color:var(--ink3);display:grid;place-items:center;position:relative}
+.rail button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.rail button[aria-current="true"]{background:var(--accent);color:var(--on-accent)}
+.rail .sp{flex:1}
+.shell{display:grid;grid-template-rows:60px 1fr;min-width:0;min-height:0}
+.top{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 14px;gap:14px;border-bottom:1px solid var(--line);background:var(--panel)}
+.proj b{font:700 16px var(--f-display);display:block;line-height:1.1}
+.proj span{color:var(--ink3);font-size:11px}
+.transport{display:flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:5px}
+.tb{width:38px;height:38px;border-radius:10px;border:0;background:none;display:grid;place-items:center;color:var(--ink)}
+.tb svg{width:16px;height:16px;fill:currentColor}
+.tb.play{background:var(--ok);color:#fff;width:46px}
+.tb.rec{color:var(--rec)}
+.rd{font:500 18px var(--f-mono);padding:0 12px;border-left:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;line-height:1}
+.rd small{font:500 9px var(--f-ui);color:var(--ink3);letter-spacing:.08em;margin-bottom:3px}
+.tglobals{display:flex;gap:16px;justify-content:flex-end;align-items:center}
+.mini{display:flex;flex-direction:column;gap:4px;width:92px}
+.mini label{font-size:10px;color:var(--ink3);display:flex;justify-content:space-between;letter-spacing:.05em}
+.mini label i{font:normal 500 10px var(--f-mono);color:var(--ink2)}
+.bar{height:4px;border-radius:3px;background:var(--line);position:relative}
+.bar::after{content:"";position:absolute;left:0;top:0;bottom:0;width:var(--v,50%);background:var(--accent);border-radius:3px}
+.bar.bi::after{left:var(--l);width:var(--w)}
+.ib{height:30px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);font-size:12px;font-weight:500;color:var(--ink2)}
+.ib.danger{color:var(--rec);border-color:color-mix(in srgb,var(--rec) 40%,var(--line))}
+.main{padding:12px;display:grid;gap:12px;min-height:0;min-width:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;min-width:0;min-height:0;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+.card h3{margin:0;font:700 13px var(--f-display);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.card h3 small{font:500 11px var(--f-ui);color:var(--ink3)}
+.row{display:flex;gap:8px;align-items:center;min-width:0}.col{display:flex;flex-direction:column;gap:8px;min-width:0}
+.grow{flex:1;min-width:0;min-height:0}.wrapr{flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font:500 11px var(--f-mono);color:var(--ink2);white-space:nowrap}
+.chip.a{background:color-mix(in srgb,var(--accent) 14%,var(--panel));border-color:color-mix(in srgb,var(--accent) 45%,var(--line));color:var(--accent)}
+.btn{height:30px;padding:0 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel);font-weight:500;font-size:12px;display:inline-flex;gap:6px;align-items:center;white-space:nowrap}
+.btn.p{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.t{background:var(--panel2)}
+.btn.on{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--warn);display:inline-block}
+.tog{height:26px;padding:0 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);font:500 11px var(--f-mono);color:var(--ink3);display:inline-grid;place-items:center}
+.tog.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.lbl{font-size:10px;letter-spacing:.06em;color:var(--ink3);font-weight:500}
+.knobs{display:grid;gap:8px 4px}
+.knob{display:flex;flex-direction:column;align-items:center;gap:0;position:relative}
+.knob svg{display:block}
+.knob b{font:500 12px var(--f-mono);margin-top:-4px}
+.knob span{font-size:10px;color:var(--ink3);letter-spacing:.06em;font-weight:500;margin-top:2px}
+.kt{stroke:var(--line)}.kv{stroke:var(--k,var(--accent))}.kp{fill:var(--ink)}
+.wv{fill:var(--wave);opacity:.9}
+table{border-collapse:collapse;width:100%}
+td,th{padding:0 8px;height:28px;text-align:left;white-space:nowrap;font-weight:400}
+th{font-size:10px;color:var(--ink3);letter-spacing:.06em;font-weight:500}
+tr.sel td{background:color-mix(in srgb,var(--accent) 12%,var(--panel))}
+td.m{font-family:var(--f-mono);font-size:12px;color:var(--ink2)}
+.pads{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.pad{aspect-ratio:2.1;border-radius:10px;background:color-mix(in srgb,var(--c) 18%,var(--panel));border:1px solid color-mix(in srgb,var(--c) 55%,var(--line));padding:6px 8px;display:flex;flex-direction:column;justify-content:space-between;font:500 10px var(--f-mono);color:var(--ink2)}
+.pad b{font:700 15px var(--f-display);color:var(--ink)}
+.pad.sel{background:var(--c);color:#111}.pad.sel b{color:#111}
+.kc{display:inline-grid;place-items:center;min-width:26px;height:22px;padding:0 6px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;font:500 11px var(--f-mono);color:var(--ink)}
+.fader{width:6px;border-radius:3px;background:var(--line);position:relative;height:100%}
+.fader i{position:absolute;left:-9px;width:24px;height:12px;border-radius:4px;background:var(--ink);bottom:var(--v);transform:translateY(50%)}
+.meter{width:8px;border-radius:3px;background:var(--line);position:relative;overflow:hidden;height:100%}
+.meter i{position:absolute;left:0;right:0;bottom:0;height:var(--v);background:linear-gradient(to top,var(--ok) 0 70%,var(--warn) 70% 90%,var(--rec) 90%)}
+.lane{position:relative;background:var(--panel2);border-radius:8px;border:1px solid var(--line)}
+.clip{position:absolute;top:4px;bottom:4px;border-radius:6px;background:color-mix(in srgb,var(--c) 30%,var(--panel));border:1px solid var(--c);padding:3px 7px;font:500 10px var(--f-mono);color:var(--ink);overflow:hidden;white-space:nowrap}
+.clip.sel{background:var(--c);color:#111}
+.sw2{width:100%;height:auto;display:block}
+.sw2 text{font:500 10px var(--f-mono);fill:var(--ink3)}
+.gl{stroke:var(--line);stroke-width:1}
+@media (prefers-reduced-motion:no-preference){.rail button,.tabs button,.btn{transition:background .15s,color .15s}}
+@media (max-width:640px){.head h1{font-size:22px}}
+</style>
+
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>AVIX Bench</h1>
+      <p>A new look and layout for every panel, drawn from the structure of your source. Click through the nine screens and switch theme or accent to review.</p>
+    </div>
+    <div class="ctl">
+      <div class="seg" id="themeSeg"><button data-t="light">Light</button><button data-t="dark">Dark</button></div>
+      <div class="sw" id="accSw" aria-label="Accent colour"></div>
+    </div>
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <div class="frame" id="frame"><div class="stage" id="stage"></div></div>
+  <div class="notes" id="notes"></div>
+</div>
+
+<script>
+const $=(s,r=document)=>r.querySelector(s);
+const PAL=['#FF3D9A','#14C97E','#FF7A1A','#17A8F5','#EBB800','#8F4DFF','#0FC9AD','#F2494E','#4CB82E','#F25DAA','#2E7FFF','#F0A400','#F2607F','#3BB5D6','#9DB800','#A58BFF'];
+const rnd=s=>()=>(s=(s*16807)%2147483647)/2147483647;
+const I={
+ slicer:'<path d="M3 12h2l2-6 3 12 3-9 2 5 2-3h4"/>',
+ multi:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14M13 5v14M18 5v14"/>',
+ sf2:'<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/>',
+ arrange:'<path d="M3 6h10M3 12h18M3 18h14"/>',
+ editor:'<rect x="3" y="5" width="8" height="4" rx="1"/><rect x="9" y="11" width="10" height="4" rx="1"/><rect x="5" y="17" width="6" height="3" rx="1"/>',
+ mixer:'<path d="M6 4v16M12 4v16M18 4v16"/><circle cx="6" cy="9" r="2"/><circle cx="12" cy="15" r="2"/><circle cx="18" cy="8" r="2"/>',
+ browser:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+ eq:'<path d="M3 16c4 0 4-8 9-8s5 8 9 8"/>',
+ prefs:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>'};
+const SCREENS=[
+ ['slicer','Slicer'],['multisampler','Multisampler'],['sf2','SF2 player'],['arrange','Arrange'],
+ ['editor','Piano roll + steps'],['mixer','Mixer'],['browser','Browser'],['eq','Global EQ'],['prefs','Settings']];
+const ICON={slicer:'slicer',multisampler:'multi',sf2:'sf2',arrange:'arrange',editor:'editor',mixer:'mixer',browser:'browser',eq:'eq',prefs:'prefs'};
+
+function arc(cx,cy,r,a0,a1){const p=a=>[cx+r*Math.cos(a),cy+r*Math.sin(a)];const[x0,y0]=p(a0),[x1,y1]=p(a1);
+ return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${a1-a0>Math.PI?1:0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`}
+function knob(label,v,txt,o={}){const s=o.size||54,c=s/2,r=c-6,a0=Math.PI*.75,a1=Math.PI*2.25,av=a0+(a1-a0)*v,mid=(a0+a1)/2;
+ const va=o.bip?arc(c,c,r,Math.min(mid,av),Math.max(mid,av)):arc(c,c,r,a0,Math.max(av,a0+.02));
+ const px=c+(r-9)*Math.cos(av),py=c+(r-9)*Math.sin(av);
+ return `<div class="knob" style="${o.color?`--k:${o.color}`:''}"><svg width="${s}" height="${s}" viewBox="0 0 ${s} ${s}"><path class="kt" d="${arc(c,c,r,a0,a1)}" fill="none" stroke-width="4" stroke-linecap="round"/><path class="kv" d="${va}" fill="none" stroke-width="4" stroke-linecap="round"/><circle class="kp" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="2.6"/></svg><b>${txt}</b><span>${label}</span></div>`}
+function wave(w,h,seed,n=16,sel=2,opt={}){const r=rnd(seed),N=Math.floor(w/2);const seg=[];for(let i=0;i<n;i++)seg.push(.3+.7*r());
+ let top='',bot=[];for(let i=0;i<N;i++){const t=i/N*n,k=Math.min(n-1,Math.floor(t)),f=t-k;const a=Math.min(.98,seg[k]*Math.exp(-f*(opt.decay||2.4))*(.55+.45*r())+.04);
+  top+=(i?'L':'M')+(i*2)+' '+(h/2*(1-a*.94)).toFixed(1);bot.push((i*2)+' '+(h/2*(1+a*.94)).toFixed(1))}
+ let o=`<svg class="sw2" viewBox="0 0 ${w} ${h}"><line class="gl" x1="0" x2="${w}" y1="${h/2}" y2="${h/2}"/>`;
+ if(opt.slices!==false)for(let i=0;i<n;i++){const x=i*w/n,ww=w/n;o+=`<rect x="${x}" y="0" width="${ww}" height="${h}" fill="${PAL[i%16]}" opacity="${i===sel?.2:.07}"/><rect x="${x}" y="0" width="1.5" height="${h}" fill="${PAL[i%16]}"/><rect x="${x+2}" y="3" width="22" height="15" rx="4" fill="${PAL[i%16]}"/><text x="${x+13}" y="14" text-anchor="middle" style="fill:#111;font-weight:500">${i+1}</text>`}
+ o+=`<path class="wv" d="${top}${bot.reverse().map(s=>'L'+s).join('')}Z"/>`;
+ if(opt.loop)o+=`<rect x="${opt.loop[0]}" y="0" width="2" height="${h}" fill="var(--ok)"/><rect x="${opt.loop[1]}" y="0" width="2" height="${h}" fill="var(--ok)"/>`;
+ return o+'</svg>'}
+const seg=(items,on)=>`<div class="seg">${items.map((x,i)=>`<button class="${i===on?'on':''}">${x}</button>`).join('')}</div>`;
+const tg=(t,on)=>`<span class="tog ${on?'on':''}">${t}</span>`;
+const mini=(l,v,t,bi)=>`<div class="mini"><label>${l}<i>${t}</i></label><div class="bar ${bi?'bi':''}" style="--v:${v}%;--l:${Math.min(50,v)}%;--w:${Math.abs(v-50)}%"></div></div>`;
+
+function topbar(name,sub){return `<div class="top"><div class="proj"><b>${name}</b><span>${sub}</span></div>
+ <div class="transport"><button class="tb"><svg viewBox="0 0 16 16"><path d="M3 3h2v10H3zM13 3v10L6 8z"/></svg></button><button class="tb play"><svg viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg></button><button class="tb"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5"/></svg></button><button class="tb rec"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5"/></svg></button>
+  <div class="rd"><small>TEMPO</small>120.0</div><div class="rd"><small>POSITION</small>005.2.3</div><div class="rd"><small>LINK</small><span style="font-size:14px;color:var(--ok)">2 peers</span></div></div>
+ <div class="tglobals">${mini('PITCH',50,'+0.0 st',1)}${mini('EQ',50,'flat',1)}${mini('VOL',78,'−3.0 dB')}<button class="ib">Undo</button><button class="ib">Redo</button><button class="ib danger">Panic</button></div></div>`}
+
+/* ---------------- screens ---------------- */
+const S={};
+S.slicer=()=>{
+ const rows=[['01','Kick A','0.000','0.512'],['02','Snare','0.512','0.498'],['03','Hat closed','1.010','0.250'],['04','Hat open','1.260','0.740'],['05','Ghost snare','2.000','0.250'],['06','Break fill','2.250','0.750']];
+ return topbar('Amen_Break_Vol2','Slicer · 16 slices · 44.1 kHz · 24-bit')+`<div class="main" style="grid-template-columns:1fr 340px;grid-template-rows:1fr 250px">
+ <div class="card" style="grid-row:1">
+  <h3><span class="row"><span>Amen_Break_Vol2.wav</span><span class="chip">8.00 s</span><span class="chip">120.0 BPM</span><span class="chip a">16 slices</span></span>
+  <span class="row">${seg(['Auto 16','Auto 8','Transient','MIDI'],0)}${seg(['Soft','Outline','Bars','RMS'],0)}<button class="btn t">Fit</button></span></h3>
+  <div class="grow" style="display:flex;align-items:center">${wave(968,330,7,16,2)}</div>
+  <div class="lane" style="height:34px;display:flex;overflow:hidden">${PAL.map((c,i)=>`<div style="flex:1;background:color-mix(in srgb,${c} ${i===2?55:22}%,transparent);border-right:1px solid var(--panel);font:500 10px var(--f-mono);display:flex;align-items:center;padding-left:6px">${i===2?'03 ▪ lock':''}</div>`).join('')}</div>
+  <div class="lane" style="height:22px"><div style="position:absolute;left:12%;width:19%;top:3px;bottom:3px;background:var(--ink3);opacity:.5;border-radius:4px"></div></div>
+ </div>
+ <div class="card" style="grid-row:1/3;grid-column:2;gap:12px">
+  <h3><span class="row"><span style="width:14px;height:14px;border-radius:5px;background:${PAL[2]}"></span>Slice 03 · Hat closed</span><span class="tog on">LOCK</span></h3>
+  <div class="knobs" style="grid-template-columns:repeat(3,1fr)">${knob('PITCH',.5,'+0 st',{bip:1})}${knob('TUNE',.5,'0 ct',{bip:1})}${knob('ROOT',.45,'C3')}${knob('BODY',.3,'30%')}${knob('GAIN',.72,'−2 dB')}${knob('PAN',.5,'C',{bip:1})}</div>
+  <div class="row wrapr">${tg('REV',0)}${tg('LOOP',1)}${tg('PING',0)}${tg('MONO',0)}${tg('STR',1)}${tg('TAIL',1)}<span class="chip" style="margin-left:auto">OUT · MAIN</span></div>
+  <div style="border-top:1px solid var(--line);padding-top:10px" class="col"><span class="lbl">AHDSR</span>
+   <svg class="sw2" viewBox="0 0 300 80"><path d="M0 76L26 8H58L110 34H208L260 76" fill="color-mix(in srgb,var(--accent) 14%,transparent)" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round"/>${[26,58,110,208,260].map(x=>`<circle cx="${x}" cy="${x===26||x===58?8:x===260?76:34}" r="4" fill="var(--panel)" stroke="var(--accent)" stroke-width="2"/>`).join('')}</svg>
+   <div class="knobs" style="grid-template-columns:repeat(5,1fr)">${knob('ATK',.05,'2 ms',{size:44})}${knob('HLD',.1,'0 ms',{size:44})}${knob('DEC',.4,'120 ms',{size:44})}${knob('SUS',.6,'−6 dB',{size:44})}${knob('REL',.35,'80 ms',{size:44})}</div></div>
+  <div style="border-top:1px solid var(--line);padding-top:10px" class="col"><span class="lbl">SLICE EQ</span>
+   <div class="knobs" style="grid-template-columns:repeat(4,1fr)">${knob('LOW',.5,'0 dB',{size:44,bip:1,color:'var(--ink2)'})}${knob('MID',.62,'+2 dB',{size:44,bip:1,color:'var(--ink2)'})}${knob('HIGH',.4,'−2 dB',{size:44,bip:1,color:'var(--ink2)'})}${knob('FREQ',.55,'1.8 k',{size:44,color:'var(--ink2)'})}</div></div>
+ </div>
+ <div class="card" style="grid-row:2;flex-direction:row;gap:16px">
+  <div class="col" style="width:300px"><h3>Pads <span class="row">${seg(['A','B'],0)}</span></h3><div class="pads">${Array.from({length:16},(_,i)=>`<div class="pad ${i===2?'sel':''}" style="--c:${PAL[i]}"><span>${i+1}</span><b>${['KCK','SNR','HAT','OPN','GHT','FIL','RIM','CLP','TOM','TOM','CRS','RDE','PRC','FX','FX','VOX'][i]}</b></div>`).join('')}</div></div>
+  <div class="col grow"><h3>Slice list <small>click a row to audition</small></h3>
+   <table><tr><th></th><th>#</th><th>NAME</th><th>START (s)</th><th>LENGTH (s)</th><th>GROUP</th><th>LOCK</th></tr>${rows.map((r,i)=>`<tr class="${i===2?'sel':''}"><td><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${PAL[i]}"></span></td><td class="m">${r[0]}</td><td>${r[1]}</td><td class="m">${r[2]}</td><td class="m">${r[3]}</td><td class="m">${i%3?'—':'G1'}</td><td class="m">${i===2?'●':''}</td></tr>`).join('')}</table></div>
+ </div></div>`};
+
+S.multisampler=()=>{
+ const Z=[];[[36,52],[53,70],[71,96]].forEach(([a,b],g)=>[[1,45,3],[46,90,10],[91,127,13]].forEach(([v0,v1,c],j)=>Z.push([`Piano ${['pp','mf','ff'][j]} ${g+1}`,a,b,v0,v1,c])));
+ const W=1000,H=330,nw=W/61,xN=n=>(n-36)*nw,yV=v=>H-v/127*H;
+ let g=`<svg class="sw2" viewBox="0 0 ${W} ${H+46}">`;
+ for(let v=0;v<=127;v+=32)g+=`<line class="gl" x1="0" x2="${W}" y1="${yV(v)}" y2="${yV(v)}"/><text x="4" y="${yV(v)-3}">${v}</text>`;
+ Z.forEach((z,i)=>{const sel=i===4;g+=`<rect x="${xN(z[1])+1}" y="${yV(z[4])+1}" width="${xN(z[2]+1)-xN(z[1])-2}" height="${yV(z[3]-1)-yV(z[4])-2}" rx="6" fill="${PAL[z[5]]}" fill-opacity="${sel?.85:.28}" stroke="${PAL[z[5]]}" stroke-width="${sel?2.5:1.2}"/><text x="${xN(z[1])+8}" y="${yV(z[4])+16}" style="fill:${sel?'#111':'var(--ink2)'}">${z[0]}</text>`});
+ for(let n=36;n<=96;n++){const bk=[1,3,6,8,10].includes(n%12);g+=`<rect x="${xN(n)}" y="${H+4}" width="${nw}" height="${bk?26:42}" fill="${bk?'var(--ink)':'var(--panel)'}" stroke="var(--line)"/>`;if(n%12===0)g+=`<text x="${xN(n)+3}" y="${H+42}">C${n/12-1}</text>`}
+ g+='</svg>';
+ const f=(l,v)=>`<div class="col" style="gap:3px"><span class="lbl">${l}</span><div class="chip" style="justify-content:space-between;height:30px;border-radius:8px;width:100%">${v}</div></div>`;
+ return topbar('Grand_Piano_Layers','Multisampler · 9 zones · SFZ import')+`<div class="main" style="grid-template-columns:1fr 330px;grid-template-rows:auto 1fr 230px">
+ <div class="card" style="grid-column:1/3;flex-direction:row;align-items:center;padding:8px 12px"><button class="btn p">+ Zone</button><button class="btn">Import SFZ</button><button class="btn">Export SFZ</button><button class="btn on">Save <span class="dot"></span></button><span style="flex:1"></span>${tg('AS KIT',0)}${seg(['Zone map','Drum pads'],0)}<span class="chip">Hover a zone to preview it</span></div>
+ <div class="card">${g}</div>
+ <div class="card" style="grid-row:2/4;grid-column:2;gap:12px"><h3><span class="row"><span style="width:14px;height:14px;border-radius:5px;background:${PAL[10]}"></span>Piano mf 2</span><span class="chip">C3 – D5 · vel 46–90</span></h3>
+  <div class="row">${f('LOKEY','F3')}${f('HIKEY','D5')}${f('ROOT','A3')}</div>
+  <div class="knobs" style="grid-template-columns:repeat(4,1fr)">${knob('PITCH',.5,'0 ct',{size:48,bip:1})}${knob('PAN',.5,'C',{size:48,bip:1})}${knob('VOLUME',.7,'−7 dB',{size:48})}${knob('GROUP',.1,'1',{size:48})}</div>
+  <span class="lbl">ENVELOPE</span><div class="knobs" style="grid-template-columns:repeat(4,1fr)">${knob('ATTACK',.04,'5 ms',{size:48})}${knob('DECAY',.3,'100 ms',{size:48})}${knob('SUSTAIN',.9,'0 dB',{size:48})}${knob('RELEASE',.5,'664 ms',{size:48})}</div>
+  <span class="lbl">FILTER</span><div class="knobs" style="grid-template-columns:repeat(4,1fr)">${knob('CUTOFF',.95,'18 k',{size:48,color:'var(--ink2)'})}${knob('RESO',.1,'0.1',{size:48,color:'var(--ink2)'})}<div class="col" style="grid-column:3/5;gap:6px;justify-content:center">${tg('LOOP',1)}${tg('ONE-SHOT',0)}${tg('REVERSE',0)}</div></div></div>
+ <div class="card"><h3>Sample · piano_mf_A3.wav <small>loop 0.42 s – 2.10 s</small></h3><div class="grow" style="display:flex;align-items:center">${wave(980,150,21,1,0,{slices:false,decay:.5,loop:[300,720]})}</div></div></div>`};
+
+S.sf2=()=>{
+ const pre=['Concert Grand','Bright Grand','Electric Grand','Honky-tonk','Rhodes EP','Chorused EP','Harpsichord','Clavinet','Celesta','Glockenspiel','Music Box','Vibraphone','Marimba','Xylophone'];
+ return topbar('GM_SoundFont_v2','SF2 player · 128 presets · 3 channels live')+`<div class="main" style="grid-template-columns:330px 1fr;grid-template-rows:1fr 290px">
+ <div class="card" style="grid-row:1/3"><h3>Presets <small>BANK 000</small></h3><div class="chip" style="height:32px;border-radius:9px;width:100%">Search presets</div>
+  <div class="col" style="gap:2px;overflow:hidden">${pre.map((p,i)=>`<div class="row" style="height:34px;padding:0 8px;border-radius:9px;${i===0?'background:color-mix(in srgb,var(--accent) 14%,var(--panel))':''}"><span class="m" style="font:500 11px var(--f-mono);color:var(--ink3);width:26px">${String(i).padStart(3,'0')}</span><span class="grow">${p}</span>${i<3?`<span class="chip ${i===0?'a':''}">CH ${i+1}</span>`:''}</div>`).join('')}</div></div>
+ <div class="card"><h3><span style="font:800 24px var(--f-display)">Concert Grand</span><span class="row"><span class="chip a">CH 1</span><span class="chip">Bank 000 · Prog 000</span><button class="btn">Load SoundFont</button></span></h3>
+  <div class="row" style="gap:24px;align-items:flex-start">
+   <div class="col grow"><span class="lbl">NOTE ACTIVITY</span><svg class="sw2" viewBox="0 0 1000 120">${Array.from({length:61},(_,i)=>{const n=36+i,bk=[1,3,6,8,10].includes(n%12),on=[60,64,67,72].includes(n);return `<rect x="${i*16.39}" y="${bk?0:0}" width="16.39" height="${bk?70:116}" fill="${on?'var(--accent)':bk?'var(--ink)':'var(--panel)'}" stroke="var(--line)"/>`}).join('')}</svg>
+   <span class="lbl" style="margin-top:6px">MOD LFO · CHORUS · DELAY</span>
+   <div class="knobs" style="grid-template-columns:repeat(8,1fr)">${knob('RATE',.3,'4.2 Hz')}${knob('DEPTH',.5,'50%')}${knob('CHORUS',.25,'25%')}${knob('DELAY',.4,'320 ms')}${knob('FDBK',.35,'35%')}${knob('MIX',.3,'30%')}${knob('DRIVE',.1,'10%')}${knob('LEVEL',.8,'−2 dB')}</div></div>
+   <div class="col" style="width:210px"><span class="lbl">VOICE</span><div class="knobs" style="grid-template-columns:repeat(2,1fr)">${knob('CUTOFF',.9,'14 k',{color:'var(--ink2)'})}${knob('RESONANCE',.15,'0.2',{color:'var(--ink2)'})}${knob('FINE TUNE',.5,'0 ct',{bip:1,color:'var(--ink2)'})}${knob('PITCH',.5,'0 st',{bip:1,color:'var(--ink2)'})}</div></div></div></div>
+ <div class="card"><h3>Channel mixer <small>16 MIDI channels</small></h3><div class="row" style="align-items:stretch;gap:6px;flex:1">${Array.from({length:16},(_,i)=>{const act=i<3;return `<div class="col grow" style="align-items:center;gap:6px;opacity:${act?1:.45};background:var(--panel2);border-radius:10px;padding:8px 2px"><span class="lbl">CH${i+1}</span><div style="flex:1;display:flex;align-items:stretch;gap:8px;padding-left:6px"><div class="fader" style="--v:${act?[78,64,70][i]:0}%"><i style="--v:${act?[78,64,70][i]:0}%"></i></div><div class="meter" style="--v:${act?[62,40,55][i]:0}%"><i style="--v:${act?[62,40,55][i]:0}%"></i></div></div><span class="lbl">PAN · REV</span></div>`}).join('')}</div></div></div>`};
+
+S.arrange=()=>{
+ const tr=[['Slice kit',3,'SLICE'],['Piano layers',10,'SFZ'],['Bass',1,'SF2'],['Pad',5,'SF2'],['Drums step',2,'MIDI'],['Lead',12,'SFZ'],['Phone in',7,'NETWORK']];
+ const cl=[[[0,4],[8,8],[20,6]],[[0,8],[12,12]],[[4,12],[20,10]],[[8,16]],[[0,2],[2,2],[4,2],[6,2],[8,2],[10,2],[12,2],[14,2],[16,2],[18,2],[20,2],[22,2]],[[16,8],[26,4]],[[24,8]]];
+ const bars=32,pct=x=>(x/bars*100)+'%';
+ return topbar('Arrange_Draft_04','Arranger · 7 tracks · 32 bars')+`<div class="main" style="grid-template-rows:auto 1fr 150px">
+ <div class="card" style="flex-direction:row;align-items:center;padding:8px 12px"><button class="btn p">+ Track</button><button class="btn">+ Clip</button><span style="flex:1"></span>${tg('GRID',1)}<span class="chip">Snap 1/16</span>${tg('MAGNET',1)}${tg('LOCK',0)}<span class="chip">Track height 64</span></div>
+ <div class="card" style="flex-direction:row;gap:0;padding:0"><div class="col" style="width:240px;gap:0;border-right:1px solid var(--line)"><div style="height:30px;border-bottom:1px solid var(--line)"></div>${tr.map((t,i)=>`<div class="row" style="height:68px;padding:0 12px;border-bottom:1px solid var(--line);gap:10px"><span style="width:6px;align-self:stretch;margin:12px 0;border-radius:3px;background:${PAL[t[1]]}"></span><div class="col grow" style="gap:3px"><b style="font:700 13px var(--f-display)">${t[0]}</b><span class="chip" style="width:fit-content;height:20px;font-size:10px">${t[2]} · CH ${i+1}</span></div><div class="col" style="gap:4px">${tg('M',i===6)}${tg('S',0)}</div></div>`).join('')}</div>
+  <div class="grow" style="position:relative;overflow:hidden"><div class="row" style="height:30px;border-bottom:1px solid var(--line);gap:0;padding:0">${Array.from({length:bars/4},(_,i)=>`<div style="width:${100/(bars/4)}%;border-left:1px solid var(--line);padding:8px 6px;font:500 10px var(--f-mono);color:var(--ink3);height:100%">${i*4+1}</div>`).join('')}</div>
+   <div style="position:absolute;left:${pct(8)};width:${pct(8)};top:0;height:30px;background:color-mix(in srgb,var(--accent) 22%,transparent)"></div>
+   ${cl.map((cs,i)=>`<div style="position:relative;height:68px;border-bottom:1px solid var(--line);background-image:repeating-linear-gradient(90deg,var(--line) 0 1px,transparent 1px ${100/bars}%);background-size:100% 100%">${cs.map(([s,l],j)=>`<div class="clip ${i===1&&j===1?'sel':''}" style="--c:${PAL[tr[i][1]]};left:${pct(s)};width:calc(${pct(l)} - 3px)">${tr[i][0]} ${j+1}</div>`).join('')}</div>`).join('')}
+   <div style="position:absolute;left:${pct(11.3)};top:0;bottom:0;width:2px;background:var(--ink)"></div></div></div>
+ <div class="card" style="flex-direction:row;gap:28px;align-items:center"><div class="col" style="gap:3px"><span class="lbl">SELECTED CLIP</span><b style="font:700 18px var(--f-display)">Piano layers 2</b><span style="color:var(--ink2)">on track 2 · Piano layers</span></div>
+  <div class="row" style="gap:28px">${[['START','beat 49.00'],['LENGTH','48.00 beats'],['LOOP','off'],['QUANTISE','1/16']].map(x=>`<div class="col" style="gap:3px"><span class="lbl">${x[0]}</span><span class="chip" style="height:32px;border-radius:9px;font-size:13px">${x[1]}</span></div>`).join('')}</div><span style="flex:1"></span><button class="btn p">Open in editor</button><button class="btn">Duplicate</button><button class="btn danger" style="color:var(--rec)">Delete</button></div></div>`};
+
+S.editor=()=>{
+ const R=rnd(5),notes=[];[[0,2],[2,1],[3,1],[4,2],[6,2],[8,1],[9,1],[10,2],[12,2],[14,1.5]].forEach(([s,l],i)=>notes.push([[48,52,55,60,55,59,64,67,62,57][i],s*2,l*2,50+Math.floor(R()*77)]));
+ const W=1000,H=300,rows=24,rh=H/rows,beats=32,bw=W/beats;let pr=`<svg class="sw2" viewBox="0 0 ${W} ${H}">`;
+ for(let r=0;r<rows;r++){const n=71-r,bk=[1,3,6,8,10].includes(n%12);pr+=`<rect x="0" y="${r*rh}" width="${W}" height="${rh}" fill="${bk?'var(--panel2)':'var(--panel)'}"/>`}
+ for(let b=0;b<=beats;b++)pr+=`<line x1="${b*bw}" x2="${b*bw}" y1="0" y2="${H}" stroke="var(--line)" stroke-width="${b%4?.5:1.2}"/>`;
+ notes.forEach(([p,s,l,v])=>{pr+=`<rect x="${s*bw+1}" y="${(71-p)*rh+1}" width="${l*bw-2}" height="${rh-2}" rx="3" fill="var(--accent)" fill-opacity="${.35+v/127*.65}"/>`});
+ pr+=`<rect x="${6*bw}" y="0" width="2" height="${H}" fill="var(--ink)"/></svg>`;
+ const drums=['KICK','SNARE','CL HAT','OP HAT','CLAP','RIDE','LO TOM','CRASH'],pat=[[0,4,8,10,12],[4,12],[0,2,4,6,8,10,12,14],[7,15],[4,12],[2,6,10,14],[11],[0]];
+ return topbar('Amen_Break_Vol2','Editor · Clip 2 · Drums step')+`<div class="main" style="grid-template-rows:1.15fr 1fr">
+ <div class="card"><h3><span class="row"><span>Piano roll</span><span class="chip a">Bass · clip 2</span></span><span class="row"><button class="btn on">Draw</button><button class="btn">Select</button><span class="chip">Quantise 1/16</span><span class="chip">Vel 64 · 100 · 127</span></span></h3>
+  <div class="row" style="gap:0;align-items:stretch;flex:1;min-height:0"><div class="col" style="width:56px;gap:0;justify-content:space-between;font:500 10px var(--f-mono);color:var(--ink3);padding-right:8px;text-align:right"><span>C5</span><span>G4</span><span>C4</span><span>G3</span><span>C3</span></div><div class="grow" style="display:flex;align-items:center;border:1px solid var(--line);border-radius:8px;overflow:hidden">${pr}</div></div>
+  <div class="lane" style="height:46px;display:flex;align-items:flex-end;gap:2px;padding:4px 4px 0 60px;margin-left:0">${notes.map(n=>`<div style="position:absolute;left:calc(60px + ${n[1]/32*(100)}% * .93);bottom:2px;width:6px;height:${n[3]/127*38}px;background:var(--accent);border-radius:3px 3px 0 0"></div>`).join('')}<span class="lbl" style="position:absolute;left:8px;top:4px">VELOCITY</span></div></div>
+ <div class="card"><h3><span class="row"><span>Step sequencer</span><span class="chip a">Drums step · 16 steps</span></span><span class="row">${seg(['1–16','17–32'],0)}${tg('SWING',0)}</span></h3>
+  <div class="col" style="gap:4px;flex:1">${drums.map((d,i)=>`<div class="row" style="flex:1;gap:4px"><span class="lbl" style="width:62px;text-align:right;padding-right:6px">${d}</span>${Array.from({length:16},(_,s)=>`<div class="grow" style="height:100%;border-radius:6px;background:${pat[i].includes(s)?`var(--accent)`:(s%4===0?'var(--panel2)':'color-mix(in srgb,var(--panel2) 60%,var(--panel))')};border:1px solid var(--line);${pat[i].includes(s)?`opacity:${.55+((s*37+i*11)%45)/100}`:''}"></div>`).join('')}</div>`).join('')}</div></div></div>`};
+
+S.mixer=()=>{
+ const ch=[['Slice kit','SLICE',3],['Piano','SFZ',10],['Bass','SF2',1],['Pad','SF2',5],['Drums','MIDI',2],['Lead','SFZ',12],['Phone','NETWORK',7],['Zone 1','SFZ',8],['Zone 2','SFZ',9],['Vox','SLICE',0],['FX','SLICE',14],['Aux','SLICE',13]];
+ const strip=(n,t,c,i,master)=>{const lv=master?82:[78,64,70,58,74,66,50,60,52,68,44,56][i];return `<div class="col" style="width:${master?120:98}px;flex:none;align-items:center;background:${master?'var(--panel2)':'transparent'};border-radius:12px;padding:8px 6px;gap:8px;border:1px solid ${master?'var(--line)':'transparent'}">
+  <div style="width:100%;height:6px;border-radius:3px;background:${master?'var(--ink)':PAL[c]}"></div><b style="font:700 13px var(--f-display)">${n}</b><span class="chip" style="height:20px;font-size:10px">${t}</span>
+  ${master?'':`<div class="knobs" style="grid-template-columns:1fr 1fr;gap:0">${knob('FCUT',.9-i*.04,'',{size:40,color:'var(--ink2)'})}${knob('GAIN',.5+i*.02,'',{size:40,color:'var(--ink2)'})}</div><div class="chip" style="height:24px;width:100%;justify-content:center">OUT MAIN</div>`}
+  <div class="knob">${knob('PAN',.5,'C',{size:44,bip:1})}</div>
+  <div class="row" style="flex:1;align-items:stretch;gap:12px;min-height:150px;padding:4px 0 4px 8px"><div class="fader" style="--v:${lv}%"><i style="--v:${lv}%"></i></div><div class="meter" style="--v:${lv-12}%"><i style="--v:${lv-12}%"></i></div></div>
+  <span class="chip" style="font-size:11px">${(lv/10-8).toFixed(1)} dB</span><div class="row" style="gap:4px">${tg('M',i===6)}${tg('S',0)}</div>${master?'':`<span class="lbl">MUTE GRP ${i%4?'—':'1'}</span>`}</div>`};
+ return topbar('Amen_Break_Vol2','Mixer · 12 channels + master')+`<div class="main"><div class="card" style="flex-direction:row;gap:4px;padding:10px;overflow:hidden">${ch.map((c,i)=>strip(c[0],c[1],c[2],i)).join('')}<div style="flex:1"></div>${strip('Master','STEREO',0,0,true)}</div></div>`};
+
+S.browser=()=>{
+ const f=[['▸','Drum Breaks','folder','',''],['▸','Pianos','folder','',''],['♪','Amen_Break_Vol2.wav','wav','2.8 MB','8.00 s'],['♪','Funky_Drummer_loop.wav','wav','1.9 MB','5.33 s'],['♪','Think_break.wav','wav','1.1 MB','3.50 s'],['▤','GrandPiano.sfz','sfz','12 KB','—'],['▤','GM_SoundFont_v2.sf2','sf2','31 MB','—'],['♪','Apache_loop.wav','wav','2.2 MB','6.10 s']];
+ return topbar('Amen_Break_Vol2','Browser · Samples/Drum Breaks')+`<div class="main" style="grid-template-columns:260px 1fr 340px;grid-template-rows:1fr auto">
+ <div class="card"><h3>Places</h3><div class="col" style="gap:2px">${[['Drives',1],['C:\\ System',0],['D:\\ Samples',0],['Dropbox',0],['Google Drive',0]].map((p,i)=>`<div class="row" style="height:32px;padding:0 8px;border-radius:8px;${i===2?'background:color-mix(in srgb,var(--accent) 14%,var(--panel));font-weight:600':''}${p[1]?';color:var(--ink3);font-size:10px;letter-spacing:.06em':''}">${p[0]}</div>`).join('')}<div class="lbl" style="padding:10px 8px 4px">BOOKMARKS</div>${['Drum Breaks','Soundfonts','Field recordings'].map(x=>`<div class="row" style="height:32px;padding:0 8px;color:var(--ink2)">▸ ${x}</div>`).join('')}<div class="lbl" style="padding:10px 8px 4px">INTERNET ARCHIVE</div><div class="row" style="height:32px;padding:0 8px;color:var(--ink2)"><span class="chip">IA</span> Netlabel Samples</div></div><button class="btn t" style="margin-top:auto">+ Add bookmark</button></div>
+ <div class="card"><div class="row"><span class="chip" style="height:32px;border-radius:9px;flex:1;justify-content:flex-start">D:\\Samples ▸ Drum Breaks</span><span class="chip" style="height:32px;border-radius:9px;width:200px">Search</span></div>
+  <table><tr><th></th><th>NAME</th><th>TYPE</th><th>SIZE</th><th>LENGTH</th></tr>${f.map((r,i)=>`<tr class="${i===2?'sel':''}"><td style="width:28px;color:var(--ink3)">${r[0]}</td><td style="width:100%;font-weight:${r[2]==='folder'?600:400}">${r[1]}</td><td class="m">${r[2]==='folder'?'':r[2].toUpperCase()}</td><td class="m">${r[3]}</td><td class="m">${r[4]}</td></tr>`).join('')}</table></div>
+ <div class="card"><h3>Preview <small>Amen_Break_Vol2.wav</small></h3>${wave(300,110,7,16,-1,{slices:false})}
+  <div class="row wrapr"><span class="chip">44.1 kHz</span><span class="chip">24-bit</span><span class="chip">stereo</span><span class="chip">8.00 s</span></div>
+  <button class="btn p" style="justify-content:center;height:36px">Load into Slicer</button><button class="btn" style="justify-content:center;height:36px">Add as zone</button><button class="btn" style="justify-content:center;height:36px">Auto-play on select</button></div>
+ <div class="card" style="grid-column:1/4;flex-direction:row;align-items:center;padding:8px 14px;gap:16px"><span class="lbl">DOWNLOADING</span><span>Think_break.wav from Internet Archive</span><div class="bar grow" style="--v:64%;height:6px"></div><span class="chip">64%</span></div></div>`};
+
+S.eq=()=>{
+ const W=1000,H=360;const x=f=>Math.log(f/20)/Math.log(1000)*W,y=d=>H/2-d*H/2/18;
+ let g=`<svg class="sw2" viewBox="0 0 ${W} ${H+20}">`;
+ [20,50,100,200,500,'1k','2k','5k','10k','20k'].forEach(v=>{const f=typeof v==='number'?v:parseFloat(v)*1000;g+=`<line class="gl" x1="${x(f)}" x2="${x(f)}" y1="0" y2="${H}"/><text x="${x(f)+3}" y="${H+14}">${v}</text>`});
+ [-12,-6,0,6,12].forEach(d=>g+=`<line class="gl" x1="0" x2="${W}" y1="${y(d)}" y2="${y(d)}" ${d?'':'style="stroke:var(--ink3)"'}/><text x="4" y="${y(d)-3}">${d>0?'+':''}${d}</text>`);
+ const R=rnd(3);let an='';for(let i=0;i<=200;i++){const f=20*Math.pow(1000,i/200);an+=(i?'L':'M')+x(f)+' '+(H-(60+(1-i/200)*180*(.7+.3*R())+Math.sin(i/9)*14))}
+ g+=`<path d="${an}L${W} ${H}L0 ${H}Z" fill="var(--ink3)" opacity=".16"/>`;
+ const B=[[40,3,'HP'],[90,2,'LS'],[250,-2,'PK'],[600,1.5,'PK'],[1500,3,'PK'],[3500,-3,'PK'],[8000,2,'PK'],[14000,-4,'HS']];
+ let cv='';for(let i=0;i<=240;i++){const f=20*Math.pow(1000,i/240);let d=0;B.forEach(([bf,bg])=>{d+=bg*Math.exp(-Math.pow(Math.log(f/bf)/.75,2))});cv+=(i?'L':'M')+x(f)+' '+y(d)}
+ g+=`<path d="${cv}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linejoin="round"/>`;
+ B.forEach(([f,gn],i)=>{g+=`<circle cx="${x(f)}" cy="${y(gn)}" r="${i===4?9:7}" fill="${i===4?'var(--accent)':'var(--panel)'}" stroke="var(--accent)" stroke-width="2.5"/><text x="${x(f)}" y="${y(gn)+3.5}" text-anchor="middle" style="fill:${i===4?'var(--on-accent)':'var(--ink)'};font-size:9px">${i+1}</text>`});
+ return topbar('Global EQ','8-band parametric · stereo')+`<div class="main" style="grid-template-rows:1fr 190px"><div class="card"><h3>Frequency response <span class="row">${tg('ANALYZER',1)}${seg(['Stereo','Mid','Side'],0)}${tg('BYPASS',0)}</span></h3>${g}</svg></div>
+ <div class="row" style="gap:8px;align-items:stretch">${B.map((b,i)=>`<div class="card grow" style="gap:6px;${i===4?'border-color:var(--accent)':''}"><h3>Band ${i+1}<span class="chip" style="height:20px">${b[2]}</span></h3><div class="knobs" style="grid-template-columns:repeat(3,1fr);gap:0">${knob('FREQ',Math.log(b[0]/20)/Math.log(1000),b[0]>=1000?(b[0]/1000)+'k':b[0],{size:40})}${knob('GAIN',.5+b[1]/36,(b[1]>0?'+':'')+b[1],{size:40,bip:1})}${knob('Q',.4,'0.8',{size:40,color:'var(--ink2)'})}</div></div>`).join('')}</div></div>`};
+
+S.prefs=()=>{
+ const sc=[['Edit',[['Undo','Ctrl Z'],['Redo','Ctrl Shift Z'],['Delete selection','Del'],['Duplicate notes','Ctrl D'],['Copy / paste','Ctrl C / V']]],['Slicer',[['Add slice at pointer','Click'],['Delete slice','Del'],['Fine marker','Alt drag']]],['Arrange',[['Horizontal zoom','Ctrl Wheel'],['Track height','Alt Wheel'],['Open clip','Double-click'],['Close view','Esc']]]];
+ const tk=['Background','Waveform bg','Dark bar','Foreground','Header','Waveform','Selection','Lock on','Lock off','Grid line','Accent','Button','Button hover','Separator'];
+ const tc=['#EBEEF3','#FFFFFF','#F4F6F9','#121826','#FFFFFF','#3A4DFF','#C7CEFF','#E5484D','#C9CFDA','#D6DCE5','#3A4DFF','#F4F6F9','#E6EAF0','#D6DCE5'];
+ return topbar('Settings','Shortcuts · Theme editor · Network')+`<div class="main" style="grid-template-columns:1fr 1.2fr 1fr"><div class="card"><h3>Shortcuts</h3>${sc.map(([t,l])=>`<div class="col" style="gap:2px"><span class="lbl" style="padding:6px 0 2px">${t.toUpperCase()}</span>${l.map(([a,k])=>`<div class="row" style="height:30px;justify-content:space-between;border-bottom:1px solid var(--line)"><span>${a}</span><span class="row" style="gap:4px">${k.split(' ').map(x=>x==='/'?'/':`<span class="kc">${x}</span>`).join('')}</span></div>`).join('')}</div>`).join('')}</div>
+ <div class="card"><h3>Theme editor <span class="row"><button class="btn t">Pick from screen</button><button class="btn">Reset</button><button class="btn p">Save</button></span></h3><div class="row"><div class="col grow" style="gap:3px"><span class="lbl">BASE THEME</span><span class="chip" style="height:32px;border-radius:9px">Bench light</span></div><div class="col grow" style="gap:3px"><span class="lbl">NAME</span><span class="chip" style="height:32px;border-radius:9px">my-theme</span></div></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 14px">${tk.map((k,i)=>`<div class="row" style="height:34px;border:1px solid var(--line);border-radius:9px;padding:0 6px;gap:8px"><span style="width:22px;height:22px;border-radius:6px;background:${tc[i]};border:1px solid var(--line)"></span><span class="grow">${k}</span><span class="m" style="font:500 10px var(--f-mono);color:var(--ink3)">${tc[i]}</span></div>`).join('')}</div>
+  <span class="lbl">SLICE PALETTE · 16 + 16</span><div style="display:grid;grid-template-columns:repeat(16,1fr);gap:4px">${PAL.map(c=>`<span style="aspect-ratio:1;border-radius:6px;background:${c}"></span>`).join('')}</div></div>
+ <div class="col" style="gap:12px;min-height:0"><div class="card"><h3>Network MIDI <span class="chip a">USB link</span></h3>${[['Device IP','192.168.100.2'],['Port','5004'],['Channels','All']].map(x=>`<div class="row" style="justify-content:space-between"><span style="color:var(--ink2)">${x[0]}</span><span class="chip" style="height:28px">${x[1]}</span></div>`).join('')}<div class="row wrapr">${tg('Send live MIDI',1)}${tg('Wi-Fi host',0)}</div></div>
+  <div class="card grow"><h3>Network audio <span class="chip">Disconnected</span></h3><span style="color:var(--ink3);font-size:11px">SonoBus / AOO · Wi-Fi LAN</span>${[['Server','aoo.example.net'],['Group','Public group'],['User','studio-01']].map(x=>`<div class="row" style="justify-content:space-between"><span style="color:var(--ink2)">${x[0]}</span><span class="chip" style="height:28px">${x[1]}</span></div>`).join('')}<button class="btn p" style="justify-content:center;height:34px;margin-top:auto">Connect</button></div></div></div>`};
+
+const NOTES={
+ slicer:['Was','Two LCD readouts flanking a centre logo, with a dense control strip of knob cells below the waveform.','Now','The waveform becomes the stage. All slice parameters move into a right inspector with real arc knobs and a drawn AHDSR curve. Pads and the slice table sit in a bottom dock.'],
+ multisampler:['Was','Zone map above a cramped zone readout bar; save lived in a separate corner.','Now','A toolbar carries import, export and save. The zone map gets full width, and the selected zone has one inspector with grouped keys, envelope and filter.'],
+ sf2:['Was','Preset grid, channel FX and mixer shared one dark workspace.','Now','Preset list on the left, the active preset as a headline with live key activity and effect knobs, and a 16-channel mixer along the bottom.'],
+ arrange:['Was','Black grid with a sidebar button list and a text-only inspector.','Now','Track headers show engine type and channel, clips take the track colour, and the clip inspector becomes an editable strip with actions.'],
+ editor:['Was','Piano roll and step sequencer were separate overlays.','Now','One screen: piano roll on top with a velocity lane, drum step grid below with named rows.'],
+ mixer:['Was','Strips mixed knobs, drawn labels and tiny faders.','Now','Wide strips with colour headers, engine badge, filter and gain knobs, output select, a long fader with meter, and a wider master.'],
+ browser:['Was','One list with bookmarks and archive items mixed in.','Now','Places, file list and a preview panel with load actions. Download progress is a footer bar.'],
+ eq:['Was','Eight bands in a dark panel.','Now','A large response graph with analyser, numbered handles, and one card per band below.'],
+ prefs:['Was','Shortcuts, theme editor and network panels were separate overlays.','Now','One settings screen with three columns: shortcuts with keycaps, theme editor with named swatches, and network setup.']};
+
+/* ---------------- shell ---------------- */
+const stage=$('#stage'),frame=$('#frame');let cur='slicer';
+function rail(){return `<div class="rail"><div class="logo">AX</div>${SCREENS.slice(0,8).map(([k,n])=>`<button data-k="${k}" title="${n}" aria-label="${n}" aria-current="${k===cur}"><svg viewBox="0 0 24 24">${I[ICON[k]]}</svg></button>`).join('')}<div class="sp"></div><button data-k="prefs" title="Settings" aria-label="Settings" aria-current="${cur==='prefs'}"><svg viewBox="0 0 24 24">${I.prefs}</svg></button></div>`}
+function show(k){cur=k;stage.innerHTML=rail()+`<div class="shell">${S[k]()}</div>`;
+ stage.querySelectorAll('.rail button').forEach(b=>b.onclick=()=>show(b.dataset.k));
+ document.querySelectorAll('#tabs button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.k===k));
+ const n=NOTES[k];$('#notes').innerHTML=`<div><b>${n[0].toUpperCase()}</b><p>${n[1]}</p></div><div><b>${n[2].toUpperCase()}</b><p>${n[3]}</p></div>`;
+ try{history.replaceState(null,'','#'+k)}catch(e){}}
+$('#tabs').innerHTML=SCREENS.map(([k,n])=>`<button data-k="${k}" aria-pressed="false">${n}</button>`).join('');
+$('#tabs').onclick=e=>{const b=e.target.closest('button');if(b)show(b.dataset.k)};
+function fit(){const s=Math.min(1,(frame.clientWidth)/1440);stage.style.transform=`scale(${s})`;frame.style.height=(900*s)+'px'}
+addEventListener('resize',fit);
+
+const ACC=[['#3A4DFF','#8090FF'],['#0E9F7E','#34D3AB'],['#C2287A','#FF6FB5'],['#D9660A','#FFA04D']];let ai=0;
+const isDark=()=>{const t=document.documentElement.dataset.theme;return t?t==='dark':matchMedia('(prefers-color-scheme:dark)').matches};
+function applyAcc(){const r=document.documentElement.style;r.setProperty('--accent',ACC[ai][isDark()?1:0]);$('#accSw').querySelectorAll('button').forEach((b,i)=>b.setAttribute('aria-pressed',i===ai))}
+$('#accSw').innerHTML=ACC.map((c,i)=>`<button aria-label="Accent ${i+1}" style="background:${c[0]}"></button>`).join('');
+$('#accSw').onclick=e=>{const i=[...$('#accSw').children].indexOf(e.target.closest('button'));if(i>=0){ai=i;applyAcc()}};
+$('#themeSeg').onclick=e=>{const b=e.target.closest('button');if(!b)return;document.documentElement.dataset.theme=b.dataset.t;syncT();applyAcc()};
+function syncT(){const d=isDark();$('#themeSeg').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',(b.dataset.t==='dark')===d))}
+matchMedia('(prefers-color-scheme:dark)').addEventListener?.('change',()=>{syncT();applyAcc()});
+syncT();applyAcc();
+const h=location.hash.slice(1);show(S[h]?h:'slicer');fit();
+document.fonts&&document.fonts.ready.then(fit);
+</script>
