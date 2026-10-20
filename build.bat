@@ -2,7 +2,7 @@
 setlocal
 
 echo ============================================
-echo  AVIX - Clean Configure + Build
+echo  DYSEKT-SF - Clean Configure + Build
 echo ============================================
 echo.
 
