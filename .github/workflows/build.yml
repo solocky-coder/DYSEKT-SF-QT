@@ -22,19 +22,6 @@ jobs:
             multi_group_toggle: OFF
             artifact_suffix: ""
 
-          # Experimental build with the SF2 multi-group toggle compiled in.
-          # Per docs/EXPERIMENTAL_MULTI_GROUP_TEST.md this path is untested
-          # and must never be a plain Release build. Use RelWithDebInfo rather
-          # than Debug: same toggle-enabled code path and symbols for
-          # debugging, but linked against the release CRT so the artifact
-          # doesn't require MSVCP140_2D.dll / VCRUNTIME140D.dll (debug-only
-          # DLLs that aren't present on a normal end-user machine).
-          - variant: experimental
-            display_name: "Experimental Multi-Group (RelWithDebInfo)"
-            build_config: RelWithDebInfo
-            multi_group_toggle: ON
-            artifact_suffix: "-Experimental-MultiGroup"
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -98,6 +85,16 @@ jobs:
           if (-not (Test-Path "link/include/ableton/Link.hpp")) {
             Remove-Item -Recurse -Force link -ErrorAction SilentlyContinue
             git clone --depth 1 --recurse-submodules https://github.com/Ableton/link.git link
+          }
+
+      # AOO / SonoBus fork used by network audio (cmake/MetroAoo.cmake expects
+      # aoo/lib/src/client.cpp). The submodule has no recorded commit, so clone it.
+      - name: Fetch aoo (network audio)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "aoo/lib/src/client.cpp")) {
+            Remove-Item -Recurse -Force aoo -ErrorAction SilentlyContinue
+            git clone --depth 1 --branch sono --recurse-submodules https://github.com/essej/aoo.git aoo
           }
 
       - name: Patch sfizz cxxopts alias collision
@@ -166,31 +163,6 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             -DJUCE_BUILD_EXTRAS=OFF `
             -DJUCE_BUILD_EXAMPLES=OFF
-
-      # Isolated diagnostic for the SF2-PLAYER experimental-multi-group
-      # crash investigation (see diagnostics/audio_groups_repro.c). Only
-      # needs FluidSynth itself, so it's cheap and runs before the full
-      # plugin build -- if this alone reproduces the crash, the answer
-      # doesn't require waiting on Standalone/VST3 to finish building.
-      # Runs once across the matrix (not tied to DYSEKT's own toggle --
-      # this test always requests audio-groups=16 itself, independently).
-      - name: Diagnostic - audio-groups=16 construct/destroy repro
-        if: matrix.variant == 'experimental'
-        shell: pwsh
-        run: |
-          cmake --build build --config ${{ matrix.build_config }} --target audio_groups_repro --parallel 1
-          $exe = Get-ChildItem -Recurse -File -Filter "audio_groups_repro.exe" build/ | Select-Object -First 1
-          if ($null -eq $exe) {
-            Write-Error "audio_groups_repro.exe not found after build."
-            exit 1
-          }
-          Write-Host "Running $($exe.FullName)"
-          & $exe.FullName
-          $code = $LASTEXITCODE
-          Write-Host "Exit code: $code"
-          if ($code -ne 0) {
-            Write-Warning "audio_groups_repro exited abnormally (code $code) -- see the last printed step above for where it died."
-          }
 
       # Build one project/compiler task at a time. JUCE + sfizz exceeds the
       # hosted runner's memory limit when MSBuild and MSVC compile in parallel.
