@@ -26,6 +26,11 @@ struct ThemeData
 
     // The second pad bank (17–32) inherits a slightly muted variation of the
     // first bank by default. Themes may still override every swatch directly.
+    // True for the flat "Metro-family" themes. Panels that used to test
+    // `name == "metro"` call this instead so the Bench theme shares the same
+    // flat rendering path (it only changes colours).
+    bool isMetro() const noexcept { return name == "metro" || name == "bench"; }
+
     static void completeSlicePalette (ThemeData& theme)
     {
         for (int i = 16; i < kSlicePaletteSize; ++i)
@@ -531,6 +536,36 @@ struct ThemeData
         return t;
     }
 
+    // ── BENCH ─────────────────────────────────────────────────────────────────
+    // Ink-blue panels · periwinkle accent. Colour-only step of the Bench UI
+    // redesign; shares Metro's flat rendering path (see isMetro()).
+    static ThemeData benchTheme()
+    {
+        ThemeData t;
+        t.name             = "bench";
+        const juce::Colour accent (0xFF8090FF);
+        t.background       = juce::Colour (0xFF0C1018);
+        t.waveformBg       = juce::Colour (0xFF141926);
+        t.darkBar          = juce::Colour (0xFF1A2030);
+        t.foreground       = juce::Colour (0xFFE8ECF5);
+        t.header           = juce::Colour (0xFF141926);
+        t.waveform         = accent;
+        t.selectionOverlay = accent.withAlpha (0.22f);
+        t.lockActive       = accent;
+        t.lockInactive     = juce::Colour (0xFF66718A);
+        t.gridLine         = juce::Colour (0xFF1D2434);
+        t.accent           = accent;
+        t.button           = juce::Colour (0xFF1A2030);
+        t.buttonHover      = juce::Colour (0xFF242C42);
+        t.separator        = juce::Colour (0xFF262E42);
+        static const juce::uint32 pal[16] = { 0xFFFF3D9A,0xFF14C97E,0xFFFF7A1A,0xFF17A8F5,
+            0xFFEBB800,0xFF8F4DFF,0xFF0FC9AD,0xFFF2494E,0xFF4CB82E,0xFFF25DAA,0xFF2E7FFF,
+            0xFFF0A400,0xFFF2607F,0xFF3BB5D6,0xFF9DB800,0xFFA58BFF };
+        for (int i = 0; i < 16; ++i) t.slicePalette[i] = juce::Colour (pal[i]);
+        completeSlicePalette (t);
+        return t;
+    }
+
     static juce::Colour parseHex (const juce::String& hex)
     {
         return juce::Colour ((juce::uint32) (0xFF000000 | hex.getHexValue32()));
@@ -546,6 +581,7 @@ struct ThemeData
         if (text.contains("name: serum"))    return serumTheme();
         if (text.contains("name: opendaw"))  return opendawTheme();
         if (text.contains("name: metro"))    return metroTheme();
+        if (text.contains("name: bench"))    return benchTheme();
 
         for (auto line : juce::StringArray::fromLines (text))
         {

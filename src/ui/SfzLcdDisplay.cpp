@@ -218,7 +218,7 @@ void SfzLcdDisplay::paint (juce::Graphics& g)
 
     {
         juce::Path clipPath;
-        const float clipRadius = getTheme().name == "metro" ? 0.0f : 4.0f;
+        const float clipRadius = getTheme().isMetro() ? 0.0f : 4.0f;
         clipPath.addRoundedRectangle (getLocalBounds().toFloat(), clipRadius);
         g.reduceClipRegion (clipPath);
     }

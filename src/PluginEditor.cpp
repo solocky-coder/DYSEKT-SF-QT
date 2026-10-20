@@ -1293,7 +1293,7 @@ void DysektEditor::paint (juce::Graphics& g)
  const auto& frameSrc = waveformView.getBounds();
  const auto outerF = waveformFrameRect (*this, frameSrc, trimDialog != nullptr);
 
- if (getTheme().name == "metro")
+ if (getTheme().isMetro())
  {
      g.setColour (getTheme().waveformBg);
      g.fillRoundedRectangle (outerF, 0.0f);
@@ -1340,7 +1340,7 @@ void DysektEditor::paintOverChildren (juce::Graphics& g)
  const auto outerF = waveformFrameRect (*this, frameSrc, trimDialog != nullptr);
  const auto ac = getTheme().accent;
 
- if (getTheme().name == "metro")
+ if (getTheme().isMetro())
  {
      g.setColour (getTheme().separator);
      g.drawRoundedRectangle (outerF.reduced (0.5f * sf), 0.0f, 1.0f * sf);
@@ -1378,7 +1378,7 @@ void DysektEditor::paintOverChildren (juce::Graphics& g)
  const auto outerF = waveformFrameRect (*this, sfzActiveBounds, false);
  const auto ac = getTheme().accent;
 
- if (getTheme().name == "metro")
+ if (getTheme().isMetro())
  {
      g.setColour (getTheme().separator);
      g.drawRoundedRectangle (outerF.reduced (0.5f * sf), 0.0f, 1.0f * sf);
@@ -1425,7 +1425,7 @@ void DysektEditor::paintOverChildren (juce::Graphics& g)
  const auto outerF = waveformFrameRect (*this, slotBounds, false);
  const auto ac = getTheme().accent;
 
- if (getTheme().name == "metro")
+ if (getTheme().isMetro())
  {
      g.setColour (getTheme().separator);
      g.drawRoundedRectangle (outerF.reduced (0.5f * sf), 0.0f, 1.0f * sf);
@@ -1455,7 +1455,7 @@ void DysektEditor::paintOverChildren (juce::Graphics& g)
  const auto ac = getTheme().accent;
  const juce::Rectangle<float> logoF (logoBar.getBounds().toFloat()
  .withTrimmedTop (4.0f * sf));
- if (getTheme().name == "metro")
+ if (getTheme().isMetro())
  {
      g.setColour (getTheme().separator);
      g.drawRoundedRectangle (logoF.reduced (0.5f * sf), 0.0f, 1.0f * sf);
@@ -1475,7 +1475,7 @@ void DysektEditor::paintOverChildren (juce::Graphics& g)
  {
  const auto ac = getTheme().accent;
  const juce::Rectangle<float> win (getLocalBounds().toFloat());
- if (getTheme().name == "metro")
+ if (getTheme().isMetro())
  {
      g.setColour (getTheme().separator);
      g.drawRoundedRectangle (win.reduced (2.0f * sf), 0.0f, 1.0f * sf);
@@ -2479,6 +2479,7 @@ void DysektEditor::ensureDefaultThemes()
  // files left over from a previous version are removed below so they
  // don't linger in the picker after an update.
  write ("metro", ThemeData::metroTheme());
+ write ("bench", ThemeData::benchTheme());
 
  static const char* kRetiredBuiltIns[] = {
      "dark", "shell", "lazy", "snow", "ghost", "hack",
@@ -2511,7 +2512,7 @@ void DysektEditor::applyTheme (const juce::String& themeName)
  if (t.name == themeName)
  {
  setTheme (t);
- setLookAndFeel (t.name == "metro" ? (juce::LookAndFeel*) &metroLnf : (juce::LookAndFeel*) &lnf);
+ setLookAndFeel (t.isMetro() ? (juce::LookAndFeel*) &metroLnf : (juce::LookAndFeel*) &lnf);
  processor.sliceManager.setSlicePalette (getTheme().slicePalette);
  saveUserSettings (themeName);
  applyWindowIcon (this);

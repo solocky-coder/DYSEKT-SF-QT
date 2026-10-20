@@ -16,6 +16,6 @@ namespace MetroIcons
 {
     inline bool suppressChromeSprites()
     {
-        return getTheme().name == "metro";
+        return getTheme().isMetro();
     }
 }

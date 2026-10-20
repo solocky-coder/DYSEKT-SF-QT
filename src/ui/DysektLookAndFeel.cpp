@@ -5,7 +5,7 @@
 
 // Default theme is now Metro (flat, square, no-gloss chrome per the design
 // manual). Was previously ThemeData::opendawTheme(), which meant every
-// theme.name == "metro" flat-rendering branch across the codebase
+// theme.isMetro() flat-rendering branch across the codebase
 // (ActionPanel, FileBrowserPanel, GlobalEqPanel, HeaderBar, LogoBar,
 // PadGridView, Sf2LcdDisplay, Sf2ProgramGrid, SfzDropdownPanel,
 // SfzLcdDisplay, ShortcutsPanel, SliceLcdDisplay, DualLcdControlFrame,
@@ -68,7 +68,7 @@ juce::Font DysektLookAndFeel::makeFont (float pointSize, bool bold)
     // Font selection is unrelated to the flat/square shape-language collapse —
     // Metro still asks for native Segoe UI chrome; every other theme still
     // uses the embedded Barlow Condensed faces. Left exactly as it was.
-    if (getTheme().name == "metro")
+    if (getTheme().isMetro())
     {
         auto opts = juce::FontOptions().withName ("Segoe UI").withHeight (pointSize);
         if (bold)

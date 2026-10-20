@@ -70,7 +70,7 @@ void LogoBar::paint (juce::Graphics& g)
     const auto& accent = getTheme().accent;
     const juce::Rectangle<float> fr (getLocalBounds().toFloat().withTrimmedTop (3.0f));
 
-    if (getTheme().name == "metro")
+    if (getTheme().isMetro())
     {
         // Metro: single flat 1px square border, no glow/gloss (per manual —
         // "Borders 1 px only. Corners Square. Gloss None.").

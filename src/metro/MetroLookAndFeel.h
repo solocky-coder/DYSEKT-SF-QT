@@ -18,7 +18,7 @@
 // Note: most of DYSEKT-SF's actual on-screen surfaces (waveform, pads, mixer,
 // browser, LCDs, knob strips) are hand-painted directly in each component's
 // paint(), not routed through LookAndFeel virtual calls at all — those are
-// themed via getTheme().name == "metro" checks inside the components
+// themed via getTheme().isMetro() checks inside the components
 // themselves (WaveformView.cpp, PadGridView.cpp, MixerPanel.cpp, etc.), and
 // are unaffected by which LookAndFeel object is active. This class overrides
 // TextButton, Slider (linear + rotary), PopupMenu, and TextEditor; ComboBox

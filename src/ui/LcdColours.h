@@ -24,7 +24,7 @@ namespace LcdColours
     static const juce::Colour kOutline  { 0xFF1C3A12 };
 
     // ── Metro helpers ─────────────────────────────────────────────────────
-    static inline bool currentThemeIsMetro() { return getTheme().name == "metro"; }
+    static inline bool currentThemeIsMetro() { return getTheme().isMetro(); }
     static inline juce::Colour metroWaveformBg() { return getTheme().waveformBg; }
     static inline juce::Colour metroSeparator()  { return getTheme().separator; }
 

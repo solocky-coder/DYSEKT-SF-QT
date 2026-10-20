@@ -125,7 +125,7 @@ void PadGridView::drawPad (juce::Graphics& g,
     // ── Background: full pad filled with the slice color ─────────────────────
     if (isEmpty)
     {
-        if (th.name == "metro")
+        if (th.isMetro())
         {
             g.setColour (th.button);
             g.fillRoundedRectangle (bounds.toFloat(), 0.0f);
@@ -154,7 +154,7 @@ void PadGridView::drawPad (juce::Graphics& g,
     juce::Colour padBg = sliceCol.darker (sel ? 0.38f : 0.58f);
     if (hov) padBg = padBg.brighter (0.12f);
 
-    if (th.name == "metro")
+    if (th.isMetro())
     {
         // Flat single-colour tile, no gradient — Metro tile language.
         g.setColour (padBg);

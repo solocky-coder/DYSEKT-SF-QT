@@ -490,7 +490,7 @@ void FileBrowserPanel::paint (juce::Graphics& g)
     // ── Outer rounded shell ───────────────────────────────────────────────────
     const auto screen = [&]
     {
-        if (T.name == "metro")
+        if (T.isMetro())
         {
             g.setColour (T.waveformBg);
             g.fillRoundedRectangle (b.toFloat(), 0.0f);
@@ -547,7 +547,7 @@ void FileBrowserPanel::paint (juce::Graphics& g)
     // ── Bookmark bar row 1 background ────────────────────────────────────────
     {
         const auto bmRect = b.reduced (4).withHeight (kBmH).toFloat();
-        if (T.name == "metro")
+        if (T.isMetro())
         {
             g.setColour (T.darkBar);
             g.fillRect (bmRect);
@@ -568,7 +568,7 @@ void FileBrowserPanel::paint (juce::Graphics& g)
     {
         const auto archRect = b.reduced (4).withTop (b.getY() + 4 + kBmH)
                                            .withHeight (kBmH).toFloat();
-        if (T.name == "metro")
+        if (T.isMetro())
         {
             g.setColour (T.darkBar);
             g.fillRect (archRect);

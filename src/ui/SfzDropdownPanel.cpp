@@ -409,7 +409,7 @@ void SfzDropdownPanel::paint (juce::Graphics& g)
     // Full background
     {
         const auto bounds = getLocalBounds().toFloat();
-        if (theme.name == "metro")
+        if (theme.isMetro())
         {
             // Flat, square, no gradient — manual forbids gloss/glow/gradient.
             g.setColour (theme.darkBar);
@@ -640,7 +640,7 @@ void SfzDropdownPanel::drawMeter (juce::Graphics& g) const
     auto leftBar  = juce::Rectangle<int> (area.getX(),              area.getY(), barW, barH);
     auto rightBar = juce::Rectangle<int> (area.getX() + barW + 4,  area.getY(), barW, barH);
 
-    const bool metroMeter = (theme.name == "metro");
+    const bool metroMeter = (theme.isMetro());
     const float meterR = 0.0f;   // flat, all themes
 
     g.setColour (theme.darkBar.darker (0.2f));

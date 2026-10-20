@@ -54,7 +54,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         const auto& theme = getTheme();
-        g.setColour (theme.name == "metro" ? theme.waveformBg : theme.darkBar);
+        g.setColour (theme.isMetro() ? theme.waveformBg : theme.darkBar);
         g.fillRect (getLocalBounds());
         g.setColour (theme.separator);
         g.drawRect (getLocalBounds(), 1);
