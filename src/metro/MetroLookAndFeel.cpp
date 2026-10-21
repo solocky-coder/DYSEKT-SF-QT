@@ -15,7 +15,7 @@ void MetroLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& bu
         return;
 
     const bool toggled = button.getToggleState();
-    const float r = 0.0f; // manual: flat, square corners — no radius
+    const float r = getTheme().cornerRadius * 0.6f; // 0 for Metro (flat); small radius for Bench
 
     auto fill = isDown        ? getTheme().accent
               : toggled       ? getTheme().accent
@@ -34,9 +34,9 @@ void MetroLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, in
     const auto& t = getTheme();
     auto bounds = juce::Rectangle<float> (0, 0, (float) width, (float) height).reduced (0.5f);
     g.setColour (t.button);
-    g.fillRoundedRectangle (bounds, 0.0f);
+    g.fillRoundedRectangle (bounds, t.cornerRadius * 0.6f);
     g.setColour (t.separator);
-    g.drawRoundedRectangle (bounds, 0.0f, 1.0f);
+    g.drawRoundedRectangle (bounds, t.cornerRadius * 0.6f, 1.0f);
 }
 
 // ── Sliders ──────────────────────────────────────────────────────────────────

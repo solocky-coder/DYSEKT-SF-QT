@@ -54,10 +54,11 @@ public:
     void paint (juce::Graphics& g) override
     {
         const auto& theme = getTheme();
+        const float r = theme.isMetro() ? theme.cornerRadius : 0.0f;
         g.setColour (theme.isMetro() ? theme.waveformBg : theme.darkBar);
-        g.fillRect (getLocalBounds());
+        g.fillRoundedRectangle (getLocalBounds().toFloat(), r);
         g.setColour (theme.separator);
-        g.drawRect (getLocalBounds(), 1);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), r, 1.0f);
     }
 
     void resized() override

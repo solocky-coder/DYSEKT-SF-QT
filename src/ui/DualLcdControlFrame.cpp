@@ -404,9 +404,9 @@ void DualLcdControlFrame::paint (juce::Graphics& g)
     if (getTheme().isMetro())
     {
         g.setColour (getTheme().button);
-        g.fillRoundedRectangle (getLocalBounds().toFloat(), 0.0f);
+        g.fillRoundedRectangle (getLocalBounds().toFloat(), getTheme().cornerRadius);
         g.setColour (getTheme().separator);
-        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 0.0f, 1.0f);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), getTheme().cornerRadius, 1.0f);
     }
     else
     {

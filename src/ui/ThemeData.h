@@ -543,6 +543,7 @@ struct ThemeData
     {
         ThemeData t;
         t.name             = "bench";
+        t.cornerRadius     = 8.0f;   // rounded cards; Metro stays at 0 (flat)
         const juce::Colour accent (0xFF8090FF);
         t.background       = juce::Colour (0xFF0C1018);
         t.waveformBg       = juce::Colour (0xFF141926);
