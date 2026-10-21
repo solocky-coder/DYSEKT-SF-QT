@@ -9,6 +9,7 @@
 #include "ui/HeaderBar.h"
 #include "ui/MiniTransportBar.h"
 #include "ui/NavRail.h"
+#include "ui/TopBar.h"
 #include "params/ParamIds.h"
 #include "ui/SliceLane.h"
 #include "ui/SliceControlBar.h"
@@ -270,6 +271,7 @@ private:
     DysektLookAndFeel lnf;
     MetroLookAndFeel  metroLnf;   // swapped in via setLookAndFeel() only while theme == "metro"
 
+    TopBar          topBar { processor, processor.sequencer };   // Bench layout only; declared first so it sits behind logo/header/transport
     LogoBar         logoBar;
     HeaderBar       headerBar;
     NavRail         navRail;      // Bench layout only — see resized() / syncNavRail()

@@ -21,6 +21,8 @@ public:
     /** Design width in layout units (scaled by the editor like every other region). */
     static constexpr int kDesignWidth = 60;
 
+    NavRail() = default;   // the non-copyable macro below would otherwise suppress the implicit default constructor
+
     std::function<void (Item)> onItem;
 
     void setTab (int tab)

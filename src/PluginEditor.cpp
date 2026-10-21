@@ -55,6 +55,7 @@ DysektEditor::DysektEditor (DysektProcessor& p)
  arrangeView.setNetworkAudioProcessor (dynamic_cast<NetworkAudioProcessor*> (&p));
 #endif
 
+ addChildComponent (topBar);   // Bench layout only; shown/placed in resized()
  addAndMakeVisible (logoBar);
  logoBar.getProperties().set ("dysektThemeKey", "header");
  addAndMakeVisible (headerBar);
@@ -1588,9 +1589,14 @@ void DysektEditor::resized()
 
  // ── Top strip ─────────────────────────────────────────────────────────────
  // In PAD mode shrink LCD rows to 65% — frees ~116px for the pad grid
+ const bool bench = getTheme().isBench();
  const int lcdRowH = si (kLcdRowH);
  const int ctrlFrmH = si (kCtrlFrameH);
- const int kTopStripH = si (kLogoH) + lcdRowH;
+ // Bench: a slim top bar replaces the logo strip, and the centre control column goes away.
+ juce::Rectangle<int> topBarBounds;
+ if (bench) topBarBounds = area.removeFromTop (si (TopBar::kDesignHeight));
+ const int centreW = bench ? 0 : si (kCtrlFrameW);
+ const int kTopStripH = (bench ? 0 : si (kLogoH)) + lcdRowH;
  auto topArea = area.removeFromTop (kTopStripH);
  auto topRow = topArea.reduced (si (kMargin), si (4));
 
@@ -1599,7 +1605,7 @@ void DysektEditor::resized()
  // actually reflows on a wider/narrower host window now that width isn't
  // aspect-locked to height — clamped at 0 so an extremely narrow window
  // (near the resize-limit floor) can't drive this negative.
- const int sideW = juce::jmax (0, (topRow.getWidth() - si (kCtrlFrameW) - si (kMargin) * 2) / 2);
+ const int sideW = juce::jmax (0, (topRow.getWidth() - centreW - si (kMargin) * 2) / 2);
  // Show/hide LCD panels per mode.
  // Real tab order: 0=SLICER, 1=SFZ-PLAYER, 2=SF2-PLAYER.
  // sliceLcd/sliceWaveformLcd are mode-aware (see WaveformView's
@@ -1630,7 +1636,7 @@ void DysektEditor::resized()
  sf2Lcd.setBounds (sliceLcd.getBounds());
  topRow.removeFromLeft (si (kMargin));
 
- auto centreCol = topRow.removeFromLeft (si (kCtrlFrameW));
+ auto centreCol = topRow.removeFromLeft (centreW);
  auto logoRow = centreCol.removeFromTop (si (kLogoH));
  // logoBar placed after cfY is known — centred vertically between plugin top and CF top
  {
@@ -1659,6 +1665,27 @@ void DysektEditor::resized()
  sliceWaveformLcd.setBounds (topRow);
  sf2WaveformLcd.setBounds (topRow);
  multisamplerWaveformLcd.setBounds (topRow);
+
+ // ── Bench top bar: place the existing transport / undo-redo row into its slots ──
+ if (bench)
+ {
+     const float barSf = (float) topBarBounds.getHeight() / (float) TopBar::kDesignHeight;
+     topBar.setVisible (true);
+     topBar.setBounds (topBarBounds);
+     topBar.setModeTitle (uiMode == 1 ? "Multisampler" : (uiMode == 2 ? "SF2 player" : "Slicer"));
+     const auto slots = TopBar::computeSlots (topBarBounds, barSf);
+     transportBar.setBounds (slots.transport);
+     headerBar.setBounds (slots.buttons);
+     logoBar.setVisible (false);
+     if (auto* cf = headerBar.getControlFrame()) cf->setVisible (false);
+ }
+ else
+ {
+     topBar.setVisible (false);
+     topBar.setBounds ({});
+     logoBar.setVisible (true);
+     if (auto* cf = headerBar.getControlFrame()) cf->setVisible (true);
+ }
 
  auto actionArea = area.removeFromTop (si (kActionH));
  const int kFX = area.getX() + si (kMargin);
