@@ -18,6 +18,11 @@ public:
     void mouseMove (const juce::MouseEvent& e) override;
     void mouseExit (const juce::MouseEvent& e) override;
 
+    /** Bench layout: when true the cells wrap into a tall right-hand inspector,
+        scaled by width instead of height. Cells, hit-testing and edits are unchanged. */
+    void setInspectorMode (bool on) { if (on != inspectorMode) { inspectorMode = on; repaint(); } }
+    bool isInspectorMode() const noexcept { return inspectorMode; }
+
     // Called by the parent editor's timer — starts/stops the pulse as needed
     void updateMidiLearnPulse();
 
@@ -198,6 +203,7 @@ private:
 
     static constexpr int kKnobR = 9; // knob radius (px)
     float paintSf = 1.0f;
+    bool  inspectorMode = false;
     int psCellW  { 74 };   // kParamCellWidth * paintSf
     int psCellH  { 32 };   // 32 * paintSf
     int psKnobR  { kKnobR };// kKnobR * paintSf       // set at start of paint() — scales to component height

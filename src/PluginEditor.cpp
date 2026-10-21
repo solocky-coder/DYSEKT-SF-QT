@@ -1688,8 +1688,27 @@ void DysektEditor::resized()
  }
 
  auto actionArea = area.removeFromTop (si (kActionH));
+
+ // ── Bench slicer inspector ────────────────────────────────────────────────
+ // In the Bench layout the slice control bar becomes a tall panel on the right
+ // of the slicer view instead of a strip under the waveform. Same conditions as
+ // the strip (Slicer tab, a real sample loaded, no trim bar, nothing covering).
+ bool benchInspector = false;
+ {
+#if DYSEKT_STANDALONE
+     const bool slotBlocks = (activeSlot == SlotContent::Browser);
+#else
+     const bool slotBlocks = (activeSlot != SlotContent::None);
+#endif
+     auto snap = processor.sampleData.getSnapshot();
+     const bool realSample = hasSampleLoaded && snap != nullptr
+                             && ! snap->filePath.containsIgnoreCase ("DYSEKT_default.wav");
+     benchInspector = bench && uiMode == 0 && trimDialog == nullptr && realSample && ! slotBlocks;
+ }
+ const int inspW   = benchInspector ? si (300) : 0;
+ const int inspGap = benchInspector ? si (kMargin) : 0;
  const int kFX = area.getX() + si (kMargin);
- const int kFW = area.getWidth() - si (kMargin) * 2;
+ const int kFW = area.getWidth() - si (kMargin) * 2 - inspW - inspGap;
 
  // multisamplerEditor's own header row centres its zoneTagLabel beneath
  // this DualLcdControlFrame (centreCol, still in scope from above) — it's
@@ -1838,7 +1857,13 @@ void DysektEditor::resized()
  // the SCB has no MULTISAMPLER-facing role left at all and is never
  // reserved/shown while uiMode == 1 — that height folds back into
  // zoneMapView/the keyboard below instead of sitting empty above it.
- if (hasRealSample && uiMode == 0 && ! inlineMixerOpen && !normalBrowserOpen)
+ sliceControlBar.setInspectorMode (benchInspector);
+ if (benchInspector)
+ {
+     const int inspTop = actionArea.getY();
+     sliceControlBar.setBounds (kFX + kFW + inspGap, inspTop, inspW, juce::jmax (0, area.getBottom() - inspTop));
+ }
+ else if (hasRealSample && uiMode == 0 && ! inlineMixerOpen && !normalBrowserOpen)
  {
      const int scbH = si (kSliceCtrlH);
      auto scbStrip = area.removeFromBottom (scbH);

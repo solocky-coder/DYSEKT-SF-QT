@@ -914,7 +914,17 @@ void SliceControlBar::paint (juce::Graphics& g)
  // activeUiTab (0=Slicer, 1=SfzPlayer2, 2=SfPlayer) -- arranger-independent,
  // unlike midiRouteMode which the Arranger overwrites to Sequencer.
  const bool sfzPlayerMode = processor.activeUiTab.load (std::memory_order_relaxed) != 0;
- // ── LCD-style frame — matches waveform + LCD screen aesthetic ────────────
+ // ── Frame ──────────────────────────────────────────────────────────────
+ if (inspectorMode)
+ {
+ const auto bf = getLocalBounds().toFloat();
+ g.setColour (getTheme().waveformBg);
+ g.fillRoundedRectangle (bf, getTheme().cornerRadius);
+ g.setColour (getTheme().separator);
+ g.drawRoundedRectangle (bf.reduced (0.5f), getTheme().cornerRadius, 1.0f);
+ }
+ else
+ {
  {
  auto b = getLocalBounds();
 
@@ -932,12 +942,15 @@ void SliceControlBar::paint (juce::Graphics& g)
  for (int y = screen.getY(); y < screen.getBottom(); y += 2)
  g.drawHorizontalLine (y, (float) screen.getX(), (float) screen.getRight());
  }
+ }
 
  cells.clear();
  sfzZoneCells.clear();
 
  // Scale all fixed pixel constants proportionally with component height
- paintSf = (float) getHeight() / 72.0f;
+ // Inspector: 3 cell columns across the width. Strip: scale with height as before.
+ paintSf = inspectorMode ? (float) getWidth() / (3.0f * (float) kParamCellWidth + 2.0f * 4.0f + 2.0f * 8.0f)
+                         : (float) getHeight() / 72.0f;
  psCellW = juce::roundToInt ((float) kParamCellWidth * paintSf);
  psCellH = juce::roundToInt (28.0f * paintSf);
  psKnobR = juce::roundToInt ((float) kKnobR * paintSf);
@@ -1027,6 +1040,16 @@ void SliceControlBar::paint (juce::Graphics& g)
  int cw;
  using F = DysektProcessor;
 
+ // Inspector mode: start a new line when the next cell would run past the right edge.
+ auto wrapCell = [&] (int& cx, int& cy)
+ {
+     if (inspectorMode && cx > si (8) && cx + psCellW > getWidth() - si (8))
+     {
+         cx = si (8);
+         cy += psCellH + si (4);
+     }
+ };
+
 
 
  // Slice index label removed — shown in waveform and LCD panels already.
@@ -1038,6 +1061,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  {
  float pv = effPitch;
  int pvi = (int) std::round (pv);
+ wrapCell (x, row1y);
  drawKnobCell (g, x, row1y, "PITCH",
  (pvi >= 0 ? "+" : "") + juce::String (pvi) + "st",
  toNorm (F::FieldPitch, pv),
@@ -1049,6 +1073,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  {
  float cv = effCents;
  int cvi = juce::jlimit (-100, 100, (int) std::round (cv));
+ wrapCell (x, row1y);
  drawKnobCell (g, x, row1y, "TUNE",
  (cvi >= 0 ? "+" : "") + juce::String (cvi) + "ct",
  toNorm (F::FieldCentsDetune, cv),
@@ -1060,6 +1085,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  if (stretchVal)
  {
  float tv = effTonality;
+ wrapCell (x, row1y);
  drawKnobCell (g, x, row1y, "ROOT",
  juce::String ((int) tv) + "Hz",
  toNorm (F::FieldTonality, tv),
@@ -1067,6 +1093,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  x += cw + si (4);
 
  float fv = effFormant;
+ wrapCell (x, row1y);
  drawKnobCell (g, x, row1y, "BODY",
  (fv >= 0.f ? "+" : "") + juce::String (fv, 1),
  toNorm (F::FieldFormant, fv),
@@ -1074,6 +1101,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  x += cw + si (4);
 
  bool fmntCVal = effFComp;
+ wrapCell (x, row1y);
  drawParamCell (g, x, row1y, "FMNT C", fmntCVal ? "ON" : "OFF",
  true, 0, F::FieldFormantComp,
  0.f, 1.f, 1.f, true, false, cw);
@@ -1082,6 +1110,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  // STRETCH — boolean (no lock)
  {
  bool sv = effStretch;
+ wrapCell (x, row1y);
  drawParamCell (g, x, row1y, "STRETCH", sv ? "ON" : "OFF",
  true, 0, F::FieldStretchEnabled,
  0.f, 1.f, 1.f, true, false, cw);
@@ -1094,13 +1123,13 @@ void SliceControlBar::paint (juce::Graphics& g)
  if (! sfzMode)
  {
  g.setColour (getTheme().separator.withAlpha (0.5f));
- g.drawVerticalLine (x + 2, (float) row1y + 4, (float) row1y + 28);
- x += 8;
+ if (! inspectorMode) { g.drawVerticalLine (x + 2, (float) row1y + 4, (float) row1y + 28); x += 8; }
 
  const int liveIdx = processor.liveDragSliceIdx.load (std::memory_order_acquire);
  const int markerSample = (liveIdx == idx)
  ? processor.liveDragBoundsStart.load (std::memory_order_relaxed)
  : s.startSample;
+ wrapCell (x, row1y);
  drawMarkerSliderCell (g, x, row1y, markerSample, ui.sampleNumFrames, cw);
  x += cw + si (4);
  }
@@ -1108,12 +1137,12 @@ void SliceControlBar::paint (juce::Graphics& g)
  // GAIN, PAN, OUT — mix group in row 1
  {
  g.setColour (getTheme().separator.withAlpha (0.5f));
- g.drawVerticalLine (x + 2, (float) row1y + 4, (float) row1y + 28);
- x += 8;
+ if (! inspectorMode) { g.drawVerticalLine (x + 2, (float) row1y + 4, (float) row1y + 28); x += 8; }
 
  // GAIN (no lock — always per-slice)
  {
  float gv = effVolume;
+ wrapCell (x, row1y);
  drawKnobCell (g, x, row1y, "GAIN",
  (gv >= 0.f ? "+" : "") + juce::String (gv, 1) + "dB",
  toNorm (F::FieldVolume, gv),
@@ -1124,6 +1153,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  // PAN (no lock — always per-slice)
  {
  float pv = effPan;
+ wrapCell (x, row1y);
  drawPanSliderCell (g, x, row1y, pv, true, cw);
  x += cw + si (4);
  }
@@ -1132,6 +1162,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  {
  int ov = effOutputBus;
  const juce::String outLabel = (ov == 0) ? juce::String ("MAIN") : ("AUX " + juce::String (ov));
+ wrapCell (x, row1y);
  drawParamCell (g, x, row1y, "OUT", outLabel,
  true, 0, F::FieldOutputBus, 0.f, 15.f, 1.f,
  false, true, cw);
@@ -1144,6 +1175,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  // Main and need mixer visibility.
  {
  const bool showInMixer = s.showInMixer;  // always read from slice
+ wrapCell (x, row1y);
  drawMixerToggleCell (g, x, row1y, showInMixer, true, cw);
  x += cw + si (4);
  }
@@ -1153,12 +1185,12 @@ void SliceControlBar::paint (juce::Graphics& g)
  {
  // ── Separator before chromatic group ────────────────────────────────
  g.setColour (getTheme().separator.withAlpha (0.5f));
- g.drawVerticalLine (x + 2, (float) row1y + 4.f, (float) row1y + 28.f);
- x += 8;
+ if (! inspectorMode) { g.drawVerticalLine (x + 2, (float) row1y + 4.f, (float) row1y + 28.f); x += 8; }
 
  // CHRO — chromatic channel badge (per-slice)
  {
      const int  chVal        = s.chromaticChannel;  // always read from slice
+     wrapCell (x, row1y);
      drawChroBadgeCell (g, x, row1y, chVal, true, cw);
      x += cw + si (4);
  }
@@ -1166,6 +1198,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  // LEGATO — chromatic legato toggle (per-slice, no lock)
  {
      const bool legatoOn     = s.chromaticLegato;  // always read from slice
+     wrapCell (x, row1y);
      drawLegatoToggleCell (g, x, row1y, legatoOn, true, cw);
      x += cw + si (4);
  }
@@ -1174,6 +1207,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  if (s.chromaticChannel > 0)
  {
      const int  algoVal    = s.algorithm;
+     wrapCell (x, row1y);
      drawParamCell (g, x, row1y,
                     "MODE",
                     algoVal == 0 ? "RPITCH" : "STRETCH",
@@ -1187,6 +1221,7 @@ void SliceControlBar::paint (juce::Graphics& g)
          const int liveRoot = processor.sliceManager.rootNote.load (std::memory_order_relaxed);
          const int rn = juce::jlimit (0, 127, liveRoot);
          juce::String rootStr = UIHelpers::midiNoteToName (rn);
+         wrapCell (x, row1y);
          drawKnobCell (g, x, row1y, "ROOT", rootStr,
                        toNorm (kFieldRootNote, (float) liveRoot),
                        false, 0, kFieldRootNote,
@@ -1196,8 +1231,10 @@ void SliceControlBar::paint (juce::Graphics& g)
  }
  }
  } // end if (! sfzPlayerMode)
+ // Inspector: row 2 starts on the line below wherever row 1 ended.
+ if (inspectorMode) row2y = row1y + psCellH + si (10);
  g.setColour (getTheme().separator);
- g.drawHorizontalLine (si (36), (float) si (8), (float) getWidth() - (float) si (8));
+ g.drawHorizontalLine (inspectorMode ? row2y - si (5) : si (36), (float) si (8), (float) getWidth() - (float) si (8));
 
  // ── Row 2 ─────────────────────────────────────────────────────────
  x = si (8);
@@ -1231,6 +1268,7 @@ const float relMaxSec = kSlicerMaxReleaseSec;
  adsrGroupX1 = x;
  bool locked = (s.lockMask & kLockAttack) != 0;
  float atk = effAttack;
+ wrapCell (x, row2y);
  drawKnobCell (g, x, row2y, "ATK",
  EnvDisplay::formatTime (atk),
  toNorm (F::FieldAttack, atk),
@@ -1245,6 +1283,7 @@ const float relMaxSec = kSlicerMaxReleaseSec;
  {
  bool locked = (s.lockMask & kLockDecay) != 0;
  float dec = effDecay;
+ wrapCell (x, row2y);
  drawKnobCell (g, x, row2y, "DEC",
  EnvDisplay::formatTime (dec),
  toNorm (F::FieldDecay, dec),
@@ -1256,6 +1295,7 @@ const float relMaxSec = kSlicerMaxReleaseSec;
  {
  bool locked = (s.lockMask & kLockSustain) != 0;
  float sus = effSustain;
+ wrapCell (x, row2y);
  drawKnobCell (g, x, row2y, "SUS",
  juce::String ((int) (sus * 100.f)) + "%",
  toNorm (F::FieldSustain, sus),
@@ -1275,6 +1315,7 @@ const float relMaxSec = kSlicerMaxReleaseSec;
 //   rel=max  → norm=0.0 → knob hard LEFT   (node at hard left)
 // Same cube taper as ATK/DEC (see ZoneEnv::timeToKnob) so short releases get real travel.
 const float relNorm = 1.0f - ZoneEnv::timeToKnob (rel, relMaxSec);
+ wrapCell (x, row2y);
  drawKnobCell (g, x, row2y, "REL",
  EnvDisplay::formatTime (rel),
  relNorm,
@@ -1289,6 +1330,7 @@ locked, kLockRelease, F::FieldRelease, 0.f, relMaxSec, 0.001f, cw);
         const float glideMs = processor.voicePool.legatoGlideMs.load (std::memory_order_relaxed);
         const juce::String glideStr = (glideMs < 1.0f) ? "0ms"
                                                         : juce::String ((int) glideMs) + "ms";
+        wrapCell (x, row2y);
         drawKnobCell (g, x, row2y, "GLIDE", glideStr,
                       juce::jlimit (0.f, 1.f, glideMs / 200.f),
                       false, 0, kFieldGlide,
@@ -1298,8 +1340,7 @@ locked, kLockRelease, F::FieldRelease, 0.f, relMaxSec, 0.001f, cw);
 
  // ── Separator before EQ group ───────────────────────────────────────────
  g.setColour (getTheme().separator.withAlpha (0.5f));
- g.drawVerticalLine (x + 2, (float) row2y + 4.f, (float) row2y + 28.f);
- x += si (8);
+ if (! inspectorMode) { g.drawVerticalLine (x + 2, (float) row2y + 4.f, (float) row2y + 28.f); x += si (8); }
 
  // ── EQ knobs: LOW | MID | FREQ | Q | HIGH ───────────────────────────────────
  {
@@ -1308,24 +1349,28 @@ locked, kLockRelease, F::FieldRelease, 0.f, relMaxSec, 0.001f, cw);
      };
 
      int eqCw = 0;
+     wrapCell (x, row2y);
      drawKnobCell (g, x, row2y, "LOW", gainStr (effEqLow),
                    toNorm (F::FieldEqLowGain, effEqLow),
                    false, 0, F::FieldEqLowGain,
                    -18.f, 18.f, 0.1f, eqCw);
      x += eqCw + si (4);
 
+     wrapCell (x, row2y);
      drawKnobCell (g, x, row2y, "MID", gainStr (effEqMidG),
                    toNorm (F::FieldEqMidGain, effEqMidG),
                    false, 0, F::FieldEqMidGain,
                    -18.f, 18.f, 0.1f, eqCw);
      x += eqCw + si (4);
 
+     wrapCell (x, row2y);
      drawKnobCell (g, x, row2y, "HIGH", gainStr (effEqHigh),
                    toNorm (F::FieldEqHighGain, effEqHigh),
                    false, 0, F::FieldEqHighGain,
                    -18.f, 18.f, 0.1f, eqCw);
      x += eqCw + si (4);
 
+     wrapCell (x, row2y);
      drawKnobCell (g, x, row2y, "FREQ",
                    juce::String ((int) effEqMidF) + "Hz",
                    toNorm (F::FieldEqMidFreq, effEqMidF),
@@ -1333,6 +1378,7 @@ locked, kLockRelease, F::FieldRelease, 0.f, relMaxSec, 0.001f, cw);
                    200.f, 8000.f, 10.f, eqCw);
      x += eqCw + si (4);
 
+     wrapCell (x, row2y);
      drawKnobCell (g, x, row2y, "Q",
                    juce::String (effEqMidQ, 1),
                    toNorm (F::FieldEqMidQ, effEqMidQ),
@@ -1344,6 +1390,7 @@ locked, kLockRelease, F::FieldRelease, 0.f, relMaxSec, 0.001f, cw);
 
  // ── Meter — takes remaining space after EQ ──────────────────────────────────
  {
+     if (inspectorMode && x + si (60) > getWidth() - si (8)) { x = si (8); row2y += psCellH + si (4); }
      const int meterX = x + si (4);
      const int meterW = juce::jmax (si (20), rightEdge - meterX - si (4));
      const int meterY = row2y + si (4);
