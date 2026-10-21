@@ -59,6 +59,7 @@ DysektEditor::DysektEditor (DysektProcessor& p)
  logoBar.getProperties().set ("dysektThemeKey", "header");
  addAndMakeVisible (headerBar);
  headerBar.getProperties().set ("dysektThemeKey", "header");
+ addChildComponent (navRail);   // Bench layout only; shown/placed in resized()
  for (auto* btn : { &headerBar.undoBtn, &headerBar.redoBtn, &headerBar.panicBtn, &headerBar.shortcutsBtn })
  btn->getProperties().set ("dysektThemeKey", "button");
 
@@ -626,6 +627,30 @@ DysektEditor::DysektEditor (DysektProcessor& p)
 #else
     headerBar.onSeqToggle   = nullptr;   // sequencer not present in VST3
 #endif
+
+ // Bench rail: forwards to exactly the same handlers the control frame uses.
+#if DYSEKT_STANDALONE
+ navRail.setSeqAvailable (true);
+#else
+ navRail.setSeqAvailable (false);
+#endif
+ navRail.onItem = [this] (NavRail::Item item)
+ {
+     switch (item)
+     {
+         case NavRail::Slicer:   setUiMode (0);          break;
+         case NavRail::Multi:    setUiMode (1);          break;
+         case NavRail::Sf2:      setUiMode (2);          break;
+         case NavRail::Browser:  toggleBrowserPanel();   break;
+         case NavRail::Mixer:    toggleMixerPanel();     break;
+         case NavRail::Eq:       toggleEqPanel();        break;
+#if DYSEKT_STANDALONE
+         case NavRail::Seq:      toggleSeqPanel();       break;
+#endif
+         case NavRail::Settings: toggleShortcutsPanel(); break;
+         default: break;
+     }
+ };
 
  ensureDefaultThemes();
  loadUserSettings();
@@ -1546,6 +1571,21 @@ void DysektEditor::resized()
 
  auto area = designArea;
 
+ // ── Bench layout: left navigation rail ───────────────────────────────────
+ // Takes a strip off the left edge; everything below flows into what is left.
+ // Other themes never show the rail, so their layout is unchanged.
+ if (getTheme().isBench())
+ {
+     navRail.setVisible (true);
+     navRail.setBounds (area.removeFromLeft (si (NavRail::kDesignWidth)));
+     syncNavRail();
+ }
+ else
+ {
+     navRail.setVisible (false);
+     navRail.setBounds ({});
+ }
+
  // ── Top strip ─────────────────────────────────────────────────────────────
  // In PAD mode shrink LCD rows to 65% — frees ~116px for the pad grid
  const int lcdRowH = si (kLcdRowH);
@@ -1935,6 +1975,16 @@ void DysektEditor::resized()
  pickOverlay->setBounds (getLocalBounds());
 }
 
+void DysektEditor::syncNavRail()
+{
+    navRail.setTab (uiMode);
+    navRail.setPanelActive (NavRail::Browser, activeSlot == SlotContent::Browser);
+    navRail.setPanelActive (NavRail::Mixer,   activeSlot == SlotContent::Mixer);
+    navRail.setPanelActive (NavRail::Eq,      activeSlot == SlotContent::Eq);
+    navRail.setPanelActive (NavRail::Seq,     activeSlot == SlotContent::Seq);
+    navRail.setPanelActive (NavRail::Settings, shortcutsPanel.isVisible());
+}
+
 void DysektEditor::toggleMixerPanel()
 {
     if (activeSlot == SlotContent::Mixer)
@@ -2156,6 +2206,7 @@ bool DysektEditor::keyPressed (const juce::KeyPress& key)
 
 void DysektEditor::timerCallback()
 {
+ if (navRail.isVisible()) syncNavRail();
  bool uiChanged = false, viewportChanged = false;
  const bool previewActive = waveformView.hasActiveSlicePreview();
  const bool waveformInteracting = waveformView.isInteracting();
@@ -2516,6 +2567,7 @@ void DysektEditor::applyTheme (const juce::String& themeName)
  processor.sliceManager.setSlicePalette (getTheme().slicePalette);
  saveUserSettings (themeName);
  applyWindowIcon (this);
+ resized();   // Bench adds/removes the nav rail, so the layout must be redone
  repaint(); return;
  }
  }
@@ -2527,6 +2579,7 @@ void DysektEditor::applyTheme (const juce::String& themeName)
  processor.sliceManager.setSlicePalette (getTheme().slicePalette);
  saveUserSettings ("metro");
  applyWindowIcon (this);
+ resized();
  repaint();
 }
 

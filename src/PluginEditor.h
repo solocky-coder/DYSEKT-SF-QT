@@ -8,6 +8,7 @@
 #include "ui/LogoBar.h"
 #include "ui/HeaderBar.h"
 #include "ui/MiniTransportBar.h"
+#include "ui/NavRail.h"
 #include "params/ParamIds.h"
 #include "ui/SliceLane.h"
 #include "ui/SliceControlBar.h"
@@ -84,6 +85,8 @@ public:
     /// Switch between interface modes.
     /// 0 = Waveform View (original), 1 = MULTISAMPLER.
     void setUiMode (int mode);
+    /** Pushes the current tab / open-panel state into the Bench NavRail. */
+    void syncNavRail();
 
     /** Derive and apply the correct MidiRouteMode from the current uiMode and
      *  activeSlot.  Call this whenever either changes instead of repeating the
@@ -269,6 +272,7 @@ private:
 
     LogoBar         logoBar;
     HeaderBar       headerBar;
+    NavRail         navRail;      // Bench layout only — see resized() / syncNavRail()
     MiniTransportBar transportBar { processor.sequencer };   // STOP/PLAY/REC/LOOP — where the UNDO/REDO row used to be
 
     SliceLcdDisplay  sliceLcd;

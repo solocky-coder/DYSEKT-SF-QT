@@ -34,6 +34,8 @@ struct ThemeData
     // `name == "metro"` call this instead so the Bench theme shares the same
     // flat rendering path (it only changes colours).
     bool isMetro() const noexcept { return name == "metro" || name == "bench"; }
+    /** True only for the Bench theme, which also switches on the Bench layout (rail etc.). */
+    bool isBench() const noexcept { return name == "bench"; }
 
     static void completeSlicePalette (ThemeData& theme)
     {
