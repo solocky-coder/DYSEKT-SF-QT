@@ -6,6 +6,10 @@ struct ThemeData
 {
     juce::String name;
 
+    // Corner radius for main panel surfaces. 0 = flat (Metro and every custom
+    // theme); the Bench theme sets a rounded value.
+    float cornerRadius = 0.0f;
+
     juce::Colour background;
     juce::Colour waveformBg;
     juce::Colour darkBar;
