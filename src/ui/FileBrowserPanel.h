@@ -91,7 +91,8 @@ public:
         if (isItemSelected)
         {
             g.setColour (t.accent.withAlpha (0.14f));
-            g.fillAll();
+            g.fillRoundedRectangle (juce::Rectangle<float> (0, 0, (float) width, (float) height).reduced (2.0f, 1.0f),
+                                    t.cornerRadius * 0.5f);   // square in Metro (0)
         }
 
         const auto textCol = isItemSelected ? t.accent : t.foreground.withAlpha (0.80f);
