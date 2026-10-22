@@ -33,9 +33,9 @@ struct ThemeData
     // True for the flat "Metro-family" themes. Panels that used to test
     // `name == "metro"` call this instead so the Bench theme shares the same
     // flat rendering path (it only changes colours).
-    bool isMetro() const noexcept { return name == "metro" || name == "bench"; }
+    bool isMetro() const noexcept { return name == "metro" || isBench(); }
     /** True only for the Bench theme, which also switches on the Bench layout (rail etc.). */
-    bool isBench() const noexcept { return name == "bench"; }
+    bool isBench() const noexcept { return name.startsWith ("bench"); }
 
     static void completeSlicePalette (ThemeData& theme)
     {
@@ -547,24 +547,46 @@ struct ThemeData
     // redesign; shares Metro's flat rendering path (see isMetro()).
     static ThemeData benchTheme()
     {
+        return makeBench ("bench", 0xFF8090FF, 0xFF0C1018, 0xFF141926, 0xFF1A2030, 0xFFE8ECF5,
+                          0xFF66718A, 0xFF1D2434, 0xFF242C42, 0xFF262E42);
+    }
+
+    /** Bench Light: cool paper-white panels, deeper indigo accent for contrast. */
+    static ThemeData benchLightTheme()
+    {
+        return makeBench ("bench-light", 0xFF4F5FE8, 0xFFEEF1F7, 0xFFFFFFFF, 0xFFE4E9F2, 0xFF182033,
+                          0xFF8A93A8, 0xFFE0E5EF, 0xFFD6DCEA, 0xFFD0D6E4);
+    }
+
+    /** Bench Black: true-black (OLED) panels, neutral greys, amber accent. */
+    static ThemeData benchBlackTheme()
+    {
+        return makeBench ("bench-black", 0xFFFFB020, 0xFF000000, 0xFF0B0B0C, 0xFF151517, 0xFFF2F2F2,
+                          0xFF6E6E74, 0xFF1A1A1C, 0xFF222226, 0xFF26262A);
+    }
+
+    static ThemeData makeBench (const char* themeName, juce::uint32 accentArgb,
+                                juce::uint32 bg, juce::uint32 panel, juce::uint32 bar, juce::uint32 fg,
+                                juce::uint32 lockOff, juce::uint32 grid, juce::uint32 hover, juce::uint32 sep)
+    {
         ThemeData t;
-        t.name             = "bench";
+        t.name             = themeName;
         t.cornerRadius     = 8.0f;   // rounded cards; Metro stays at 0 (flat)
-        const juce::Colour accent (0xFF8090FF);
-        t.background       = juce::Colour (0xFF0C1018);
-        t.waveformBg       = juce::Colour (0xFF141926);
-        t.darkBar          = juce::Colour (0xFF1A2030);
-        t.foreground       = juce::Colour (0xFFE8ECF5);
-        t.header           = juce::Colour (0xFF141926);
+        const juce::Colour accent (accentArgb);
+        t.background       = juce::Colour (bg);
+        t.waveformBg       = juce::Colour (panel);
+        t.darkBar          = juce::Colour (bar);
+        t.foreground       = juce::Colour (fg);
+        t.header           = juce::Colour (panel);
         t.waveform         = accent;
         t.selectionOverlay = accent.withAlpha (0.22f);
         t.lockActive       = accent;
-        t.lockInactive     = juce::Colour (0xFF66718A);
-        t.gridLine         = juce::Colour (0xFF1D2434);
+        t.lockInactive     = juce::Colour (lockOff);
+        t.gridLine         = juce::Colour (grid);
         t.accent           = accent;
-        t.button           = juce::Colour (0xFF1A2030);
-        t.buttonHover      = juce::Colour (0xFF242C42);
-        t.separator        = juce::Colour (0xFF262E42);
+        t.button           = juce::Colour (bar);
+        t.buttonHover      = juce::Colour (hover);
+        t.separator        = juce::Colour (sep);
         static const juce::uint32 pal[16] = { 0xFFFF3D9A,0xFF14C97E,0xFFFF7A1A,0xFF17A8F5,
             0xFFEBB800,0xFF8F4DFF,0xFF0FC9AD,0xFFF2494E,0xFF4CB82E,0xFFF25DAA,0xFF2E7FFF,
             0xFFF0A400,0xFFF2607F,0xFF3BB5D6,0xFF9DB800,0xFFA58BFF };
@@ -588,6 +610,8 @@ struct ThemeData
         if (text.contains("name: serum"))    return serumTheme();
         if (text.contains("name: opendaw"))  return opendawTheme();
         if (text.contains("name: metro"))    return metroTheme();
+        if (text.contains("name: bench-light")) return benchLightTheme();
+        if (text.contains("name: bench-black")) return benchBlackTheme();
         if (text.contains("name: bench"))    return benchTheme();
 
         for (auto line : juce::StringArray::fromLines (text))

@@ -2593,6 +2593,8 @@ void DysektEditor::ensureDefaultThemes()
  // don't linger in the picker after an update.
  write ("metro", ThemeData::metroTheme());
  write ("bench", ThemeData::benchTheme());
+ write ("bench-light", ThemeData::benchLightTheme());
+ write ("bench-black", ThemeData::benchBlackTheme());
 
  static const char* kRetiredBuiltIns[] = {
      "dark", "shell", "lazy", "snow", "ghost", "hack",

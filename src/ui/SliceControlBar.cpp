@@ -386,14 +386,14 @@ void SliceControlBar::drawKnobCell (juce::Graphics& g, int x, int y,
      juce::Path chaseArc;
      chaseArc.addCentredArc (fcx2, fcy2, fr2 + 3.5f, fr2 + 3.5f, 0.f,
                               kKnobStart, ccAngle, true);
-     g.setColour (juce::Colours::white.withAlpha (0.45f));
+     g.setColour (getTheme().foreground.withAlpha (0.45f));
      g.strokePath (chaseArc, juce::PathStrokeType (1.5f,
                    juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
      // Bright dot at CC tip — pure white, fully opaque
      const float dotAngle = ccAngle - juce::MathConstants<float>::halfPi;
      const float dotR = fr2 + 3.5f;
-     g.setColour (juce::Colours::white.withAlpha (0.90f));
+     g.setColour (getTheme().foreground.withAlpha (0.90f));
      g.fillEllipse (fcx2 + dotR * std::cos (dotAngle) - 2.0f,
                     fcy2 + dotR * std::sin (dotAngle) - 2.0f, 4.0f, 4.0f);
  }
@@ -649,14 +649,14 @@ void SliceControlBar::drawMarkerSliderCell (juce::Graphics& g, int x, int y,
 
         // Dim fill from 0 to marker position (the target the knob must reach)
         const float markerX = inner.getX() + frac * inner.getWidth();
-        g.setColour (juce::Colours::white.withAlpha (0.08f));
+        g.setColour (getTheme().foreground.withAlpha (0.08f));
         g.fillRect (juce::Rectangle<float> (inner.getX(), inner.getY(),
                                              markerX - inner.getX(), inner.getHeight()));
 
         // Bright tick at the marker (pickup target) — 1 px, inside frame
         const float clampedMkr = juce::jlimit (inner.getX() + 0.5f,
                                                 inner.getRight() - 0.5f, markerX);
-        g.setColour (juce::Colours::white.withAlpha (0.85f));
+        g.setColour (getTheme().foreground.withAlpha (0.85f));
         g.fillRect (juce::Rectangle<float> (clampedMkr - 0.5f, inner.getY(),
                                              1.0f, inner.getHeight()));
 
@@ -666,7 +666,7 @@ void SliceControlBar::drawMarkerSliderCell (juce::Graphics& g, int x, int y,
             const float knobX = inner.getX() + ghostNorm * inner.getWidth();
             const float clampedKnob = juce::jlimit (inner.getX() + 0.5f,
                                                     inner.getRight() - 0.5f, knobX);
-            g.setColour (juce::Colours::white.withAlpha (0.45f));
+            g.setColour (getTheme().foreground.withAlpha (0.45f));
             g.fillRect (juce::Rectangle<float> (clampedKnob - 0.5f, inner.getY(),
                                                 1.0f, inner.getHeight()));
         }
@@ -723,7 +723,7 @@ void SliceControlBar::drawMarkerSliderCell (juce::Graphics& g, int x, int y,
         // Ghost position on the bottom progress strip (pre-pickup only)
         if (prePickup)
         {
-            g.setColour (juce::Colours::white.withAlpha (0.55f));
+            g.setColour (getTheme().foreground.withAlpha (0.55f));
             g.fillRect (bar.withWidth (bar.getWidth() * frac));
         }
 
