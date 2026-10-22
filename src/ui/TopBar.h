@@ -28,7 +28,7 @@ public:
 
     struct Slots
     {
-        juce::Rectangle<int> title, transport, bpm, pitch, volume, buttons;
+        juce::Rectangle<int> title, transport, bpm, position, link, pitch, volume, buttons;
         float scale = 1.0f;
     };
 
@@ -64,7 +64,7 @@ public:
     static Slots computeSlots (juce::Rectangle<int> bounds, float sf)
     {
         // Never wider than the bar allows: shrink everything if the window is narrow.
-        const float s = juce::jmin (sf, (float) bounds.getWidth() / 860.0f);
+        const float s = juce::jmin (sf, (float) bounds.getWidth() / 1070.0f);
         auto u = [s] (float v) { return juce::roundToInt (v * s); };
 
         Slots out;
@@ -82,11 +82,13 @@ public:
         row.removeFromRight (u (10.0f));
         out.pitch     = centred (row.removeFromRight (u (112.0f)), u (34.0f));
         row.removeFromRight (u (14.0f));
-        out.title     = row.removeFromLeft (u (150.0f));
+        out.title     = row.removeFromLeft (u (130.0f));
         row.removeFromLeft (u (8.0f));
         out.transport = centred (row.removeFromLeft (u (190.0f)), u (36.0f));
         row.removeFromLeft (u (10.0f));
-        out.bpm       = centred (row.removeFromLeft (u (88.0f)), u (34.0f));
+        out.bpm       = centred (row.removeFromLeft (u (76.0f)), u (34.0f));
+        out.position  = centred (row.removeFromLeft (u (84.0f)), u (34.0f));
+        out.link      = centred (row.removeFromLeft (u (60.0f)), u (34.0f));
         return out;
     }
 
@@ -122,6 +124,15 @@ public:
         g.drawText (modeTitle, slots.title.withTrimmedTop (slots.title.getHeight() / 2 + juce::roundToInt (4 * s)),
                     juce::Justification::topLeft, false);
 
+        // Transport pill: one rounded capsule behind the transport buttons and the readouts.
+        {
+            const int padX = juce::roundToInt (6.0f * s);
+            auto pill = slots.transport.getUnion (slots.link).expanded (padX, juce::roundToInt (4.0f * s));
+            pill = pill.constrainedWithin (getLocalBounds().reduced (0, 2));
+            g.setColour (t.button);
+            g.fillRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f);
+        }
+
         // Tempo readout
         g.setColour (t.foreground.withAlpha (0.55f));
         g.setFont (juce::Font (juce::FontOptions (9.5f * s)));
@@ -129,6 +140,19 @@ public:
         g.setColour (t.foreground);
         g.setFont (juce::Font (juce::FontOptions (14.0f * s)));
         g.drawText (bpmText, slots.bpm.withTrimmedTop (slots.bpm.getHeight() / 2), juce::Justification::topLeft, false);
+
+        // Position + Link readouts
+        auto readout = [&] (const juce::Rectangle<int>& r, const juce::String& label, const juce::String& value, juce::Colour col)
+        {
+            g.setColour (t.foreground.withAlpha (0.55f));
+            g.setFont (juce::Font (juce::FontOptions (9.5f * s)));
+            g.drawText (label, r.withHeight (r.getHeight() / 2), juce::Justification::bottomLeft, false);
+            g.setColour (col);
+            g.setFont (DysektLookAndFeel::makeMonoFont (13.0f * s));
+            g.drawText (value, r.withTrimmedTop (r.getHeight() / 2), juce::Justification::topLeft, false);
+        };
+        readout (slots.position, "POSITION", posText, t.foreground);
+        readout (slots.link, "LINK", linkText, peers > 0 ? t.accent : t.foreground.withAlpha (0.55f));
 
         // Slider captions
         auto caption = [&] (const juce::Rectangle<int>& r, const juce::String& label, const juce::String& value)
@@ -152,7 +176,13 @@ private:
     void timerCallback() override
     {
         const auto txt = juce::String (engine.getBpm(), 1);
-        if (txt != bpmText) { bpmText = txt; repaint(); }
+        const double beats = juce::jmax (0.0, engine.getPlayheadBeats());
+        const int bar = (int) (beats / 4.0) + 1, beat = (int) beats % 4 + 1, sub = (int) ((beats - std::floor (beats)) * 4.0) + 1;
+        const auto pos = juce::String (bar).paddedLeft ('0', 3) + "." + juce::String (beat) + "." + juce::String (sub);
+        const int pc = processor.abletonLink.getPeerCount();
+        const auto lnk = pc > 0 ? juce::String (pc) + (pc == 1 ? " peer" : " peers") : juce::String ("off");
+        if (txt != bpmText || pos != posText || lnk != linkText)
+        { bpmText = txt; posText = pos; linkText = lnk; peers = pc; repaint(); }
     }
 
     DysektProcessor& processor;
@@ -163,6 +193,9 @@ private:
 
     juce::String modeTitle { "Slicer" };
     juce::String bpmText   { "120.0" };
+    juce::String posText   { "001.1.1" };
+    juce::String linkText  { "off" };
+    int          peers     = 0;
     Slots slots;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TopBar)

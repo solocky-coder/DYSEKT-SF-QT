@@ -54,6 +54,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         const auto& theme = getTheme();
+        if (theme.isBench()) return;   // Bench: the top bar draws one capsule behind the transport
         const float r = theme.isMetro() ? theme.cornerRadius : 0.0f;
         g.setColour (theme.isMetro() ? theme.waveformBg : theme.darkBar);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), r);
