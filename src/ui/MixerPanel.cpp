@@ -10,6 +10,15 @@ static constexpr int kMaxMeterSlices = DysektProcessor::kMaxMeterSlices;
 #include "../params/ParamIds.h"
 #include <cmath>
 
+// Bench: channel rows read as rounded cards; other themes keep the flat full-width row.
+static void fillMixerRow (juce::Graphics& g, juce::Rectangle<int> r)
+{
+    if (getTheme().isBench())
+        g.fillRoundedRectangle (r.toFloat().reduced (3.0f, 1.0f), 6.0f);
+    else
+        g.fillRect (r);
+}
+
 namespace
 {
     // v26: only slices with showInMixer set get their own MixerPanel row —
@@ -797,7 +806,7 @@ void MixerPanel::drawSliceRow (juce::Graphics& g, int ry, int idx, bool selected
     else if (idx % 2 == 1)
     {
         g.setColour (juce::Colour (0xFF000000).withAlpha (0.16f));
-        g.fillRect (0, rgIns, getWidth(), rgH);
+        fillMixerRow (g, { 0, rgIns, getWidth(), rgH });
     }
 
     // ── Full-lane slice colour tint ──────────────────────────────────────
@@ -924,7 +933,7 @@ void MixerPanel::drawSliceRow (juce::Graphics& g, int ry, int idx, bool selected
             if (fillW > 0)
             {
                 g.setColour (fillCol.withAlpha (panLocked ? 0.55f : 0.35f));
-                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f);
+                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), getTheme().isBench() ? 3.0f : 0.0f);
             }
         }
 
@@ -1009,7 +1018,7 @@ void MixerPanel::drawMasterRow (juce::Graphics& g, int ry) const
     const int rgH   = kMasterH - 3;
 
     g.setColour (theme.accent.withAlpha (0.05f));
-    g.fillRect (0, rgIns, getWidth(), rgH);
+    fillMixerRow (g, { 0, rgIns, getWidth(), rgH });
     g.setColour (theme.accent.withAlpha (0.45f));
     g.drawHorizontalLine (ry + 1, 0.f, (float) getWidth());
     g.drawHorizontalLine (ry + kMasterH - 1, 0.f, (float) getWidth());
@@ -1071,7 +1080,7 @@ void MixerPanel::drawMasterRow (juce::Graphics& g, int ry) const
             if (fillW > 0)
             {
                 g.setColour (fillCol.withAlpha (0.35f));
-                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f);   // flat, square corners
+                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), getTheme().isBench() ? 3.0f : 0.0f);   // flat, square corners
             }
         }
         g.setColour (fillCol.withAlpha (0.22f));
@@ -1112,7 +1121,7 @@ void MixerPanel::drawSf2Row (juce::Graphics& g, int ry) const
     const int rgIns = ry + 1;
     const int rgH   = kSf2RowH - 2;
     g.setColour (theme.accent.withAlpha (0.06f));
-    g.fillRect (0, rgIns, getWidth(), rgH);
+    fillMixerRow (g, { 0, rgIns, getWidth(), rgH });
     g.setColour (theme.accent.withAlpha (0.4f));
     g.drawHorizontalLine (ry, 0.f, (float) getWidth());
     g.drawHorizontalLine (ry + kSf2RowH - 1, 0.f, (float) getWidth());
@@ -1159,19 +1168,19 @@ void MixerPanel::drawSf2Row (juce::Graphics& g, int ry) const
         g.drawText (fmtPan (pan), x, kcy - 20, kKnobColW, 16, juce::Justification::centred);
 
         g.setColour (theme.darkBar.darker (0.3f));
-        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, 0.0f);   // flat, square corners
+        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, getTheme().isBench() ? 3.0f : 0.0f);   // flat, square corners
         g.setColour (theme.foreground.withAlpha (0.18f));
         g.drawVerticalLine (centreX, (float)sliderY, (float)(sliderY + sliderH));
         if (std::abs (pan) > 0.005f)
         {
             const int fillX = (pan < 0.f) ? thumbX : centreX;
             const int fillW = std::abs (thumbX - centreX);
-            if (fillW > 0) { g.setColour (fillCol.withAlpha (0.35f)); g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f); }   // flat, square corners
+            if (fillW > 0) { g.setColour (fillCol.withAlpha (0.35f)); g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), getTheme().isBench() ? 3.0f : 0.0f); }   // flat, square corners
         }
         g.setColour (fillCol.withAlpha (0.22f));
-        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), 0.0f);
+        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (fillCol.withAlpha (0.85f));
-        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), 0.0f);
+        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (theme.darkBar.darker (0.5f).withAlpha (0.6f));
         g.drawVerticalLine (thumbX, (float)(sliderY - 1), (float)(sliderY + sliderH + 1));
     }
@@ -1216,7 +1225,7 @@ void MixerPanel::drawSf2ChannelRow (juce::Graphics& g, int ry,
     const bool even = (channel % 2 == 0);
     g.setColour (even ? theme.darkBar.brighter (0.04f)
                       : theme.darkBar.brighter (0.02f));
-    g.fillRect (0, rgIns, getWidth(), rgH);
+    fillMixerRow (g, { 0, rgIns, getWidth(), rgH });
 
     // Left indent stripe using a colour derived from the channel number
     static const juce::Colour kChanPalette[] = {
@@ -1285,7 +1294,7 @@ void MixerPanel::drawSf2ChannelRow (juce::Graphics& g, int ry,
                     juce::Justification::centred);
 
         g.setColour (theme.darkBar.darker (0.3f));
-        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, 0.0f);   // flat, square corners
+        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, getTheme().isBench() ? 3.0f : 0.0f);   // flat, square corners
         g.setColour (theme.foreground.withAlpha (0.18f));
         g.drawVerticalLine (centreX, (float)sliderY, (float)(sliderY + sliderH));
         if (std::abs (strip.pan) > 0.005f)
@@ -1295,13 +1304,13 @@ void MixerPanel::drawSf2ChannelRow (juce::Graphics& g, int ry,
             if (fillW > 0)
             {
                 g.setColour (fillCol.withAlpha (0.35f));
-                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f);   // flat, square corners
+                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), getTheme().isBench() ? 3.0f : 0.0f);   // flat, square corners
             }
         }
         g.setColour (fillCol.withAlpha (0.22f));
-        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), 0.0f);
+        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (fillCol.withAlpha (0.85f));
-        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), 0.0f);
+        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (theme.darkBar.darker (0.5f).withAlpha (0.6f));
         g.drawVerticalLine (thumbX, (float)(sliderY - 1), (float)(sliderY + sliderH + 1));
     }
@@ -1367,7 +1376,7 @@ void MixerPanel::drawSfz2Row (juce::Graphics& g, int ry) const
     const int rgIns = ry + 1;
     const int rgH   = kSf2RowH - 2;
     g.setColour (theme.accent.withAlpha (0.06f));
-    g.fillRect (0, rgIns, getWidth(), rgH);
+    fillMixerRow (g, { 0, rgIns, getWidth(), rgH });
     g.setColour (theme.accent.withAlpha (0.4f));
     g.drawHorizontalLine (ry, 0.f, (float) getWidth());
     g.drawHorizontalLine (ry + kSf2RowH - 1, 0.f, (float) getWidth());
@@ -1412,19 +1421,19 @@ void MixerPanel::drawSfz2Row (juce::Graphics& g, int ry) const
         g.drawText (fmtPan (pan), x, kcy - 20, kKnobColW, 16, juce::Justification::centred);
 
         g.setColour (theme.darkBar.darker (0.3f));
-        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, 0.0f);
+        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (theme.foreground.withAlpha (0.18f));
         g.drawVerticalLine (centreX, (float)sliderY, (float)(sliderY + sliderH));
         if (std::abs (pan) > 0.005f)
         {
             const int fillX = (pan < 0.f) ? thumbX : centreX;
             const int fillW = std::abs (thumbX - centreX);
-            if (fillW > 0) { g.setColour (fillCol.withAlpha (0.35f)); g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f); }
+            if (fillW > 0) { g.setColour (fillCol.withAlpha (0.35f)); g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), getTheme().isBench() ? 3.0f : 0.0f); }
         }
         g.setColour (fillCol.withAlpha (0.22f));
-        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), 0.0f);
+        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (fillCol.withAlpha (0.85f));
-        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), 0.0f);
+        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (theme.darkBar.darker (0.5f).withAlpha (0.6f));
         g.drawVerticalLine (thumbX, (float)(sliderY - 1), (float)(sliderY + sliderH + 1));
     }
@@ -1476,7 +1485,7 @@ void MixerPanel::drawSfz2ChannelRow (juce::Graphics& g, int ry, int zoneIdx) con
     g.setColour (selectedZone ? theme.accent.withAlpha (0.20f)
                               : (even ? theme.darkBar.brighter (0.04f)
                                       : theme.darkBar.brighter (0.02f)));
-    g.fillRect (0, rgIns, getWidth(), rgH);
+    fillMixerRow (g, { 0, rgIns, getWidth(), rgH });
 
     g.setColour (theme.accent.withAlpha (selectedZone ? 1.0f : 0.6f));
     g.fillRect (0, rgIns, selectedZone ? 4 : 3, rgH);
@@ -1536,7 +1545,7 @@ void MixerPanel::drawSfz2ChannelRow (juce::Graphics& g, int ry, int zoneIdx) con
                     juce::Justification::centred);
 
         g.setColour (theme.darkBar.darker (0.3f));
-        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, 0.0f);
+        g.fillRoundedRectangle ((float)sliderX, (float)sliderY, (float)sliderW, (float)sliderH, getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (theme.foreground.withAlpha (0.18f));
         g.drawVerticalLine (centreX, (float)sliderY, (float)(sliderY + sliderH));
         if (std::abs (pan) > 0.005f)
@@ -1546,13 +1555,13 @@ void MixerPanel::drawSfz2ChannelRow (juce::Graphics& g, int ry, int zoneIdx) con
             if (fillW > 0)
             {
                 g.setColour (fillCol.withAlpha (0.35f));
-                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), 0.0f);
+                g.fillRoundedRectangle ((float)fillX, (float)(sliderY + 1), (float)fillW, (float)(sliderH - 2), getTheme().isBench() ? 3.0f : 0.0f);
             }
         }
         g.setColour (fillCol.withAlpha (0.22f));
-        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), 0.0f);
+        g.fillRoundedRectangle((float)(thumbX - 5), (float)(sliderY - 4), 10.f, (float)(sliderH + 8), getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (fillCol.withAlpha (0.85f));
-        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), 0.0f);
+        g.fillRoundedRectangle((float)(thumbX - 2), (float)(sliderY - 1), 4.f, (float)(sliderH + 2), getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (theme.darkBar.darker (0.5f).withAlpha (0.6f));
         g.drawVerticalLine (thumbX, (float)(sliderY - 1), (float)(sliderY + sliderH + 1));
     }
@@ -1664,7 +1673,7 @@ void MixerPanel::drawNetworkRow (juce::Graphics& g, int ry, int trackIndex, int 
     const int rgIns = ry + 1;
     const int rgH   = kNetRowH - 2;
     g.setColour (theme.accent.withAlpha (0.06f));
-    g.fillRect (0, rgIns, getWidth(), rgH);
+    fillMixerRow (g, { 0, rgIns, getWidth(), rgH });
     g.setColour (info.colour.withAlpha (0.85f));
     g.fillRect (0, rgIns, 3, rgH);
     g.setColour (theme.accent.withAlpha (0.4f));
@@ -1774,13 +1783,13 @@ void MixerPanel::paint (juce::Graphics& g)
         auto b = getLocalBounds();
 
         g.setColour (theme.waveformBg);
-        g.fillRoundedRectangle (b.toFloat(), 0.0f);
+        g.fillRoundedRectangle (b.toFloat(), getTheme().isBench() ? 3.0f : 0.0f);
         g.setColour (theme.separator);
         g.drawRoundedRectangle (b.toFloat().reduced (0.5f), 0.0f, 1.0f);
 
         auto screen = b.reduced (4);
         g.setColour (theme.darkBar.darker (0.55f));
-        g.fillRoundedRectangle (screen.toFloat(), 0.0f);
+        g.fillRoundedRectangle (screen.toFloat(), getTheme().isBench() ? 3.0f : 0.0f);
 
         g.setColour (juce::Colours::black.withAlpha (0.18f));
         for (int y = screen.getY(); y < screen.getBottom(); y += 2)

@@ -111,7 +111,11 @@ public:
         // Title + mode
         g.setColour (t.foreground);
         g.setFont (juce::Font (juce::FontOptions (15.0f * s, juce::Font::bold)));
-        g.drawText ("DYSEKT-SF", slots.title.withHeight (slots.title.getHeight() / 2 + juce::roundToInt (4 * s)),
+        juce::String titleText = "DYSEKT-SF";
+        if (auto snap = processor.sampleData.getSnapshot())
+            if (! snap->filePath.containsIgnoreCase ("DYSEKT_default.wav") && snap->filePath.isNotEmpty())
+                titleText = juce::File (snap->filePath).getFileNameWithoutExtension();
+        g.drawText (titleText, slots.title.withHeight (slots.title.getHeight() / 2 + juce::roundToInt (4 * s)),
                     juce::Justification::bottomLeft, false);
         g.setColour (t.foreground.withAlpha (0.55f));
         g.setFont (juce::Font (juce::FontOptions (10.5f * s)));
