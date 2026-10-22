@@ -72,6 +72,10 @@ public:
 
     juce::TextButton midiSliceBtn;
 
+    // MIDI-slice (lazy chop) overlay state — also driven by the Bench header card.
+    void setMidiSliceActive (bool active);
+    bool isMidiSliceActive() const noexcept { return midiSliceOverlayActive; }
+
 private:
     struct ViewState
     {
@@ -144,7 +148,6 @@ private:
     WaveformCache cache;
     CacheKey prevCacheKey;
     bool midiSliceOverlayActive = false;
-    void setMidiSliceActive (bool active);
     bool softWaveform  = false;   // legacy flag (kept for compat – mirrors waveformMode==1)
     int  waveformMode  = 0;       // 0=Hard 1=Soft 2=Outline 3=Rectified 4=Mirrored 5=Bars 6=RMS 7=Stepped
     bool trimMode      = false;   // trim in/out marker editing mode

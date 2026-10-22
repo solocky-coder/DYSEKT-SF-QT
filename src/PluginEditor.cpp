@@ -55,6 +55,7 @@ DysektEditor::DysektEditor (DysektProcessor& p)
  arrangeView.setNetworkAudioProcessor (dynamic_cast<NetworkAudioProcessor*> (&p));
 #endif
 
+ addChildComponent (sliceHeader);
  addChildComponent (sliceTable);   // Bench slicer dock; shown/placed in resized()
  addChildComponent (topBar);   // Bench layout only; shown/placed in resized()
  addAndMakeVisible (logoBar);
@@ -1591,10 +1592,22 @@ void DysektEditor::resized()
  // ── Top strip ─────────────────────────────────────────────────────────────
  // In PAD mode shrink LCD rows to 65% — frees ~116px for the pad grid
  const bool bench = getTheme().isBench();
- // Bench slicer: the top LCD row is slimmed to a single readout (the main waveform view
+ // (old note) Bench slicer: the top LCD row is slimmed to a single readout (the main waveform view
  // below already shows the waveform), which gives the waveform and slice list more room.
- const bool benchSlim = bench && uiMode == 0;
- const int lcdRowH = benchSlim ? si (200) : si (kLcdRowH);
+ bool benchInspector = false;
+ {
+#if DYSEKT_STANDALONE
+     const bool slotBlocks = (activeSlot == SlotContent::Browser);
+#else
+     const bool slotBlocks = (activeSlot != SlotContent::None);
+#endif
+     auto snap = processor.sampleData.getSnapshot();
+     const bool realSample = hasSampleLoaded && snap != nullptr
+                             && ! snap->filePath.containsIgnoreCase ("DYSEKT_default.wav");
+     benchInspector = bench && uiMode == 0 && trimDialog == nullptr && realSample && ! slotBlocks;
+ }
+ // Bench slicer view: the LCD row becomes a slim header card (file, slicing controls).
+ const int lcdRowH = benchInspector ? si (SliceHeaderCard::kDesignHeight + 8) : si (kLcdRowH);
  const int ctrlFrmH = si (kCtrlFrameH);
  // Bench: a slim top bar replaces the logo strip, and the centre control column goes away.
  juce::Rectangle<int> topBarBounds;
@@ -1625,8 +1638,8 @@ void DysektEditor::resized()
  // going blank while MULTISAMPLER is open.
  const bool sf2Mode = (uiMode == 2);
  const bool multiMode = isMultisamplerTabActive();
- sliceLcd.setVisible (! sf2Mode);
- sliceWaveformLcd.setVisible (! sf2Mode && ! multiMode && ! benchSlim);
+ sliceLcd.setVisible (! sf2Mode && ! benchInspector);
+ sliceWaveformLcd.setVisible (! sf2Mode && ! multiMode && ! benchInspector);
  sf2Lcd.setVisible (sf2Mode);
  sf2WaveformLcd.setVisible (sf2Mode);
  multisamplerWaveformLcd.setVisible (multiMode);
@@ -1670,7 +1683,8 @@ void DysektEditor::resized()
  sliceWaveformLcd.setBounds (topRow);
  sf2WaveformLcd.setBounds (topRow);
  multisamplerWaveformLcd.setBounds (topRow);
- if (benchSlim) { sliceLcd.setBounds (topRowFull); sliceWaveformLcd.setBounds ({}); }   // Bench slicer: one full-width readout
+ if (benchInspector) { sliceLcd.setBounds ({}); sliceWaveformLcd.setBounds ({}); sliceHeader.setBounds (topRowFull); sliceHeader.setVisible (true); }
+ else { sliceHeader.setVisible (false); sliceHeader.setBounds ({}); }
 
  // ── Bench top bar: place the existing transport / undo-redo row into its slots ──
  if (bench)
@@ -1699,18 +1713,6 @@ void DysektEditor::resized()
  // In the Bench layout the slice control bar becomes a tall panel on the right
  // of the slicer view instead of a strip under the waveform. Same conditions as
  // the strip (Slicer tab, a real sample loaded, no trim bar, nothing covering).
- bool benchInspector = false;
- {
-#if DYSEKT_STANDALONE
-     const bool slotBlocks = (activeSlot == SlotContent::Browser);
-#else
-     const bool slotBlocks = (activeSlot != SlotContent::None);
-#endif
-     auto snap = processor.sampleData.getSnapshot();
-     const bool realSample = hasSampleLoaded && snap != nullptr
-                             && ! snap->filePath.containsIgnoreCase ("DYSEKT_default.wav");
-     benchInspector = bench && uiMode == 0 && trimDialog == nullptr && realSample && ! slotBlocks;
- }
  const int inspW   = benchInspector ? si (300) : 0;
  const int inspGap = benchInspector ? si (kMargin) : 0;
  const int kFX = area.getX() + si (kMargin);

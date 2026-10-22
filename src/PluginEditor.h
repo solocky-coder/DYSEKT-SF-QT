@@ -11,6 +11,7 @@
 #include "ui/NavRail.h"
 #include "ui/TopBar.h"
 #include "ui/SliceTable.h"
+#include "ui/SliceHeaderCard.h"
 #include "params/ParamIds.h"
 #include "ui/SliceLane.h"
 #include "ui/SliceControlBar.h"
@@ -287,6 +288,7 @@ private:
 
     SliceLane        sliceLane;
     WaveformView     waveformView;
+    SliceHeaderCard  sliceHeader    { processor, waveformView };   // Bench slicer header above the waveform
     WaveformOverview waveformOverview;
     SliceControlBar  sliceControlBar;
 

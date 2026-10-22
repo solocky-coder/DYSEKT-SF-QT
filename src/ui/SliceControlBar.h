@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../MidiLearnManager.h"
+#include "SliceFlagRow.h"
 
 class DysektProcessor;
 
@@ -20,7 +21,7 @@ public:
 
     /** Bench layout: when true the cells wrap into a tall right-hand inspector,
         scaled by width instead of height. Cells, hit-testing and edits are unchanged. */
-    void setInspectorMode (bool on) { if (on != inspectorMode) { inspectorMode = on; repaint(); } }
+    void setInspectorMode (bool on) { if (on != inspectorMode) { inspectorMode = on; flagRow.setVisible (on); resized(); repaint(); } }
     bool isInspectorMode() const noexcept { return inspectorMode; }
 
     // Called by the parent editor's timer — starts/stops the pulse as needed
@@ -209,6 +210,7 @@ private:
     int psKnobR  { kKnobR };// kKnobR * paintSf       // set at start of paint() — scales to component height
 
     DysektProcessor& processor;
+    SliceFlagRow flagRow { processor };   // Bench inspector only: REV / LOOP / 1SH / MONO / STR / TAIL pills
 
     // Drag state
     int hoveredCellIdx = -1;   // index into cells[] under cursor, -1 = none

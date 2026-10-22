@@ -62,6 +62,7 @@ constexpr float kKnobEnd = juce::MathConstants<float>::pi * 2.75f;
 
 SliceControlBar::SliceControlBar (DysektProcessor& p) : processor (p)
 {
+    addChildComponent (flagRow);
     startTimerHz (30); // always running so CC-driven marker repaints in real time
 }
 
@@ -170,7 +171,15 @@ void SliceControlBar::updateMidiLearnPulse()
     if (processor.markerRelDir.load (std::memory_order_relaxed) != 0 && elapsed < 300)
         repaint();
 }
-void SliceControlBar::resized() {}
+void SliceControlBar::resized()
+{
+    if (inspectorMode)
+    {
+        const float k = (float) getWidth() / 246.0f;   // same scale paint() uses in inspector mode
+        flagRow.setBounds (juce::roundToInt (8.0f * k), juce::roundToInt (30.0f * k),
+                           getWidth() - juce::roundToInt (16.0f * k), juce::roundToInt (24.0f * k));
+    }
+}
 
 // =============================================================================
 // drawLockIcon (unchanged)
@@ -1067,7 +1076,7 @@ void SliceControlBar::paint (juce::Graphics& g)
      g.setFont (DysektLookAndFeel::makeFont (14.0f * paintSf, true));
      g.drawText ("Slice " + num + (s.name.isNotEmpty() ? ("  " + s.name) : juce::String()),
                  si (26), si (4), getWidth() - si (26) - si (8), si (18), juce::Justification::centredLeft, true);
-     row1y += si (26);
+     row1y += si (26) + si (30);   // header + flag-pill row
      g.setColour (getTheme().separator.withAlpha (0.6f));
      g.drawHorizontalLine (row1y - si (4), (float) si (8), (float) getWidth() - (float) si (8));
  }
