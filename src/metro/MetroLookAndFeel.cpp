@@ -15,7 +15,9 @@ void MetroLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& bu
         return;
 
     const bool toggled = button.getToggleState();
-    const float r = getTheme().cornerRadius * 0.6f; // 0 for Metro (flat); small radius for Bench
+    // 0 for Metro (flat). Bench: soft corners, and a full pill for short buttons.
+    const float r = getTheme().cornerRadius <= 0.0f ? 0.0f
+                  : juce::jmin (bounds.getHeight() * 0.5f, getTheme().cornerRadius * (bounds.getHeight() <= 30.0f ? 2.0f : 0.8f));
 
     auto fill = isDown        ? getTheme().accent
               : toggled       ? getTheme().accent
@@ -51,14 +53,15 @@ void MetroLookAndFeel::drawLinearSlider (juce::Graphics& g, int /*x*/, int /*y*/
     const float trackH = 3.0f;
     auto track = bounds.withSizeKeepingCentre ((float) width, trackH);
     g.setColour (t.gridLine);
-    g.fillRect (track);
+    g.fillRoundedRectangle (track, t.cornerRadius > 0.0f ? trackH * 0.5f : 0.0f);
 
     const float fillLeft  = track.getX();
     const float fillRight = juce::jlimit (fillLeft, track.getRight(), sliderPos);
     if (fillRight > fillLeft)
     {
         g.setColour (t.accent);
-        g.fillRect (juce::Rectangle<float> (fillLeft, track.getY(), fillRight - fillLeft, track.getHeight()));
+        g.fillRoundedRectangle (juce::Rectangle<float> (fillLeft, track.getY(), fillRight - fillLeft, track.getHeight()),
+                                t.cornerRadius > 0.0f ? trackH * 0.5f : 0.0f);
     }
 
     const float thumbD = juce::jmin ((float) height, 14.0f);
@@ -112,7 +115,7 @@ void MetroLookAndFeel::fillTextEditorBackground (juce::Graphics& g, int width, i
 
     auto bounds = juce::Rectangle<float> (0, 0, (float) width, (float) height).reduced (0.5f);
     g.setColour (bg);
-    g.fillRoundedRectangle (bounds, 0.0f);
+    g.fillRoundedRectangle (bounds, getTheme().cornerRadius * 0.6f);
 }
 
 void MetroLookAndFeel::drawTextEditorOutline (juce::Graphics& g, int width, int height, juce::TextEditor& te)
@@ -123,5 +126,5 @@ void MetroLookAndFeel::drawTextEditorOutline (juce::Graphics& g, int width, int 
     auto bounds = juce::Rectangle<float> (0, 0, (float) width, (float) height).reduced (0.5f);
     const bool focused = te.hasKeyboardFocus (true);
     g.setColour (focused ? getTheme().accent : getTheme().separator.withAlpha (0.60f));
-    g.drawRoundedRectangle (bounds, 0.0f, focused ? 1.4f : 1.0f);
+    g.drawRoundedRectangle (bounds, getTheme().cornerRadius * 0.6f, focused ? 1.4f : 1.0f);
 }

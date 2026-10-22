@@ -350,7 +350,7 @@ void DysektLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height,
     const auto& t = getTheme();
     auto cbBounds = juce::Rectangle<float> (0, 0, (float)width, (float)height).reduced (0.5f);
 
-    const float r = 0.0f;   // Flat — matches every other flattened control in the app
+    const float r = t.cornerRadius * 0.6f;   // 0 (flat) except in Bench
     g.setColour (isButtonDown ? t.buttonHover : t.button);
     g.fillRoundedRectangle (cbBounds, r);
 
