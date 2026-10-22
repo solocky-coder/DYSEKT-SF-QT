@@ -276,7 +276,7 @@ void SfzPlayerDropdownPanel::paint (juce::Graphics& g)
     {
         const auto bounds = getLocalBounds().toFloat();
         g.setColour (theme.darkBar.darker (0.2f));
-        g.fillRoundedRectangle (bounds, 0.0f);
+        g.fillRoundedRectangle (bounds, getTheme().cornerRadius);
 
         const int sepY = kStripH;
         g.setColour (theme.accent.withAlpha (0.18f));
@@ -406,10 +406,10 @@ void SfzPlayerDropdownPanel::drawPresetPicker (juce::Graphics& g) const
         const bool anyOpen = browserOpen;
         g.setColour (anyOpen ? theme.accent.withAlpha (0.10f)
                              : theme.darkBar.darker (0.12f));
-        g.fillRoundedRectangle (bg, 0.0f);
+        g.fillRoundedRectangle (bg, getTheme().cornerRadius);
         g.setColour (anyOpen ? theme.accent.withAlpha (0.55f)
                              : theme.accent.withAlpha (0.20f));
-        g.drawRoundedRectangle (bg.reduced (0.5f), 0.0f, 1.0f);
+        g.drawRoundedRectangle (bg.reduced (0.5f), getTheme().cornerRadius, 1.0f);
     }
 
     // Folder icon (always visible — this is the open/close toggle)
@@ -429,7 +429,7 @@ void SfzPlayerDropdownPanel::drawPresetPicker (juce::Graphics& g) const
         const bool active = isLoaded && ! presetList.empty() && ! browserOpen;
         const bool hover  = zone.contains (getMouseXYRelative()) && active;
         g.setColour (hover ? theme.accent.withAlpha (0.30f) : juce::Colours::transparentBlack);
-        g.fillRoundedRectangle (zone.toFloat(), 0.0f);
+        g.fillRoundedRectangle (zone.toFloat(), getTheme().cornerRadius);
         g.setFont (DysektLookAndFeel::makeFont (13.0f));
         g.setColour (active ? theme.accent.withAlpha (0.75f)
                             : theme.foreground.withAlpha (0.20f));
@@ -552,8 +552,8 @@ void SfzPlayerDropdownPanel::drawMeter (juce::Graphics& g) const
     auto rightBar = juce::Rectangle<int> (area.getX() + barW + 4,  area.getY(), barW, barH);
 
     g.setColour (theme.darkBar.darker (0.2f));
-    g.fillRoundedRectangle (leftBar.toFloat(), 0.0f);
-    g.fillRoundedRectangle (rightBar.toFloat(), 0.0f);
+    g.fillRoundedRectangle (leftBar.toFloat(), getTheme().cornerRadius);
+    g.fillRoundedRectangle (rightBar.toFloat(), getTheme().cornerRadius);
 
     auto drawBar = [&] (juce::Rectangle<int> bar, float peak, float hold)
     {
@@ -561,7 +561,7 @@ void SfzPlayerDropdownPanel::drawMeter (juce::Graphics& g) const
         if (fillH > 0)
         {
             g.setColour (theme.accent);
-            g.fillRoundedRectangle (bar.withTrimmedTop (bar.getHeight() - fillH).toFloat(), 0.0f);
+            g.fillRoundedRectangle (bar.withTrimmedTop (bar.getHeight() - fillH).toFloat(), getTheme().cornerRadius);
         }
         const int holdY = bar.getBottom() - juce::roundToInt ((float) bar.getHeight()
                            * juce::jlimit (0.f, 1.f, hold));

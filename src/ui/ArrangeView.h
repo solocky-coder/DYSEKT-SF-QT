@@ -535,9 +535,9 @@ public:
 
         // ── LCD-style frame — flat, square-cornered, no gradient, no glow ────
         g.setColour (theme.waveformBg);
-        g.fillRoundedRectangle (b.toFloat(), 0.0f);
+        g.fillRoundedRectangle (b.toFloat(), getTheme().cornerRadius);
         g.setColour (theme.separator);
-        g.drawRoundedRectangle (b.toFloat().reduced (0.5f), 0.0f, 1.0f);
+        g.drawRoundedRectangle (b.toFloat().reduced (0.5f), getTheme().cornerRadius, 1.0f);
 
         // Clip all track content to the inner screen rect
         g.saveState();
@@ -3402,7 +3402,7 @@ private:
                 const float nh = juce::jmax (1.5f, (float)previewH / (float)range);
                 const float va = muted ? 0.22f : (0.4f + 0.5f * n.velocity / 127.f);
                 g.setColour (base.brighter (0.2f).withAlpha (va));
-                g.fillRoundedRectangle(nx, ny, nw, nh, 0.0f);
+                g.fillRoundedRectangle(nx, ny, nw, nh, getTheme().cornerRadius);
             }
         }
 

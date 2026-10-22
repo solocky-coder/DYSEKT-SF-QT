@@ -45,7 +45,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colour (0xFF080A0D));
+        g.fillAll (getTheme().isBench() ? getTheme().background : juce::Colour (0xFF080A0D));
     }
 
     void syncSnap()

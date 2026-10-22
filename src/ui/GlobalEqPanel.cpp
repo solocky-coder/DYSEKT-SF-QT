@@ -61,9 +61,9 @@ void GlobalEqPanel::paint (juce::Graphics& g)
         if (theme.isMetro())
         {
             g.setColour (theme.waveformBg);
-            g.fillRoundedRectangle (bounds, 0.0f);
+            g.fillRoundedRectangle (bounds, getTheme().cornerRadius);
             g.setColour (theme.separator);
-            g.drawRoundedRectangle (bounds.reduced (0.5f), 0.0f, 1.0f);
+            g.drawRoundedRectangle (bounds.reduced (0.5f), getTheme().cornerRadius, 1.0f);
         }
         else
         {
@@ -71,14 +71,14 @@ void GlobalEqPanel::paint (juce::Graphics& g)
             auto bgBot = theme.darkBar.darker (0.65f);
             juce::ColourGradient grad (bgTop, 0, 0, bgBot, 0, bounds.getHeight(), false);
             g.setGradientFill (grad);
-            g.fillRoundedRectangle(bounds, 0.0f);
+            g.fillRoundedRectangle(bounds, getTheme().cornerRadius);
 
             // Outer glow ring
             g.setColour (theme.accent.withAlpha (0.18f));
-            g.drawRoundedRectangle(bounds.expanded (1.0f), 0.0f, 1.0f);
+            g.drawRoundedRectangle(bounds.expanded (1.0f), getTheme().cornerRadius, 1.0f);
             // Main accent border
             g.setColour (theme.accent.withAlpha (0.60f));
-            g.drawRoundedRectangle(bounds.reduced (0.5f), 0.0f, 1.5f);
+            g.drawRoundedRectangle(bounds.reduced (0.5f), getTheme().cornerRadius, 1.5f);
         }
     }
 
