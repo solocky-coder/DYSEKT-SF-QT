@@ -56,6 +56,7 @@ DysektEditor::DysektEditor (DysektProcessor& p)
 #endif
 
  addChildComponent (sliceHeader);
+ addChildComponent (sliceStrip);
  addChildComponent (sliceTable);   // Bench slicer dock; shown/placed in resized()
  addChildComponent (topBar);   // Bench layout only; shown/placed in resized()
  addAndMakeVisible (logoBar);
@@ -1901,6 +1902,14 @@ void DysektEditor::resized()
      waveformOverview.setVisible (true);
      waveformOverview.setBounds (kFX, overviewY, kFW, kOverviewH);
      overviewTopGuard = overviewRow.getY();
+     if (benchInspector)
+     {
+         const int stripH = si (28);
+         auto stripRow = area.removeFromBottom (stripH + si (4));
+         sliceStrip.setBounds (kFX, stripRow.getY() + si (2), kFW, stripH);
+         sliceStrip.setVisible (true);
+         overviewTopGuard = stripRow.getY();
+     }
  }
  else
  {
@@ -1909,7 +1918,7 @@ void DysektEditor::resized()
  }
  }
 
- if (! benchInspector) { sliceTable.setVisible (false); sliceTable.setBounds ({}); }
+ if (! benchInspector) { sliceTable.setVisible (false); sliceTable.setBounds ({}); sliceStrip.setVisible (false); sliceStrip.setBounds ({}); }
 
  const int kFrameX = kFX;
  const int kFrameW = kFW;

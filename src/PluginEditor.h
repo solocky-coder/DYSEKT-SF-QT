@@ -12,6 +12,7 @@
 #include "ui/TopBar.h"
 #include "ui/SliceTable.h"
 #include "ui/SliceHeaderCard.h"
+#include "ui/SliceStrip.h"
 #include "params/ParamIds.h"
 #include "ui/SliceLane.h"
 #include "ui/SliceControlBar.h"
@@ -276,6 +277,7 @@ private:
     TopBar          topBar { processor, processor.sequencer };   // Bench layout only; declared first so it sits behind logo/header/transport
     LogoBar         logoBar;
     HeaderBar       headerBar;
+    SliceStrip      sliceStrip     { processor };   // Bench slicer chip strip under the waveform
     SliceTable      sliceTable     { processor };   // Bench slicer dock — see resized()
     NavRail         navRail;      // Bench layout only — see resized() / syncNavRail()
     MiniTransportBar transportBar { processor.sequencer };   // STOP/PLAY/REC/LOOP — where the UNDO/REDO row used to be

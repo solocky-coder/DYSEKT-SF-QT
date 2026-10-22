@@ -68,7 +68,25 @@ public:
                         + "  ·  " + juce::String (sr / 1000.0, 1) + " kHz",
                     left.withTrimmedTop (juce::roundToInt (30.0f * sf)).withHeight (juce::roundToInt (16.0f * sf)),
                     juce::Justification::centredLeft, true);
-        juce::ignoreUnused (seconds);
+
+        // Info chips to the right of the name
+        if (snap)
+        {
+            const auto chipFont = DysektLookAndFeel::makeFont (10.5f * sf);
+            int cx = pad + juce::GlyphArrangement::getStringWidthInt (nameFont, title) + juce::roundToInt (12.0f * sf);
+            const int chipH = juce::roundToInt (18.0f * sf), chipY = juce::roundToInt (9.0f * sf);
+            for (const auto& txt : { juce::String (seconds, 2) + " s", juce::String (numSlices) + " slices" })
+            {
+                const int w = juce::GlyphArrangement::getStringWidthInt (chipFont, txt) + juce::roundToInt (16.0f * sf);
+                if (cx + w > left.getRight()) break;
+                g.setColour (t.button);
+                g.fillRoundedRectangle (juce::Rectangle<int> (cx, chipY, w, chipH).toFloat(), chipH * 0.5f);
+                g.setColour (t.foreground.withAlpha (0.75f));
+                g.setFont (chipFont);
+                g.drawText (txt, juce::Rectangle<int> (cx, chipY, w, chipH), juce::Justification::centred, false);
+                cx += w + juce::roundToInt (6.0f * sf);
+            }
+        }
     }
 
     void mouseDown (const juce::MouseEvent& e) override

@@ -345,8 +345,8 @@ void SliceControlBar::drawKnobCell (juce::Graphics& g, int x, int y,
 {
  const int cellW = psCellW;
  const int cellH = psCellH;
- const int knobCX = x + psKnobR + juce::roundToInt (3.0f * paintSf);
- const int knobCY = y + cellH / 2;
+ const int knobCX = inspectorMode ? x + cellW / 2 : x + psKnobR + juce::roundToInt (3.0f * paintSf);
+ const int knobCY = inspectorMode ? y + psKnobR + juce::roundToInt (4.0f * paintSf) : y + cellH / 2;
 
  const bool armed = (processor.midiLearn.getArmedSlot() == fieldId);
  const bool mapped = processor.midiLearn.isMapped (fieldId);
@@ -432,12 +432,19 @@ void SliceControlBar::drawKnobCell (juce::Graphics& g, int x, int y,
  g.setColour (locked && ! hasAdsr ? getTheme().lockActive.withAlpha (0.8f)
  : hasAdsr ? adsr.withAlpha (0.95f)
  : getTheme().foreground.withAlpha (0.42f));
- g.drawText (label, textX, y + juce::roundToInt (2.0f * paintSf), textW, juce::roundToInt (11.0f * paintSf), juce::Justification::centredLeft);
+ const int valY = knobCY + psKnobR + juce::roundToInt (3.0f * paintSf);
+ if (inspectorMode)
+     g.drawText (label, x, valY + juce::roundToInt (13.0f * paintSf), cellW, juce::roundToInt (11.0f * paintSf), juce::Justification::centred);
+ else
+     g.drawText (label, textX, y + juce::roundToInt (2.0f * paintSf), textW, juce::roundToInt (11.0f * paintSf), juce::Justification::centredLeft);
 
  g.setFont (DysektLookAndFeel::makeMonoFont (11.0f * paintSf));
  g.setColour (locked ? getTheme().foreground
  : getTheme().foreground.withAlpha (hasAdsr ? 0.80f : 0.38f));
- g.drawText (valueText, textX, y + juce::roundToInt (13.0f * paintSf), textW, juce::roundToInt (13.0f * paintSf), juce::Justification::centredLeft);
+ if (inspectorMode)
+     g.drawText (valueText, x, valY, cellW, juce::roundToInt (13.0f * paintSf), juce::Justification::centred);
+ else
+     g.drawText (valueText, textX, y + juce::roundToInt (13.0f * paintSf), textW, juce::roundToInt (13.0f * paintSf), juce::Justification::centredLeft);
 
  outWidth = cellW;
 
@@ -961,7 +968,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  paintSf = inspectorMode ? (float) getWidth() / (3.0f * (float) kParamCellWidth + 2.0f * 4.0f + 2.0f * 8.0f)
                          : (float) getHeight() / 72.0f;
  psCellW = juce::roundToInt ((float) kParamCellWidth * paintSf);
- psCellH = juce::roundToInt (28.0f * paintSf);
+ psCellH = juce::roundToInt ((inspectorMode ? 56.0f : 28.0f) * paintSf);   // Bench inspector: vertical knob cells
  psKnobR = juce::roundToInt ((float) kKnobR * paintSf);
  auto si  = [this](int v) { return juce::roundToInt ((float) v * paintSf); };
 
@@ -1050,9 +1057,15 @@ void SliceControlBar::paint (juce::Graphics& g)
  using F = DysektProcessor;
 
  // Inspector mode: start a new line when the next cell would run past the right edge.
+ auto sectionTitle = [&] (const juce::String& title, int ty)
+ {
+     g.setColour (getTheme().foreground.withAlpha (0.45f));
+     g.setFont (DysektLookAndFeel::makeFont (9.5f * paintSf, true));
+     g.drawText (title.toUpperCase(), si (8), ty, getWidth() - si (16), si (12), juce::Justification::centredLeft);
+ };
  // Spread rows a little when the inspector is taller than its ~7 natural rows need.
  const int rowExtra = inspectorMode
-     ? juce::jlimit (0, si (12), (getHeight() - si (26) - 7 * (psCellH + si (4)) - si (24)) / 8)
+     ? juce::jlimit (0, si (12), (getHeight() - si (56) - 7 * (psCellH + si (4)) - si (24) - si (94)) / 8)
      : 0;
  auto wrapCell = [&] (int& cx, int& cy)
  {
@@ -1272,7 +1285,8 @@ const float relMaxSec = kSlicerMaxReleaseSec;
  // knobs and mirrors them. Paint-only: not registered in cells[], so it never
  // intercepts a click. Brightens the segment whose knob is being dragged.
  {
- const int curveW = si (76);
+ const int curveW = inspectorMode ? getWidth() - si (16) : si (76);
+ if (inspectorMode) { sectionTitle ("AHDSR", row2y); row2y += si (14); }
  int hlSeg = EnvDisplay::SegNone;
  if (activeDragCell >= 0)
  {
@@ -1284,10 +1298,10 @@ const float relMaxSec = kSlicerMaxReleaseSec;
  }
  const EnvDisplay::CurveParams curveParams { effAttack, effDecay, effSustain, effRelease,
                                              ZoneEnv::kMaxAttackSec, ZoneEnv::kMaxDecaySec, relMaxSec };
- EnvDisplay::drawCurve (g, juce::Rectangle<float> ((float) x, (float) row2y, (float) curveW, (float) psCellH),
+ EnvDisplay::drawCurve (g, juce::Rectangle<float> ((float) x, (float) row2y, (float) curveW, (float) (inspectorMode ? si (46) : psCellH)),
                         curveParams, hlSeg, false, paintSf,
                         getTheme().darkBar.darker (0.15f), getTheme().separator);
- x += curveW + si (6);
+ if (inspectorMode) row2y += si (50); else x += curveW + si (6);
  }
 
  // ATK — knob (stored seconds, display ms)
@@ -1376,6 +1390,15 @@ locked, kLockRelease, F::FieldRelease, 0.f, relMaxSec, 0.001f, cw);
      };
 
      int eqCw = 0;
+     if (inspectorMode)
+     {
+         x = si (8);
+         row2y += psCellH + si (4) + rowExtra;
+         g.setColour (getTheme().separator.withAlpha (0.6f));
+         g.drawHorizontalLine (row2y - si (3), (float) si (8), (float) getWidth() - (float) si (8));
+         sectionTitle ("Slice EQ", row2y + si (1));
+         row2y += si (14);
+     }
      wrapCell (x, row2y);
      drawKnobCell (g, x, row2y, "LOW", gainStr (effEqLow),
                    toNorm (F::FieldEqLowGain, effEqLow),
