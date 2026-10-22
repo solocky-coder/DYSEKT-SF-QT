@@ -414,6 +414,55 @@ void FileBrowserPanel::timerCallback()
 
 void FileBrowserPanel::resized()
 {
+    if (getTheme().isBench())
+    {
+        // Bench: three cards. Places (drives, folders, Internet Archive) | files | preview.
+        const int gap = 8;
+        auto inner = getLocalBounds().reduced (gap);
+        benchSide = inner.removeFromLeft (juce::jmin (230, inner.getWidth() / 4));
+        inner.removeFromLeft (gap);
+        benchPane = {};
+        if (previewVisible)
+        {
+            benchPane = inner.removeFromRight (juce::jmin (270, inner.getWidth() / 3));
+            inner.removeFromRight (gap);
+        }
+        benchMain = inner;
+
+        // Places column
+        auto sidebar = benchSide.reduced (10, 8);
+        sidebar.removeFromTop (28);                              // "Places" heading
+        const int rowH = 30, rowGap = 3;
+        for (auto* btn : bmBtns)
+            { btn->setBounds (sidebar.removeFromTop (rowH)); sidebar.removeFromTop (rowGap); }
+        addBmBtn.setBounds (sidebar.removeFromTop (rowH));
+        sidebar.removeFromTop (14);
+        benchArchiveLabelY = sidebar.getY();
+        sidebar.removeFromTop (22);                              // "Internet Archive" label
+        for (auto* btn : archiveBtns)
+            { btn->setBounds (sidebar.removeFromTop (rowH)); sidebar.removeFromTop (rowGap); }
+        addArchiveBtn.setBounds (sidebar.removeFromTop (rowH));
+
+        // Preview pane
+        if (previewVisible)
+        {
+            auto pane = benchPane.reduced (12, 10);
+            pane.removeFromTop (28);                             // "Preview" heading
+            fileNameLabel.setBounds (pane.removeFromTop (26));
+            pane.removeFromTop (8);
+            auto ctl = pane.removeFromTop (40);
+            playStopBtn .setBounds (ctl.removeFromLeft (40));
+            ctl.removeFromLeft (8);
+            volumeSlider.setBounds (ctl.withSizeKeepingCentre (ctl.getWidth(), 24));
+        }
+
+        // Files card: 28 px header, then the list
+        auto files = benchMain.withTrimmedTop (30).reduced (4, 0).withTrimmedBottom (4);
+        if (archiveViewActive) { archiveList.setVisible (true);  sfzBrowser.setVisible (false); archiveList.setBounds (files); }
+        else                   { archiveList.setVisible (false); sfzBrowser.setVisible (true);  sfzBrowser.setBounds (files); }
+        return;
+    }
+
     // All layout happens inside the inner screen area (4 px inset on all sides).
     auto inner = getLocalBounds().reduced (4);
 
@@ -486,6 +535,35 @@ void FileBrowserPanel::paint (juce::Graphics& g)
     const auto& T  = getTheme();
     const auto  ac = T.accent;
     const auto  b  = getLocalBounds();
+
+    if (T.isBench())
+    {
+        auto card = [&] (juce::Rectangle<int> r)
+        {
+            if (r.isEmpty()) return;
+            g.setColour (T.waveformBg);
+            g.fillRoundedRectangle (r.toFloat(), T.cornerRadius);
+            g.setColour (T.separator);
+            g.drawRoundedRectangle (r.toFloat().reduced (0.5f), T.cornerRadius, 1.0f);
+        };
+        card (benchSide); card (benchMain); card (benchPane);
+
+        g.setColour (T.foreground);
+        g.setFont (DysektLookAndFeel::makeFont (15.0f, true));
+        g.drawText ("Places", benchSide.reduced (14, 8).removeFromTop (28), juce::Justification::centredLeft, false);
+        g.setColour (T.foreground.withAlpha (0.5f));
+        g.setFont (DysektLookAndFeel::makeFont (11.0f, true));
+        g.drawText ("INTERNET ARCHIVE", benchSide.getX() + 14, benchArchiveLabelY, benchSide.getWidth() - 28, 22,
+                    juce::Justification::centredLeft, false);
+
+        g.setColour (T.foreground);
+        g.setFont (DysektLookAndFeel::makeFont (15.0f, true));
+        g.drawText (archiveViewActive && archiveListTitle.isNotEmpty() ? archiveListTitle : juce::String ("Files"),
+                    benchMain.reduced (14, 6).removeFromTop (28), juce::Justification::centredLeft, true);
+        if (! benchPane.isEmpty())
+            g.drawText ("Preview", benchPane.reduced (14, 8).removeFromTop (28), juce::Justification::centredLeft, false);
+        return;
+    }
 
     // ── Outer rounded shell ───────────────────────────────────────────────────
     const auto screen = [&]
@@ -815,6 +893,7 @@ void FileBrowserPanel::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void FileBrowserPanel::refreshTheme()
 {
+    resized();   // Bench switches the whole layout
     repaint();
     sfzBrowser.repaint();
 }

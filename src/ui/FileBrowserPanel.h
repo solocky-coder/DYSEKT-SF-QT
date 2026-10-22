@@ -387,4 +387,8 @@ private:
     int spinnerFrame = 0;
 
     static constexpr int kBarH = 36;
+
+    // Bench layout: places sidebar | file list | preview pane (see resized() / paint()).
+    juce::Rectangle<int> benchSide, benchMain, benchPane;
+    int benchArchiveLabelY = 0;
 };
