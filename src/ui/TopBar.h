@@ -179,7 +179,11 @@ private:
         const double beats = juce::jmax (0.0, engine.getPlayheadBeats());
         const int bar = (int) (beats / 4.0) + 1, beat = (int) beats % 4 + 1, sub = (int) ((beats - std::floor (beats)) * 4.0) + 1;
         const auto pos = juce::String (bar).paddedLeft ('0', 3) + "." + juce::String (beat) + "." + juce::String (sub);
+#if DYSEKT_STANDALONE
         const int pc = processor.abletonLink.getPeerCount();
+#else
+        const int pc = 0;   // Ableton Link only exists in the standalone build
+#endif
         const auto lnk = pc > 0 ? juce::String (pc) + (pc == 1 ? " peer" : " peers") : juce::String ("off");
         if (txt != bpmText || pos != posText || lnk != linkText)
         { bpmText = txt; posText = pos; linkText = lnk; peers = pc; repaint(); }
