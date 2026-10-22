@@ -17,7 +17,7 @@ class SliceTable final : public juce::Component,
 {
 public:
     /** Design height in layout units (scaled by the editor like every other region). */
-    static constexpr int kDesignHeight = 150;
+    static constexpr int kDesignHeight = 200;
 
     explicit SliceTable (DysektProcessor& p) : processor (p) { startTimerHz (10); }
     ~SliceTable() override { stopTimer(); }

@@ -1041,12 +1041,16 @@ void SliceControlBar::paint (juce::Graphics& g)
  using F = DysektProcessor;
 
  // Inspector mode: start a new line when the next cell would run past the right edge.
+ // Spread rows a little when the inspector is taller than its ~7 natural rows need.
+ const int rowExtra = inspectorMode
+     ? juce::jlimit (0, si (12), (getHeight() - si (26) - 7 * (psCellH + si (4)) - si (24)) / 8)
+     : 0;
  auto wrapCell = [&] (int& cx, int& cy)
  {
      if (inspectorMode && cx > si (8) && cx + psCellW > getWidth() - si (8))
      {
          cx = si (8);
-         cy += psCellH + si (4);
+         cy += psCellH + si (4) + rowExtra;
      }
  };
 
@@ -1246,7 +1250,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  }
  } // end if (! sfzPlayerMode)
  // Inspector: row 2 starts on the line below wherever row 1 ended.
- if (inspectorMode) row2y = row1y + psCellH + si (10);
+ if (inspectorMode) row2y = row1y + psCellH + si (10) + rowExtra;
  g.setColour (getTheme().separator);
  g.drawHorizontalLine (inspectorMode ? row2y - si (5) : si (36), (float) si (8), (float) getWidth() - (float) si (8));
 

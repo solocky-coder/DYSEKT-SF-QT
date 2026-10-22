@@ -1591,7 +1591,10 @@ void DysektEditor::resized()
  // ── Top strip ─────────────────────────────────────────────────────────────
  // In PAD mode shrink LCD rows to 65% — frees ~116px for the pad grid
  const bool bench = getTheme().isBench();
- const int lcdRowH = si (kLcdRowH);
+ // Bench slicer: the top LCD row is slimmed to a single readout (the main waveform view
+ // below already shows the waveform), which gives the waveform and slice list more room.
+ const bool benchSlim = bench && uiMode == 0;
+ const int lcdRowH = benchSlim ? si (200) : si (kLcdRowH);
  const int ctrlFrmH = si (kCtrlFrameH);
  // Bench: a slim top bar replaces the logo strip, and the centre control column goes away.
  juce::Rectangle<int> topBarBounds;
@@ -1600,6 +1603,7 @@ void DysektEditor::resized()
  const int kTopStripH = (bench ? 0 : si (kLogoH)) + lcdRowH;
  auto topArea = area.removeFromTop (kTopStripH);
  auto topRow = topArea.reduced (si (kMargin), si (4));
+ const auto topRowFull = topRow;
 
  // Leftover horizontal space after the fixed-width centre column and its
  // margins, split evenly between the two side LCD columns. This is what
@@ -1622,7 +1626,7 @@ void DysektEditor::resized()
  const bool sf2Mode = (uiMode == 2);
  const bool multiMode = isMultisamplerTabActive();
  sliceLcd.setVisible (! sf2Mode);
- sliceWaveformLcd.setVisible (! sf2Mode && ! multiMode);
+ sliceWaveformLcd.setVisible (! sf2Mode && ! multiMode && ! benchSlim);
  sf2Lcd.setVisible (sf2Mode);
  sf2WaveformLcd.setVisible (sf2Mode);
  multisamplerWaveformLcd.setVisible (multiMode);
@@ -1666,6 +1670,7 @@ void DysektEditor::resized()
  sliceWaveformLcd.setBounds (topRow);
  sf2WaveformLcd.setBounds (topRow);
  multisamplerWaveformLcd.setBounds (topRow);
+ if (benchSlim) { sliceLcd.setBounds (topRowFull); sliceWaveformLcd.setBounds ({}); }   // Bench slicer: one full-width readout
 
  // ── Bench top bar: place the existing transport / undo-redo row into its slots ──
  if (bench)
