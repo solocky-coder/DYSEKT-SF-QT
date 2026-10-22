@@ -346,8 +346,8 @@ void WaveformOverview::paint (juce::Graphics& g)
     // ── LCD-style frame — identical to SliceControlBar::paint() ─────────────
     auto b = getLocalBounds();
 
-    g.setColour (juce::Colour (0xFF0F0F0F));
-    g.fillRoundedRectangle (b.toFloat(), 0.0f);
+    g.setColour (getTheme().isBench() ? getTheme().waveformBg : juce::Colour (0xFF0F0F0F));
+    g.fillRoundedRectangle (b.toFloat(), getTheme().cornerRadius);
 
     // Border
     g.setColour (getTheme().separator);

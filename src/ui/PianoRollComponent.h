@@ -70,14 +70,14 @@ public:
         hScroll.setRangeLimits (0.0, 1.0);
         hScroll.setCurrentRange (0.0, 0.3);
         hScroll.setAutoHide (false);
-        hScroll.setColour (juce::ScrollBar::thumbColourId, juce::Colour (0xFF263342));
+        hScroll.setColour (juce::ScrollBar::thumbColourId, getTheme().adapt (juce::Colour (0xFF263342)));
         hScroll.addListener (this);
         addAndMakeVisible (hScroll);
 
         vScroll.setRangeLimits (0.0, 1.0);
         vScroll.setCurrentRange (0.3, 0.7);
         vScroll.setAutoHide (false);
-        vScroll.setColour (juce::ScrollBar::thumbColourId, juce::Colour (0xFF263342));
+        vScroll.setColour (juce::ScrollBar::thumbColourId, getTheme().adapt (juce::Colour (0xFF263342)));
         vScroll.addListener (this);
         addAndMakeVisible (vScroll);
 
@@ -157,7 +157,7 @@ public:
     //==========================================================================
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colour (0xFF060608));
+        g.fillAll (getTheme().adapt (juce::Colour (0xFF060608)));
         drawToolbar  (g);
         drawRuler    (g);
         drawKeyboard (g);
@@ -1258,9 +1258,9 @@ private:
             b.setButtonText (label);
             b.setTooltip (tip);
             b.setClickingTogglesState (false);
-            b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xFF141820));
+            b.setColour (juce::TextButton::buttonColourId,   getTheme().adapt (juce::Colour (0xFF141820)));
             b.setColour (juce::TextButton::buttonOnColourId, juce::Colour::fromFloatRGBA (0.25f,0.85f,0.85f,0.9f));
-            b.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xFF9AAABB));
+            b.setColour (juce::TextButton::textColourOffId,  getTheme().adapt (juce::Colour (0xFF9AAABB)));
             b.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xFF000000));
             addAndMakeVisible (b);
         };
@@ -1326,7 +1326,7 @@ private:
             p.btn->setToggleState (active, juce::dontSendNotification);
             p.btn->setColour (juce::TextButton::buttonColourId,
                 active ? juce::Colour::fromFloatRGBA (0.25f, 0.85f, 0.85f, 0.25f)
-                       : juce::Colour (0xFF141820));
+                       : getTheme().adapt (juce::Colour (0xFF141820)));
         }
     }
 
@@ -1390,9 +1390,9 @@ private:
                 g.setColour (juce::Colours::black.withAlpha (0.55f));
                 g.fillRect (getLocalBounds());
                 const auto box = dialogBox();
-                g.setColour (juce::Colour (0xFF1A2030));
+                g.setColour (getTheme().adapt (juce::Colour (0xFF1A2030)));
                 g.fillRoundedRectangle (box.toFloat(), 0.0f);
-                g.setColour (juce::Colour (0xFF3A8FCC).withAlpha (0.7f));
+                g.setColour (getTheme().adapt (juce::Colour (0xFF3A8FCC)).withAlpha (0.7f));
                 g.drawRoundedRectangle (box.toFloat().reduced (0.5f), 0.0f, 1.5f);
                 g.setFont (14.0f);
                 g.setColour (juce::Colours::white);
@@ -1481,26 +1481,26 @@ private:
     //==========================================================================
     void drawToolbar (juce::Graphics& g)
     {
-        g.setColour (juce::Colour (0xFF10131A));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF10131A)));
         g.fillRect (toolbarBounds);
-        g.setColour (juce::Colour (0xFF26303B));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF26303B)));
         g.fillRect (toolbarBounds.withTrimmedTop (toolbarBounds.getHeight() - 1));
 
         // Editor identity stays visible even when this is detached from Arrange.
         g.setFont (DysektLookAndFeel::makeMonoFont (10.f));
-        g.setColour (juce::Colour (0xFF75D7D1));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF75D7D1)));
         g.drawText ("PIANO ROLL", toolbarBounds.getX() + 9, toolbarBounds.getY(),
                     84, toolbarBounds.getHeight(), juce::Justification::centredLeft, false);
-        g.setColour (juce::Colour (0xFF2A3440));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF2A3440)));
         g.drawVerticalLine (96, (float) toolbarBounds.getY() + 7.f,
                             (float) toolbarBounds.getBottom() - 7.f);
     }
 
     void drawRuler (juce::Graphics& g)
     {
-        g.setColour (juce::Colour (0xFF0D0D14));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF0D0D14)));
         g.fillRect (rulerBounds);
-        g.setColour (juce::Colour (0xFF1C2028));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF1C2028)));
         g.fillRect (rulerBounds.withTrimmedLeft (kKeysW));
 
         // Loop region tint
@@ -1528,7 +1528,7 @@ private:
             const bool isBeat = (t % (int64_t)MidiClip::kPPQ == 0);
             const bool isBar  = (t % (int64_t)ticksPerBar == 0);
             if (! isBeat && ! isBar) continue;
-            g.setColour (isBar ? juce::Colour (0xFF2A3040) : juce::Colour (0xFF1C2230));
+            g.setColour (isBar ? getTheme().adapt (juce::Colour (0xFF2A3040)) : getTheme().adapt (juce::Colour (0xFF1C2230)));
             g.drawVerticalLine ((int)x, (float)rulerBounds.getY(), (float)rulerBounds.getBottom());
         }
 
@@ -1537,7 +1537,7 @@ private:
         {
             const float x = tickToX (bar * (int64_t) ticksPerBar);
             if (x < kKeysW) continue;
-            g.setColour (juce::Colour (0xFF8090A0));
+            g.setColour (getTheme().adapt (juce::Colour (0xFF8090A0)));
             g.drawText (juce::String (bar + 1), (int)x + 2, rulerBounds.getY(),
                         40, kRulerH, juce::Justification::centredLeft, false);
         }
@@ -1599,14 +1599,14 @@ private:
         }
 
         // Separator line
-        g.setColour (juce::Colour (0xFF2A3040));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF2A3040)));
         g.drawVerticalLine (keysBounds.getRight() - 1,
                             (float)keysBounds.getY(), (float)keysBounds.getBottom());
     }
 
     void drawGrid (juce::Graphics& g)
     {
-        g.setColour (juce::Colour (0xFF0B0E14));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF0B0E14)));
         g.fillRect (gridBounds);
 
         const int top = yToNote (kRulerH + kToolbarH);
@@ -1615,7 +1615,7 @@ private:
         // Outside the editable note range (SFZ layer tracks): dimmed, not editable.
         if (noteLo > 0 || noteHi < 127)
         {
-            g.setColour (juce::Colour (0xFF06080C));
+            g.setColour (getTheme().adapt (juce::Colour (0xFF06080C)));
             const int hiEdge = (int) noteToY (noteHi);
             const int loEdge = (int) noteToY (noteLo) + noteRowH;
             g.fillRect (gridBounds.getIntersection (juce::Rectangle<int> (gridBounds.getX(), gridBounds.getY(), gridBounds.getWidth(), hiEdge - gridBounds.getY())));
@@ -1628,7 +1628,7 @@ private:
             const float y = noteToY (note);
             if (isBlackKey (note))
             {
-                g.setColour (juce::Colour (0xFF0E121A));
+                g.setColour (getTheme().adapt (juce::Colour (0xFF0E121A)));
                 g.fillRect ((float)gridBounds.getX(), y, (float)gridBounds.getWidth(), (float)noteRowH);
             }
             if ((note % 12) == 0)
@@ -1647,7 +1647,7 @@ private:
             const float x = tickToX (beat * (int64_t) tpb);
             if (x < gridBounds.getX()) continue;
             const bool isBar = (beat % 4 == 0);
-            g.setColour (isBar ? juce::Colour (0xFF354252) : juce::Colour (0xFF1B2330));
+            g.setColour (isBar ? getTheme().adapt (juce::Colour (0xFF354252)) : getTheme().adapt (juce::Colour (0xFF1B2330)));
             g.drawVerticalLine ((int)x, (float)gridBounds.getY(), (float)gridBounds.getBottom());
         }
 

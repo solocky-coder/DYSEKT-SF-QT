@@ -1101,7 +1101,7 @@ void KeysPanel::paint (juce::Graphics& g)
     {
         const juce::Rectangle<float> frameRect (0.f, 0.f, (float) getWidth(), (float) kZoneViewH);
 
-        g.setColour (juce::Colour (0xFF0F0F0F));
+        g.setColour (getTheme().isBench() ? getTheme().waveformBg : juce::Colour (0xFF0F0F0F));
         g.fillRoundedRectangle (frameRect, getTheme().cornerRadius);
 
         g.setColour (accent.withAlpha (0.35f));

@@ -726,10 +726,10 @@ void MixerPanel::drawMeter (juce::Graphics& g,
         const float hold  = gainToPos (holdGain);
         const int fillW = juce::jmax (0, juce::roundToInt (level * (float) (w - kHoldW - 2)));
 
-        g.setColour (juce::Colour (0xff0a0a0a));
+        g.setColour (getTheme().adapt (juce::Colour (0xff0a0a0a)));
         g.fillRect (x, barY, w, barH);
 
-        g.setColour (juce::Colour (0xff1e1e1e));
+        g.setColour (getTheme().adapt (juce::Colour (0xff1e1e1e)));
         g.drawRect (x, barY, w, barH);
 
         auto drawZone = [&] (float from, float to, juce::Colour colour)

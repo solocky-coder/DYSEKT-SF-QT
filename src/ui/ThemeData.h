@@ -35,6 +35,15 @@ struct ThemeData
     // flat rendering path (it only changes colours).
     bool isMetro() const noexcept { return name == "metro" || isBench(); }
     /** True only for the Bench theme, which also switches on the Bench layout (rail etc.). */
+    /** True for a Bench theme with light panels (Bench Light). */
+    bool isLightBench() const noexcept { return isBench() && background.getBrightness() > 0.5f; }
+    /** For hard-coded dark neutral surface colours: on Bench Light, flip their lightness so they
+        become light panels; saturated/bright colours and all other themes are returned unchanged. */
+    juce::Colour adapt (juce::Colour c) const noexcept
+    {
+        if (! isLightBench() || c.getBrightness() >= 0.5f || c.getSaturation() > 0.45f) return c;
+        return c.withBrightness (1.0f - c.getBrightness()).withAlpha (c.getAlpha());
+    }
     bool isBench() const noexcept { return name.startsWith ("bench"); }
 
     static void completeSlicePalette (ThemeData& theme)

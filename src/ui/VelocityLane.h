@@ -33,20 +33,20 @@ public:
     //==========================================================================
     void paint (juce::Graphics& g) override
     {
-        const auto bg = juce::Colour (0xFF0E1219);
+        const auto bg = getTheme().adapt (juce::Colour (0xFF0E1219));
         g.fillAll (bg);
 
         // A labelled lane reads as an editing control rather than stray blocks.
-        g.setColour (juce::Colour (0xFF2A3440));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF2A3440)));
         g.fillRect (getLocalBounds().removeFromTop (1));
         g.setFont (juce::Font (9.0f, juce::Font::bold));
-        g.setColour (juce::Colour (0xFF8EA5B8));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF8EA5B8)));
         g.drawText ("VELOCITY", 7, 4, 64, 14, juce::Justification::centredLeft, false);
         g.setFont (juce::Font (8.0f));
-        g.setColour (juce::Colour (0xFF5F7182));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF5F7182)));
         g.drawText ("127", getWidth() - 28, 4, 22, 12, juce::Justification::centredRight, false);
         g.drawText ("0",   getWidth() - 18, getHeight() - 14, 12, 10, juce::Justification::centredRight, false);
-        g.setColour (juce::Colour (0xFF222C37));
+        g.setColour (getTheme().adapt (juce::Colour (0xFF222C37)));
         g.drawHorizontalLine (getHeight() / 2, 0.f, (float) getWidth());
 
         if (clip == nullptr) return;

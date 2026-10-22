@@ -632,7 +632,7 @@ private:
             const float zeroX  = (float) x + zeroT * (float) width;
 
             // Base wedge — full width, dark
-            g.setColour (juce::Colour (0xFF1A1A1A));
+            g.setColour (getTheme().adapt (juce::Colour (0xFF1A1A1A)));
             g.fillPath (wedgeSegment ((float) x, (float) (x + width), x, width, centreY, isPan));
 
             // Accent fill wedge: left-anchored for VOLUME, centre-anchored for PAN.
@@ -647,12 +647,12 @@ private:
             }
 
             // Zero tick
-            g.setColour (juce::Colours::white.withAlpha (0.30f));
+            g.setColour (getTheme().foreground.withAlpha (0.30f));
             g.fillRect (juce::Rectangle<float> (1.0f, 10.0f).withCentre ({ zeroX, centreY }));
 
             // Thumb — slim flat rectangle, sharp corners, no glow
             const juce::Rectangle<float> thumb (3.0f, (float) height - 2.0f);
-            g.setColour (juce::Colours::white);
+            g.setColour (getTheme().foreground);
             g.fillRect (thumb.withCentre ({ sliderPos, centreY }));
         }
     };

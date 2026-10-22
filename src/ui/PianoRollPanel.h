@@ -143,7 +143,7 @@ class PianoRollWindow : public juce::DocumentWindow
 public:
     PianoRollWindow (SequencerEngine& seq, juce::LookAndFeel& lnf, AbletonLink* link = nullptr)
         : juce::DocumentWindow (juce::String::fromUTF8 ("PIANO ROLL  \xe2\x80\xa2  MIDI EDITOR"),
-                                juce::Colour (0xFF0D0D14),
+                                getTheme().adapt (juce::Colour (0xFF0D0D14)),
                                 juce::DocumentWindow::closeButton |
                                 juce::DocumentWindow::minimiseButton |
                                 juce::DocumentWindow::maximiseButton),
