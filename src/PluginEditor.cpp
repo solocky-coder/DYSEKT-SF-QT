@@ -55,6 +55,7 @@ DysektEditor::DysektEditor (DysektProcessor& p)
  arrangeView.setNetworkAudioProcessor (dynamic_cast<NetworkAudioProcessor*> (&p));
 #endif
 
+ addChildComponent (sliceTable);   // Bench slicer dock; shown/placed in resized()
  addChildComponent (topBar);   // Bench layout only; shown/placed in resized()
  addAndMakeVisible (logoBar);
  logoBar.getProperties().set ("dysektThemeKey", "header");
@@ -1862,6 +1863,13 @@ void DysektEditor::resized()
  {
      const int inspTop = actionArea.getY();
      sliceControlBar.setBounds (kFX + kFW + inspGap, inspTop, inspW, juce::jmax (0, area.getBottom() - inspTop));
+
+     // Slice list dock under the waveform (the inspector keeps the full height).
+     const int dockH = si (SliceTable::kDesignHeight);
+     auto dock = area.removeFromBottom (dockH);
+     sliceTable.setBounds (kFX, dock.getY(), kFW, dockH);
+     sliceTable.setVisible (true);
+     area.removeFromBottom (si (kMargin));
  }
  else if (hasRealSample && uiMode == 0 && ! inlineMixerOpen && !normalBrowserOpen)
  {
@@ -1893,6 +1901,8 @@ void DysektEditor::resized()
      waveformOverview.setBounds ({});
  }
  }
+
+ if (! benchInspector) { sliceTable.setVisible (false); sliceTable.setBounds ({}); }
 
  const int kFrameX = kFX;
  const int kFrameW = kFW;

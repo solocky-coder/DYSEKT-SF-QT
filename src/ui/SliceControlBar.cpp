@@ -249,7 +249,7 @@ void SliceControlBar::drawKnob (juce::Graphics& g,
  juce::Path track;
  track.addCentredArc (fcx, fcy, fr, fr, 0.f, kKnobStart, kKnobEnd, true);
  g.setColour (getTheme().darkBar.brighter (0.22f));
- g.strokePath (track, juce::PathStrokeType (1.5f,
+ g.strokePath (track, juce::PathStrokeType (inspectorMode ? 2.2f : 1.5f,
  juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
  // Base colour: fixed tint if provided, otherwise theme accent
@@ -270,7 +270,7 @@ void SliceControlBar::drawKnob (juce::Graphics& g,
  juce::Path arc;
  arc.addCentredArc (fcx, fcy, fr, fr, 0.f, kKnobStart, angle, true);
  g.setColour (arcCol);
- g.strokePath (arc, juce::PathStrokeType (2.2f,
+ g.strokePath (arc, juce::PathStrokeType (inspectorMode ? 3.2f : 2.2f,
  juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
  // The arc uses JUCE's convention (0 = 12 o'clock, clockwise).
@@ -1053,6 +1053,20 @@ void SliceControlBar::paint (juce::Graphics& g)
 
 
  // Slice index label removed — shown in waveform and LCD panels already.
+ // Bench inspector: a header with the slice colour, number and name.
+ if (inspectorMode)
+ {
+     const juce::String num = juce::String (idx + 1).paddedLeft ('0', 2);
+     g.setColour (s.colour);
+     g.fillRoundedRectangle ((float) si (8), (float) si (7), (float) si (12), (float) si (12), getTheme().cornerRadius * 0.4f);
+     g.setColour (getTheme().foreground);
+     g.setFont (DysektLookAndFeel::makeFont (14.0f * paintSf, true));
+     g.drawText ("Slice " + num + (s.name.isNotEmpty() ? ("  " + s.name) : juce::String()),
+                 si (26), si (4), getWidth() - si (26) - si (8), si (18), juce::Justification::centredLeft, true);
+     row1y += si (26);
+     g.setColour (getTheme().separator.withAlpha (0.6f));
+     g.drawHorizontalLine (row1y - si (4), (float) si (8), (float) getWidth() - (float) si (8));
+ }
 
  // ── Row 1 params ──────────────────────────────────────────────────
  int x = si (8);
