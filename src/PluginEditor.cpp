@@ -1608,7 +1608,12 @@ void DysektEditor::resized()
      benchInspector = bench && uiMode == 0 && trimDialog == nullptr && realSample && ! slotBlocks;
  }
  // Bench slicer view: the LCD row becomes a slim header card (file, slicing controls).
- const int lcdRowH = benchInspector ? si (SliceHeaderCard::kDesignHeight + 8) : si (kLcdRowH);
+ // Bench slicer tab with a panel open (browser / mixer / EQ / sequencer) or no sample yet: the LCD row is
+ // not needed, so the panel gets the whole area under the top bar.
+ const bool benchNoLcd = bench && uiMode == 0 && trimDialog == nullptr && ! benchInspector;
+ const int lcdRowH = benchInspector ? si (SliceHeaderCard::kDesignHeight + 8)
+                   : benchNoLcd     ? 0
+                                    : si (kLcdRowH);
  const int ctrlFrmH = si (kCtrlFrameH);
  // Bench: a slim top bar replaces the logo strip, and the centre control column goes away.
  juce::Rectangle<int> topBarBounds;
@@ -1616,7 +1621,7 @@ void DysektEditor::resized()
  const int centreW = bench ? 0 : si (kCtrlFrameW);
  const int kTopStripH = (bench ? 0 : si (kLogoH)) + lcdRowH;
  auto topArea = area.removeFromTop (kTopStripH);
- auto topRow = topArea.reduced (si (kMargin), si (4));
+ auto topRow = topArea.reduced (si (kMargin), benchNoLcd ? 0 : si (4));
  const auto topRowFull = topRow;
 
  // Leftover horizontal space after the fixed-width centre column and its
@@ -1639,8 +1644,8 @@ void DysektEditor::resized()
  // going blank while MULTISAMPLER is open.
  const bool sf2Mode = (uiMode == 2);
  const bool multiMode = isMultisamplerTabActive();
- sliceLcd.setVisible (! sf2Mode && ! benchInspector);
- sliceWaveformLcd.setVisible (! sf2Mode && ! multiMode && ! benchInspector);
+ sliceLcd.setVisible (! sf2Mode && ! benchInspector && ! benchNoLcd);
+ sliceWaveformLcd.setVisible (! sf2Mode && ! multiMode && ! benchInspector && ! benchNoLcd);
  sf2Lcd.setVisible (sf2Mode);
  sf2WaveformLcd.setVisible (sf2Mode);
  multisamplerWaveformLcd.setVisible (multiMode);
@@ -1686,6 +1691,7 @@ void DysektEditor::resized()
  multisamplerWaveformLcd.setBounds (topRow);
  if (benchInspector) { sliceLcd.setBounds ({}); sliceWaveformLcd.setBounds ({}); sliceHeader.setBounds (topRowFull); sliceHeader.setVisible (true); }
  else { sliceHeader.setVisible (false); sliceHeader.setBounds ({}); }
+ if (benchNoLcd) { sliceLcd.setBounds ({}); sliceWaveformLcd.setBounds ({}); }
 
  // ── Bench top bar: place the existing transport / undo-redo row into its slots ──
  if (bench)
