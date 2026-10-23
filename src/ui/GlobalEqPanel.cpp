@@ -503,6 +503,28 @@ void GlobalEqPanel::drawHeader (juce::Graphics& g, juce::Rectangle<float> area) 
 {
     auto& theme = getTheme();
 
+    if (theme.isBench())
+    {
+        g.setColour (theme.foreground);
+        g.setFont (DysektLookAndFeel::makeFont (15.f, true));
+        g.drawText ("Frequency response",
+                    juce::Rectangle<float> (area.getX(), area.getY(), area.getWidth() - 110.f, 20.f),
+                    juce::Justification::centredLeft, false);
+        g.setColour (theme.foreground.withAlpha (0.5f));
+        g.setFont (DysektLookAndFeel::makeFont (10.5f));
+        g.drawText (juce::String (kNumBands) + "-band parametric  \xC2\xB7  stereo",
+                    juce::Rectangle<float> (area.getX(), area.getY() + 18.f, area.getWidth() - 110.f, 14.f),
+                    juce::Justification::centredLeft, false);
+
+        auto pill = analyzerToggleBounds().withSizeKeepingCentre (84.f, 22.f);
+        g.setColour (analyzerEnabled ? theme.accent : theme.button);
+        g.fillRoundedRectangle (pill, 11.f);
+        g.setColour (analyzerEnabled ? theme.waveformBg : theme.foreground.withAlpha (0.6f));
+        g.setFont (DysektLookAndFeel::makeFont (10.f, true));
+        g.drawText ("ANALYZER", pill, juce::Justification::centred, false);
+        return;
+    }
+
     // Title
     g.setColour (theme.foreground.withAlpha (0.90f));
     g.setFont (DysektLookAndFeel::makeFont (11.f, true));
@@ -530,6 +552,40 @@ void GlobalEqPanel::drawHeader (juce::Graphics& g, juce::Rectangle<float> area) 
 void GlobalEqPanel::drawBandStrip (juce::Graphics& g, juce::Rectangle<float> area) const
 {
     auto& theme = getTheme();
+
+    if (theme.isBench())
+    {
+        // One rounded card per band; the band being hovered / dragged gets an accent outline.
+        const float colW = area.getWidth() / (float) kNumBands;
+        for (int i = 0; i < kNumBands; ++i)
+        {
+            auto& n = nodes[i];
+            const bool active = (dragBand == i || hoverBand == i);
+            auto card = juce::Rectangle<float> (area.getX() + colW * (float) i, area.getY(), colW, area.getHeight()).reduced (4.f, 2.f);
+            g.setColour (theme.darkBar);
+            g.fillRoundedRectangle (card, theme.cornerRadius);
+            g.setColour (active ? theme.accent : theme.separator);
+            g.drawRoundedRectangle (card.reduced (0.5f), theme.cornerRadius, active ? 1.5f : 1.0f);
+
+            auto inner = card.reduced (10.f, 6.f);
+            g.setColour (theme.foreground.withAlpha (0.55f));
+            g.setFont (DysektLookAndFeel::makeFont (10.f, true));
+            g.drawText ("Band " + juce::String (i + 1), inner.removeFromTop (13.f), juce::Justification::centredLeft, false);
+            g.setColour (theme.accent.withAlpha (active ? 1.0f : 0.7f));
+            g.fillEllipse (card.getRight() - 18.f, card.getY() + 9.f, 7.f, 7.f);
+
+            g.setColour (theme.foreground);
+            g.setFont (DysektLookAndFeel::makeFont (14.f, true));
+            g.drawText (formatFreq (n.freqHz) + " Hz", inner.removeFromTop (19.f), juce::Justification::centredLeft, false);
+
+            juce::String sub = (n.gainDb >= 0.f ? "+" : "") + juce::String (n.gainDb, 1) + " dB";
+            if (i != BLow && i != BHigh) sub += "   Q " + juce::String (n.q, 1);
+            g.setColour (theme.foreground.withAlpha (0.55f));
+            g.setFont (DysektLookAndFeel::makeMonoFont (10.f));
+            g.drawText (sub, inner.removeFromTop (14.f), juce::Justification::centredLeft, false);
+        }
+        return;
+    }
 
     // Separator above the strip
     g.setColour (theme.separator.withAlpha (0.35f));
