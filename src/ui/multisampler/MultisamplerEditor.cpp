@@ -213,10 +213,11 @@ void MultisamplerEditor::paint (juce::Graphics& g)
     const auto& theme = getTheme();
     auto bounds = getLocalBounds().toFloat();
 
-    g.setColour (theme.darkBar);
-    g.fillRoundedRectangle (bounds, 6.0f);
-    g.setColour (theme.accent.withAlpha (0.5f));
-    g.drawRoundedRectangle (bounds.reduced (0.5f), 6.0f, 1.0f);
+    const float rad = theme.isBench() ? theme.cornerRadius : 6.0f;
+    g.setColour (theme.isBench() ? theme.waveformBg : theme.darkBar);
+    g.fillRoundedRectangle (bounds, rad);
+    g.setColour (theme.isBench() ? theme.separator : theme.accent.withAlpha (0.5f));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), rad, 1.0f);
 
     g.setColour (theme.separator);
     g.drawHorizontalLine (kHeaderH, 4.0f, bounds.getWidth() - 4.0f);

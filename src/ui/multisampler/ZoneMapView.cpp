@@ -928,8 +928,9 @@ void ZoneMapView::paint (juce::Graphics& g)
         // off the same higher floor rather than starting near-transparent.
         auto fill = r.missingSample ? juce::Colours::red.withAlpha (0.25f)
                                      : r.colour.withAlpha (sounding ? 1.00f : (selected ? 0.85f : (hovered ? 0.70f : 0.55f)));
+        const float zr = theme.cornerRadius * 0.4f;   // 0 (square) except in Bench
         g.setColour (fill);
-        g.fillRect (r.bounds);
+        g.fillRoundedRectangle (r.bounds, zr);
 
         // On-tile label: sample name + key/velocity range, same info the
         // ZONES list row shows, so a glance at the grid tells you what's
@@ -970,7 +971,7 @@ void ZoneMapView::paint (juce::Graphics& g)
         }
 
         g.setColour (sounding ? juce::Colours::white : (selected ? theme.accent : theme.separator.withAlpha (0.8f)));
-        g.drawRect (r.bounds, (sounding || selected) ? 2.0f : 1.0f);
+        g.drawRoundedRectangle (r.bounds.reduced (0.5f), zr, (sounding || selected) ? 2.0f : 1.0f);
 
         if (r.missingSample)
         {

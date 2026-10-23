@@ -1610,7 +1610,9 @@ void DysektEditor::resized()
  // Bench slicer view: the LCD row becomes a slim header card (file, slicing controls).
  // Bench slicer tab with a panel open (browser / mixer / EQ / sequencer) or no sample yet: the LCD row is
  // not needed, so the panel gets the whole area under the top bar.
- const bool benchNoLcd = bench && uiMode == 0 && trimDialog == nullptr && ! benchInspector;
+ const bool benchMulti = bench && isMultisamplerTabActive() && trimDialog == nullptr;   // Multi tab: LCD row folds into the layout below
+ const bool benchNoLcd = (bench && uiMode == 0 && trimDialog == nullptr && ! benchInspector) || benchMulti
+                       || (bench && uiMode == 2 && trimDialog == nullptr);   // SF2 tab: the workspace fills the area
  const int lcdRowH = benchInspector ? si (SliceHeaderCard::kDesignHeight + 8)
                    : benchNoLcd     ? 0
                                     : si (kLcdRowH);
@@ -1646,8 +1648,8 @@ void DysektEditor::resized()
  const bool multiMode = isMultisamplerTabActive();
  sliceLcd.setVisible (! sf2Mode && ! benchInspector && ! benchNoLcd);
  sliceWaveformLcd.setVisible (! sf2Mode && ! multiMode && ! benchInspector && ! benchNoLcd);
- sf2Lcd.setVisible (sf2Mode);
- sf2WaveformLcd.setVisible (sf2Mode);
+ sf2Lcd.setVisible (sf2Mode && ! benchNoLcd);
+ sf2WaveformLcd.setVisible (sf2Mode && ! benchNoLcd);
  multisamplerWaveformLcd.setVisible (multiMode);
 
  // Keep both LCDs' and the SCB summary's MULTISAMPLER read-only view in
@@ -2003,9 +2005,14 @@ void DysektEditor::resized()
     // frame bounds directly instead.
     const int zbTop    = frameTop;
     const int zbHeight = juce::jmax (si (80), (frameBot - trimH) - frameTop);
+    // Bench: the zone waveform readout (formerly the top-right LCD) becomes a card along the bottom.
+    const int benchWaveH   = (benchMulti && showMulti1) ? juce::jmin (si (200), zbHeight / 3) : 0;
+    const int benchWaveGap = benchWaveH > 0 ? si (kMargin) : 0;
     multisamplerEditor.setVisible (showMulti1);
-    multisamplerEditor.setBounds (showMulti1 ? juce::Rectangle<int> (kFrameX, zbTop, kFrameW, zbHeight)
+    multisamplerEditor.setBounds (showMulti1 ? juce::Rectangle<int> (kFrameX, zbTop, kFrameW, zbHeight - benchWaveH - benchWaveGap)
                                               : juce::Rectangle<int>());
+    if (benchWaveH > 0)
+        multisamplerWaveformLcd.setBounds (kFrameX, zbTop + zbHeight - benchWaveH, kFrameW, benchWaveH);
     // Keep ZoneMapView/MultisamplerZoneLcd's text sized in step with the
     // rest of the app's host-window scaling — see MultisamplerEditor::
     // setUiScale()'s doc comment.
