@@ -71,14 +71,14 @@ public:
         {
             const auto highlightColour = assigned ? presetColour : theme.accent;
             g.setColour (highlightColour.withAlpha (0.16f));
-            g.fillRect (row);
+            g.fillRoundedRectangle (row.toFloat(), theme.cornerRadius * 0.5f);
             g.setColour (highlightColour);
             g.fillRect (row.removeFromLeft (4));
         }
         else if (assigned)
         {
             g.setColour (presetColour.withAlpha (0.08f));
-            g.fillRect (row);
+            g.fillRoundedRectangle (row.toFloat(), theme.cornerRadius * 0.5f);
             g.setColour (presetColour.withAlpha (0.78f));
             g.fillRect (row.removeFromLeft (4));
         }
@@ -153,10 +153,10 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colour::fromString ("FF0a1216"));
+        g.fillAll ((getTheme().isBench() ? getTheme().waveformBg : juce::Colour::fromString ("FF0a1216")));
         for (auto& k : keyRects) if (! k.isBlack) drawKey (g, k);
         for (auto& k : keyRects) if (k.isBlack)   drawKey (g, k);
-        g.setColour (juce::Colour::fromString ("FF263b45"));
+        g.setColour ((getTheme().isBench() ? getTheme().separator : juce::Colour::fromString ("FF263b45")));
         g.drawRect (getLocalBounds(), 1);
     }
 
@@ -967,12 +967,23 @@ void Sf2InstrumentWorkspace::layoutNarrow (juce::Rectangle<int> bounds)
 void Sf2InstrumentWorkspace::paint (juce::Graphics& g)
 {
     const auto& theme = getTheme();
-    g.fillAll (juce::Colour::fromString ("FF080e12"));   // mockup's literal panel bg
-    g.setColour (juce::Colour::fromString ("FF263b45"));
-    g.drawRect (getLocalBounds(), 2);
+    if (theme.isBench())
+    {
+        // Bench: a rounded card in the theme's own colours (the teal literals below stay for other themes).
+        g.setColour (theme.waveformBg);
+        g.fillRoundedRectangle (getLocalBounds().toFloat(), theme.cornerRadius);
+        g.setColour (theme.separator);
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), theme.cornerRadius, 1.0f);
+    }
+    else
+    {
+        g.fillAll (juce::Colour::fromString ("FF080e12"));   // mockup's literal panel bg
+        g.setColour ((getTheme().isBench() ? getTheme().separator : juce::Colour::fromString ("FF263b45")));
+        g.drawRect (getLocalBounds(), 2);
+    }
 
     // ── Top bar ─────────────────────────────────────────────────────────────
-    g.setColour (juce::Colour::fromString ("FF10191e"));
+    g.setColour (theme.isBench() ? theme.darkBar : juce::Colour::fromString ("FF10191e"));
     g.fillRect (topBarZone);
     g.setColour (theme.foreground.withAlpha (0.8f));
     g.setFont (DysektLookAndFeel::makeFont (18.f, true));
@@ -982,7 +993,7 @@ void Sf2InstrumentWorkspace::paint (juce::Graphics& g)
     if (! loadedPillZone.isEmpty())
     {
         const bool loaded = processor.sfzPlayer.getLoadedFile().existsAsFile();
-        g.setColour (juce::Colour::fromString ("FF142c34"));
+        g.setColour ((getTheme().isBench() ? getTheme().darkBar : juce::Colour::fromString ("FF142c34")));
         g.fillRoundedRectangle (loadedPillZone.toFloat(), 3.f);
         g.setColour (loaded ? juce::Colour::fromString ("FF83d96b") : theme.foreground.withAlpha (0.3f));
         g.fillEllipse (loadedPillZone.getX() + 10.f, loadedPillZone.getCentreY() - 4.f, 8.f, 8.f);

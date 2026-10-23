@@ -146,7 +146,7 @@ public:
         // here reads as a visual seam between two different UI languages
         // rather than one continuous column 3. Flat fill to match.
         const auto theme = ThemeData::darkTheme();
-        g.fillAll (juce::Colour::fromString ("FF080e12"));
+        g.fillAll ((getTheme().isBench() ? getTheme().waveformBg : juce::Colour::fromString ("FF080e12")));
 
         const int numActive = countActiveBits();
         if (numActive == 0)

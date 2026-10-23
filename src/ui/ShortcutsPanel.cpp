@@ -331,9 +331,9 @@ void ShortcutsPanel::paint (juce::Graphics& g)
     auto panel = getLocalBounds().reduced (24, 20);
     const bool metro = (getTheme().isMetro());
     g.setColour (getTheme().header);
-    g.fillRect (panel);
+    g.fillRoundedRectangle (panel.toFloat(), getTheme().cornerRadius);   // square unless Bench
     g.setColour (metro ? getTheme().separator : getTheme().accent.withAlpha (0.5f));
-    g.drawRect (panel, 1);
+    g.drawRoundedRectangle (panel.toFloat().reduced (0.5f), getTheme().cornerRadius, 1.0f);
 
     auto content = panel.reduced (20, 14);
     content.removeFromTop (38 + 10 + 32 + 12);
@@ -419,7 +419,7 @@ void ShortcutsPanel::paint (juce::Graphics& g)
                     juce::GlyphArrangement::getStringWidthInt (keyFont, entry.keys) + 18);
                 auto keyRect = row.removeFromLeft (keyW);
                 g.setColour (getTheme().button.withAlpha (0.95f));
-                g.fillRect (keyRect.reduced (0, 3));
+                g.fillRoundedRectangle (keyRect.reduced (0, 3).toFloat(), getTheme().cornerRadius * 0.5f);
                 g.setFont (keyFont);
                 g.setColour (getTheme().accent);
                 g.drawText (entry.keys, keyRect, juce::Justification::centred);
