@@ -241,9 +241,20 @@ void MixerPanel::updateFromSnapshot()
             const auto visible = collectVisibleSlices (snap);
             const int  visRow  = visibleRowOf (visible, snap.selectedSlice);
 
+            // Bench strips scroll horizontally: keep the selected strip in view.
+            if (stripMode())
+            {
+                if (visRow >= 0)
+                {
+                    const int visibleW = getWidth() - (kStripW + 2 * kStripGap);
+                    const int left = kStripGap + visRow * (kStripW + kStripGap);
+                    if (left - scrollPixels < 0)                         scrollPixels = left - kStripGap;
+                    else if (left + kStripW - scrollPixels > visibleW)   scrollPixels = left + kStripW - visibleW + kStripGap;
+                }
+            }
             // Selected slice isn't shown in the mixer at all (showInMixer
             // false) — nothing to scroll to.
-            if (visRow >= 0)
+            else if (visRow >= 0)
             {
                 const int visTop    = kHeaderH;
                 const int visBottom = getHeight() - sf2TotalH() - sfz2TotalH() - netTotalH() - kMasterH;
@@ -264,6 +275,14 @@ void MixerPanel::updateFromSnapshot()
             }
         }
         cachedNumSlices = snap.selectedSlice;
+
+        if (stripMode())
+        {
+            const int n = (int) collectStripCells().size() - 1;          // master is pinned
+            const int contentW = juce::jmax (0, n) * (kStripW + kStripGap) + kStripGap;
+            const int visibleW = getWidth() - (kStripW + 2 * kStripGap);
+            scrollPixels = juce::jlimit (0, juce::jmax (0, contentW - visibleW), scrollPixels);
+        }
 
         repaint();
     }
@@ -301,6 +320,8 @@ int MixerPanel::masterRowY() const
 
 MixerPanel::Cell MixerPanel::hitTest (juce::Point<int> pos) const
 {
+    if (stripMode()) return hitTestStrips (pos);
+
     Cell c;
     if (pos.y < kHeaderH) return c;          // header — no hit
 
@@ -1773,8 +1794,433 @@ void MixerPanel::drawNetworkRow (juce::Graphics& g, int ry, int trackIndex, int 
     juce::ignoreUnused (netRowIdx);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Bench vertical channel strips
+// ─────────────────────────────────────────────────────────────────────────────
+bool MixerPanel::stripMode() const { return getTheme().isBench(); }
+
+std::vector<MixerPanel::Cell> MixerPanel::collectStripCells() const
+{
+    std::vector<Cell> out;
+    const auto& snap = processor.getUiSliceSnapshot();
+
+    for (int real : collectVisibleSlices (snap))
+    {
+        Cell c; c.row = real; out.push_back (c);
+    }
+    { Cell c; c.row = -2; c.isSf2 = true; out.push_back (c); }
+    for (int i = 0; i < (int) sf2Channels.size(); ++i)
+    {
+        Cell c; c.isSf2Ch = true; c.sf2Channel = sf2Channels[(size_t) i].channel; c.row = -4 - i;
+        out.push_back (c);
+    }
+    if (sfz2TotalH() > 0)
+    {
+        { Cell c; c.row = -3; c.isSfz2 = true; out.push_back (c); }
+        const auto& snap2 = processor.getUiSliceSnapshot2();
+        const auto  zones = collectVisibleSfzZones (snap2);
+        processor.releaseUiSliceSnapshot2();
+        for (int i = 0; i < (int) zones.size(); ++i)
+        {
+            Cell c; c.isSfz2Ch = true; c.sfz2ZoneIdx = zones[(size_t) i]; c.row = -100 - i;
+            out.push_back (c);
+        }
+    }
+    const auto net = collectNetworkTracks();
+    for (int i = 0; i < (int) net.size(); ++i)
+    {
+        Cell c; c.isNet = true; c.netTrack = net[(size_t) i]; c.row = -200 - i;
+        out.push_back (c);
+    }
+    { Cell c; c.row = -1; c.isMaster = true; out.push_back (c); }
+    return out;
+}
+
+int MixerPanel::stripLeft (const Cell& c, int index) const
+{
+    if (c.isMaster) return getWidth() - kStripW - kStripGap;
+    return kStripGap + index * (kStripW + kStripGap) - scrollPixels;
+}
+
+MixerPanel::StripZones MixerPanel::stripZones (int x) const
+{
+    StripZones z;
+    const int top = 8;
+    const int H   = juce::jmax (200, getHeight() - 16);
+    z.card = { x, top, kStripW, H };
+
+    int y = top;
+    z.name = { x + 6, y + 4, kStripW - 12, 40 };                       y += 48;
+    z.fcut = { x + 4, y, kStripW / 2 - 4, 62 };
+    z.pres = { x + kStripW / 2, y, kStripW / 2 - 4, 62 };              y += 66;
+    z.outPill  = { x + 8, y, kStripW - 16, 22 };                       y += 26;
+    const int half = (kStripW - 16) / 2 - 2;
+    z.mutePill = { x + 8, y, half, 22 };
+    z.chroPill = { z.mutePill.getRight() + 4, y, half, 22 };           y += 26;
+    z.legPill  = { x + 8, y, kStripW - 16, 22 };                       y += 30;   // also the M button
+    z.pan      = { x + 8, y, kStripW - 16, 36 };                       y += 40;
+
+    const int dbH = 22;
+    const int faderH = juce::jmax (60, top + H - y - dbH - 8);
+    z.fader = { x + 8,  y, 52, faderH };
+    z.meter = { x + 68, y, 40, faderH };
+    z.db    = { x + 8,  y + faderH + 2, kStripW - 16, dbH };
+    return z;
+}
+
+MixerPanel::Cell MixerPanel::hitTestStrips (juce::Point<int> pos) const
+{
+    const auto cells   = collectStripCells();
+    const int  masterX = getWidth() - kStripW - kStripGap;
+
+    for (int pass = 0; pass < 2; ++pass)               // pinned master first, it sits on top
+    {
+        for (int i = (int) cells.size() - 1; i >= 0; --i)
+        {
+            Cell c = cells[(size_t) i];
+            if ((pass == 0) != c.isMaster) continue;
+            if (! c.isMaster && pos.x >= masterX - kStripGap) continue;
+
+            const int x = stripLeft (c, i);
+            if (pos.x < x || pos.x >= x + kStripW) continue;
+
+            const auto z = stripZones (x);
+            if (! z.card.contains (pos)) return Cell{};
+
+            c.stripX = x;
+            c.col    = ColName;
+            c.bounds = z.name;
+
+            const bool isSlice = c.row >= 0;
+            const bool hasMute = c.isSf2Ch || c.isNet;
+            auto hit = [&] (juce::Rectangle<int> r, Col col) -> bool
+            {
+                if (! r.contains (pos)) return false;
+                c.col = col; c.bounds = r; return true;
+            };
+
+            if (isSlice)
+            {
+                if (hit (z.fcut,     ColFcut))   return c;
+                if (hit (z.pres,     ColPres))   return c;
+                if (hit (z.outPill,  ColOut))    return c;
+                if (hit (z.mutePill, ColMute))   return c;
+                if (hit (z.chroPill, ColChro))   return c;
+                if (hit (z.legPill,  ColLegato)) return c;
+            }
+            if (hasMute && hit (z.legPill, ColFcut)) return c;   // M button (same Col as the row layout)
+            if (hit (z.pan, ColPan)) return c;
+            if (hit (z.fader.getUnion (z.db), ColGain))
+            {
+                c.bounds = z.db;                                  // edit field sits on the dB readout
+                return c;
+            }
+            return c;
+        }
+    }
+    return Cell{};
+}
+
+void MixerPanel::drawVMeter (juce::Graphics& g, juce::Rectangle<int> r,
+                             float pkL, float pkR, int holdSlot) const
+{
+    // Re-use the horizontal meter (smoothing + peak hold) rotated 90° so
+    // that the level fills upward.
+    g.saveState();
+    g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi)
+                        .translated ((float) r.getX(), (float) r.getBottom()));
+    drawMeter (g, 0, 0, r.getHeight(), r.getWidth(), pkL, pkR, juce::Colours::transparentBlack, holdSlot);
+    g.restoreState();
+}
+
+void MixerPanel::drawStrip (juce::Graphics& g, const Cell& c, int x) const
+{
+    const auto& theme = getTheme();
+    const auto  z     = stripZones (x);
+    const float rad   = juce::jmax (4.0f, theme.cornerRadius);
+
+    juce::String name, sub;
+    juce::Colour tint = theme.accent;
+    float gainDb = 0.f, pan = 0.f, gLo = -24.f, gHi = 24.f;
+    bool  gainLocked = false, panLocked = false, selected = false;
+    float pkL = 0.f, pkR = 0.f;
+    int   holdSlot = 0;
+
+    const bool isSlice = c.row >= 0;
+    float fcut = 0.f, pres = 0.f;
+    bool  filterLocked = false, outLocked = false, mgLocked = false, chroLocked = false, legLocked = false;
+    int   outBus = 0, muteGroup = 0, chroCh = 0;
+    bool  legato = false;
+    const bool hasMute = c.isSf2Ch || c.isNet;
+    bool  muted = false;
+
+    if (isSlice)
+    {
+        const auto& snap = processor.getUiSliceSnapshot();
+        if (c.row >= snap.numSlices) return;
+        const auto& sl = snap.slices[(size_t) c.row];
+        tint = sl.colour;
+        name = sl.name.isNotEmpty() ? sl.name.toUpperCase().substring (0, 10)
+                                    : "SLICE " + juce::String (c.row + 1).paddedLeft ('0', 2);
+        const double srate = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 44100.0;
+        const int end = snap.sliceEndSamples[c.row];
+        sub = juce::String ((end - sl.startSample) / srate, 2) + " s";
+        gainDb = sl.volume; pan = sl.pan;
+        gainLocked = (sl.lockMask & kLockVolume) != 0;
+        panLocked  = (sl.lockMask & kLockPan) != 0;
+        filterLocked = (sl.lockMask & kLockFilter) != 0;
+        outLocked  = (sl.lockMask & kLockOutputBus) != 0;
+        mgLocked   = (sl.lockMask & kLockMuteGroup) != 0;
+        chroLocked = (sl.lockMask & kLockChromaticChannel) != 0;
+        legLocked  = (sl.lockMask & kLockChromaticLegato) != 0;
+        fcut = sl.filterCutoff; pres = sl.filterRes;
+        outBus = sl.outputBus; muteGroup = sl.muteGroup; chroCh = sl.chromaticChannel; legato = sl.chromaticLegato;
+        selected = c.row == snap.selectedSlice;
+        const int si = c.row < kMaxMeterSlices ? c.row : 0;
+        pkL = processor.slicePeakL[si].load (std::memory_order_relaxed);
+        pkR = processor.slicePeakR[si].load (std::memory_order_relaxed);
+        holdSlot = si;
+    }
+    else if (c.isSf2)
+    {
+        name = "SF2-PLAYER"; sub = "SOUNDFONT";
+        gainDb = juce::Decibels::gainToDecibels (processor.sfzPlayer.getVolume(), -100.f);
+        pan = processor.sfzPlayer.getPan();
+        pkL = processor.sfzPeakL.load (std::memory_order_relaxed);
+        pkR = processor.sfzPeakR.load (std::memory_order_relaxed);
+        holdSlot = kMaxHoldSlices - 2;
+    }
+    else if (c.isSf2Ch)
+    {
+        const int idx = -4 - c.row;
+        if (idx < 0 || idx >= (int) sf2Channels.size()) return;
+        const auto& preset = sf2Channels[(size_t) idx].preset;
+        const int ch = c.sf2Channel;
+        name = preset.name.isNotEmpty() ? preset.name.substring (0, 10)
+                                        : juce::String (preset.bank) + ":" + juce::String (preset.preset);
+        sub  = "CH " + juce::String (ch + 1);
+        tint = juce::Colour::fromHSV (std::fmod ((float) ch * 0.137f, 1.0f), 0.45f, 0.85f, 1.0f);
+        const auto strip = processor.sfzPlayer.getChannelStrip (ch);
+        gainDb = juce::Decibels::gainToDecibels (strip.volume, -100.f);
+        pan = strip.pan; muted = strip.muted;
+        pkL = processor.sfzPlayer.channelPeakL[ch].load (std::memory_order_relaxed);
+        pkR = processor.sfzPlayer.channelPeakR[ch].load (std::memory_order_relaxed);
+        holdSlot = kMaxHoldSlices - 3 - ch;
+    }
+    else if (c.isSfz2)
+    {
+        name = "MULTISAMPLER"; sub = "ENGINE";
+        gainDb = juce::Decibels::gainToDecibels (processor.sfzPlayer2.getVolume(), -100.f);
+        pan = processor.sfzPlayer2.getPan();
+        pkL = processor.sfz2PeakL.load (std::memory_order_relaxed);
+        pkR = processor.sfz2PeakR.load (std::memory_order_relaxed);
+        holdSlot = kMaxHoldSlices - 19;
+    }
+    else if (c.isSfz2Ch)
+    {
+        const int zoneIdx = c.sfz2ZoneIdx;
+        const auto& snap2 = processor.getUiSliceSnapshot2();
+        if (zoneIdx < 0 || zoneIdx >= snap2.numSlices) { processor.releaseUiSliceSnapshot2(); return; }
+        const auto& sl = snap2.slices[(size_t) zoneIdx];
+        name = sl.zoneLoKey >= 0 ? SfzZoneLabel::range (sl.zoneLoKey, sl.zoneHiKey)
+                                 : (sl.name.isNotEmpty() ? sl.name.substring (0, 12)
+                                                         : "Zone " + juce::String (zoneIdx + 1));
+        sub = "ZONE";
+        gainDb = sl.volume; pan = sl.pan;
+        selected = sl.zoneLoKey >= 0 && sl.zoneLoKey == selectedSfzZoneLo && sl.zoneHiKey == selectedSfzZoneHi;
+        if (zoneIdx < kMaxMeterSlices)
+        {
+            if (sl.zoneLoKey >= 0)
+            {
+                for (int i = 0; i < snap2.numSlices && i < kMaxMeterSlices; ++i)
+                {
+                    if (! sfzSlicesShareZone (snap2.slices[(size_t) i], sl)) continue;
+                    pkL = std::max (pkL, processor.slicePeak2L[(size_t) i].load (std::memory_order_relaxed));
+                    pkR = std::max (pkR, processor.slicePeak2R[(size_t) i].load (std::memory_order_relaxed));
+                }
+            }
+            else
+            {
+                pkL = processor.slicePeak2L[(size_t) zoneIdx].load (std::memory_order_relaxed);
+                pkR = processor.slicePeak2R[(size_t) zoneIdx].load (std::memory_order_relaxed);
+            }
+        }
+        holdSlot = juce::jmax (0, kMaxHoldSlices - 20 - zoneIdx);
+        processor.releaseUiSliceSnapshot2();
+    }
+    else if (c.isNet)
+    {
+        const auto info = processor.sequencer.getTrackInfo (c.netTrack);
+        name = info.name.isNotEmpty() ? info.name.substring (0, 12) : "Audio " + juce::String (c.netTrack + 1);
+        sub = "NETWORK"; tint = info.colour;
+        gainDb = info.volumeDb; pan = info.pan; muted = ! info.enabled;
+        gLo = -60.f; gHi = 6.f;
+        if (c.netTrack >= 0 && c.netTrack < NetworkTrackMeters::kMaxTracks)
+        {
+            pkL = netPeakL[(size_t) c.netTrack];
+            pkR = netPeakR[(size_t) c.netTrack];
+        }
+        holdSlot = kNetHoldBase + juce::jmax (0, c.netTrack);
+    }
+    else if (c.isMaster)
+    {
+        name = "MASTER"; sub = "OUTPUT";
+        gainDb = processor.apvts.getRawParameterValue (ParamIds::masterVolume)->load();
+        pan    = processor.apvts.getRawParameterValue (ParamIds::defaultPan)->load();
+        pkL = processor.masterPeakL.load (std::memory_order_relaxed);
+        pkR = processor.masterPeakR.load (std::memory_order_relaxed);
+        holdSlot = kMaxHoldSlices - 1;
+    }
+    else return;
+
+    // ── Card ──────────────────────────────────────────────────────────────
+    const auto cardF = z.card.toFloat();
+    g.setColour (theme.darkBar.brighter (0.05f));
+    g.fillRoundedRectangle (cardF, rad);
+    g.setColour (selected ? theme.accent.withAlpha (0.95f) : theme.separator.withAlpha (0.65f));
+    g.drawRoundedRectangle (cardF.reduced (0.5f), rad, selected ? 1.6f : 1.0f);
+
+    {
+        juce::Path bar;
+        bar.addRoundedRectangle (cardF.getX(), cardF.getY(), cardF.getWidth(), 5.0f, rad, rad, true, true, false, false);
+        g.setColour (tint.withAlpha (0.9f));
+        g.fillPath (bar);
+    }
+
+    g.setFont (DysektLookAndFeel::makeFont (13.0f));
+    g.setColour (theme.foreground.withAlpha (selected ? 1.0f : 0.85f));
+    g.drawText (name, z.name.getX(), z.name.getY() + 6, z.name.getWidth(), 18, juce::Justification::centredLeft, true);
+    g.setFont (DysektLookAndFeel::makeFont (10.0f));
+    g.setColour (theme.foreground.withAlpha (0.42f));
+    g.drawText (sub, z.name.getX(), z.name.getY() + 24, z.name.getWidth(), 14, juce::Justification::centredLeft, true);
+
+    // ── Small helpers ─────────────────────────────────────────────────────
+    auto label = [&] (juce::Rectangle<int> r, const juce::String& t, float alpha, float size, juce::Justification j)
+    {
+        g.setFont (DysektLookAndFeel::makeFont (size));
+        g.setColour (theme.foreground.withAlpha (alpha));
+        g.drawText (t, r, j, true);
+    };
+    auto pill = [&] (juce::Rectangle<int> r, const juce::String& t, bool on, bool locked, float dim = 1.0f)
+    {
+        const auto rf = r.toFloat();
+        const auto edge = locked ? theme.lockActive : (on ? theme.accent : theme.foreground.withAlpha (0.20f));
+        g.setColour ((on ? theme.accent.withAlpha (0.26f) : theme.separator.withAlpha (0.25f)).withMultipliedAlpha (dim));
+        g.fillRoundedRectangle (rf, rf.getHeight() * 0.5f);
+        g.setColour (edge.withMultipliedAlpha (dim));
+        g.drawRoundedRectangle (rf.reduced (0.5f), rf.getHeight() * 0.5f, 1.0f);
+        g.setFont (DysektLookAndFeel::makeFont (11.0f));
+        g.setColour ((on || locked ? theme.foreground.withAlpha (0.92f) : theme.foreground.withAlpha (0.5f)).withMultipliedAlpha (dim));
+        g.drawText (t, r, juce::Justification::centred, true);
+    };
+
+    // ── FCUT / PRES knobs (slice strips only) ─────────────────────────────
+    if (isSlice)
+    {
+        auto knob = [&] (juce::Rectangle<int> r, const juce::String& cap, float norm, const juce::String& val)
+        {
+            label (r.withHeight (12), cap, 0.42f, 10.0f, juce::Justification::centred);
+            drawKnobInRow (g, r.getCentreX(), r.getY() + 32, norm, filterLocked);
+            label ({ r.getX(), r.getY() + 48, r.getWidth(), 14 }, val,
+                   filterLocked ? 0.9f : 0.5f, 12.0f, juce::Justification::centred);
+        };
+        knob (z.fcut, "FCUT", toNormFcut (fcut), fmtFcut (fcut));
+        knob (z.pres, "PRES", toNormPres (pres), fmtPres (pres));
+
+        const bool monoOn = processor.apvts.getRawParameterValue (ParamIds::globalMono)->load() > 0.5f;
+        pill (z.outPill,  "OUT " + fmtOut (outBus), false, outLocked);
+        pill (z.mutePill, muteGroup == 0 ? juce::String ("MG -") : "MG " + fmtMute (muteGroup), muteGroup != 0, mgLocked, monoOn ? 0.5f : 1.0f);
+        pill (z.chroPill, chroCh == 0 ? juce::String ("CH -") : "CH " + juce::String (chroCh), chroCh != 0, chroLocked);
+        pill (z.legPill,  legato ? "LEGATO ON" : "LEGATO OFF", legato, legLocked);
+    }
+    else if (hasMute)
+    {
+        pill (z.legPill, "MUTE", muted, false);
+    }
+
+    // ── PAN ───────────────────────────────────────────────────────────────
+    {
+        label ({ z.pan.getX(), z.pan.getY(), 40, 14 }, "PAN", 0.42f, 10.0f, juce::Justification::centredLeft);
+        label ({ z.pan.getRight() - 50, z.pan.getY(), 50, 14 }, fmtPan (pan), panLocked ? 0.95f : 0.6f, 12.0f, juce::Justification::centredRight);
+
+        const float tx = (float) z.pan.getX(), tw = (float) z.pan.getWidth(), ty = (float) z.pan.getY() + 22.f;
+        g.setColour (theme.darkBar.darker (0.35f));
+        g.fillRoundedRectangle (tx, ty, tw, 6.f, 3.f);
+        const float norm = toNormPan (pan);
+        const float thumbX = tx + norm * tw, centreX = tx + tw * 0.5f;
+        const auto fillCol = panLocked ? theme.lockActive : theme.accent;
+        if (std::abs (pan) > 0.005f)
+        {
+            g.setColour (fillCol.withAlpha (0.45f));
+            g.fillRoundedRectangle (juce::jmin (thumbX, centreX), ty, std::abs (thumbX - centreX), 6.f, 3.f);
+        }
+        g.setColour (theme.foreground.withAlpha (0.25f));
+        g.fillRect (centreX - 0.5f, ty - 2.f, 1.f, 10.f);
+        g.setColour (fillCol);
+        g.fillEllipse (thumbX - 5.f, ty - 2.f, 10.f, 10.f);
+    }
+
+    // ── Fader + meter + dB ────────────────────────────────────────────────
+    {
+        const float trackX = (float) z.fader.getCentreX() - 3.f;
+        const float tTop = (float) z.fader.getY() + 8.f, tBot = (float) z.fader.getBottom() - 8.f;
+        const float norm = juce::jlimit (0.f, 1.f, (gainDb - gLo) / (gHi - gLo));
+        const float thumbY = tBot - norm * (tBot - tTop);
+        const float zeroY  = tBot - juce::jlimit (0.f, 1.f, (0.f - gLo) / (gHi - gLo)) * (tBot - tTop);
+
+        g.setColour (theme.darkBar.darker (0.35f));
+        g.fillRoundedRectangle (trackX, tTop, 6.f, tBot - tTop, 3.f);
+        g.setColour ((gainLocked ? theme.lockActive : theme.accent).withAlpha (0.5f));
+        g.fillRoundedRectangle (trackX, thumbY, 6.f, tBot - thumbY, 3.f);
+
+        g.setColour (theme.foreground.withAlpha (0.28f));
+        g.fillRect (trackX - 9.f, zeroY - 0.5f, 24.f, 1.f);
+        label ({ z.fader.getX(), (int) zeroY - 7, 14, 14 }, "0", 0.35f, 9.0f, juce::Justification::centredLeft);
+
+        const juce::Rectangle<float> thumb (trackX - 10.f, thumbY - 7.f, 26.f, 14.f);
+        g.setColour (theme.foreground.withAlpha (0.92f));
+        g.fillRoundedRectangle (thumb, 4.f);
+        g.setColour ((gainLocked ? theme.lockActive : theme.accent));
+        g.fillRect (thumb.getX() + 4.f, thumb.getCentreY() - 0.75f, thumb.getWidth() - 8.f, 1.5f);
+
+        g.setColour (theme.darkBar.darker (0.6f));
+        g.fillRoundedRectangle (z.meter.toFloat(), 3.f);
+        drawVMeter (g, z.meter, pkL, pkR, holdSlot);
+
+        label (z.db, fmtGain (gainDb), gainLocked ? 0.95f : 0.7f, 13.0f, juce::Justification::centred);
+    }
+}
+
+void MixerPanel::paintStrips (juce::Graphics& g) const
+{
+    const auto& theme = getTheme();
+    g.setColour (theme.waveformBg);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), theme.cornerRadius);
+
+    const auto cells   = collectStripCells();
+    const int  masterX = getWidth() - kStripW - kStripGap;
+
+    g.saveState();
+    g.reduceClipRegion (juce::Rectangle<int> (0, 0, masterX - kStripGap / 2, getHeight()));
+    for (int i = 0; i < (int) cells.size(); ++i)
+    {
+        if (cells[(size_t) i].isMaster) continue;
+        const int x = stripLeft (cells[(size_t) i], i);
+        if (x + kStripW < 0 || x > masterX) continue;
+        drawStrip (g, cells[(size_t) i], x);
+    }
+    g.restoreState();
+
+    g.setColour (theme.separator.withAlpha (0.7f));
+    g.drawVerticalLine (masterX - kStripGap / 2, 8.f, (float) getHeight() - 8.f);
+    for (const auto& c : cells)
+        if (c.isMaster) drawStrip (g, c, masterX);
+}
+
 void MixerPanel::paint (juce::Graphics& g)
 {
+    if (stripMode()) { paintStrips (g); return; }
+
     const auto& theme = getTheme();
     const auto& snap  = processor.getUiSliceSnapshot();
 
@@ -1859,6 +2305,15 @@ void MixerPanel::mouseDown (const juce::MouseEvent& e)
     const auto& snap = processor.getUiSliceSnapshot();
     const Cell c = hitTest (e.getPosition());
 
+    // Row layout: 0.5 dB per pixel. Strip layout: the fader thumb follows the
+    // pointer 1:1, so the dB range is spread over the fader's pixel height.
+    auto gainPerPxFor = [this] (const Cell& cell) -> float
+    {
+        if (! stripMode()) return 0.5f;
+        const float range = cell.isNet ? 66.f : 48.f;
+        return range / (float) juce::jmax (40, stripZones (cell.stripX).fader.getHeight());
+    };
+
     // Any click on a slice / SF-PLAYER / SFZ-PLAYER row switches the main UI
     // to that track's player. Master row is excluded — it's the overall
     // output, not a player. See onTrackSelected doc comment for uiMode values.
@@ -1895,6 +2350,7 @@ void MixerPanel::mouseDown (const juce::MouseEvent& e)
         drag.netTrack    = c.netTrack;
         drag.isMaster    = drag.isSf2 = drag.isSf2Ch = drag.isSfz2 = drag.isSfz2Ch = false;
         drag.col         = c.col;
+        drag.gainPerPx   = gainPerPxFor (c);
         drag.startY      = (c.col == ColPan) ? e.getScreenPosition().x : e.getScreenPosition().y;
         drag.startVal    = (c.col == ColGain) ? info.volumeDb : info.pan;
         return;
@@ -2054,6 +2510,7 @@ void MixerPanel::mouseDown (const juce::MouseEvent& e)
     drag.sliceIdx  = c.row;
     drag.sfz2ZoneIdx = c.sfz2ZoneIdx;
     drag.col       = c.col;
+    drag.gainPerPx = gainPerPxFor (c);
     drag.startY    = (c.col == ColPan) ? e.getScreenPosition().x : e.getScreenPosition().y;
 
     if (c.isSf2Ch)
@@ -2134,7 +2591,7 @@ void MixerPanel::mouseDrag (const juce::MouseEvent& e)
         if (drag.col == ColGain)
         {
             // Same -60..+6 dB range as the Arranger's TrackInspector slider.
-            seq.setTrackVolumeDb (drag.netTrack, juce::jlimit (-60.f, 6.f, drag.startVal + dy * 0.5f * fineMult));
+            seq.setTrackVolumeDb (drag.netTrack, juce::jlimit (-60.f, 6.f, drag.startVal + dy * drag.gainPerPx * fineMult));
         }
         else if (drag.col == ColPan)
         {
@@ -2147,7 +2604,7 @@ void MixerPanel::mouseDrag (const juce::MouseEvent& e)
     {
         if (drag.col == ColGain)
         {
-            const float newDb = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            const float newDb = juce::jlimit (-100.f, 24.f, drag.startVal + dy * drag.gainPerPx * fineMult);
             processor.sfzPlayer.setChannelVolume (drag.sf2Channel,
                 juce::Decibels::decibelsToGain (newDb, -100.f));
         }
@@ -2163,7 +2620,7 @@ void MixerPanel::mouseDrag (const juce::MouseEvent& e)
     {
         if (drag.col == ColGain)
         {
-            const float newDb  = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            const float newDb  = juce::jlimit (-100.f, 24.f, drag.startVal + dy * drag.gainPerPx * fineMult);
             processor.sfzPlayer.setVolume (juce::Decibels::decibelsToGain (newDb, -100.f));
         }
         else if (drag.col == ColPan)
@@ -2177,7 +2634,7 @@ void MixerPanel::mouseDrag (const juce::MouseEvent& e)
     {
         if (drag.col == ColGain)
         {
-            const float newDb  = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            const float newDb  = juce::jlimit (-100.f, 24.f, drag.startVal + dy * drag.gainPerPx * fineMult);
             processor.sfzPlayer2.setVolume (juce::Decibels::decibelsToGain (newDb, -100.f));
         }
         else if (drag.col == ColPan)
@@ -2191,7 +2648,7 @@ void MixerPanel::mouseDrag (const juce::MouseEvent& e)
     {
         if (drag.col == ColGain)
         {
-            newVal = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            newVal = juce::jlimit (-100.f, 24.f, drag.startVal + dy * drag.gainPerPx * fineMult);
             processor.apvts.getRawParameterValue (ParamIds::masterVolume)->store (newVal);
         }
         else if (drag.col == ColPan)
@@ -2215,7 +2672,7 @@ void MixerPanel::mouseDrag (const juce::MouseEvent& e)
         cmd2.zoneWide      = true;
         if (drag.col == ColGain)
         {
-            newVal = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            newVal = juce::jlimit (-100.f, 24.f, drag.startVal + dy * drag.gainPerPx * fineMult);
             cmd2.intParam1 = DysektProcessor::FieldVolume;
         }
         else if (drag.col == ColPan)
@@ -2235,7 +2692,7 @@ void MixerPanel::mouseDrag (const juce::MouseEvent& e)
     switch (drag.col)
     {
         case ColGain:
-            newVal = juce::jlimit (-100.f, 24.f, drag.startVal + dy * 0.5f * fineMult);
+            newVal = juce::jlimit (-100.f, 24.f, drag.startVal + dy * drag.gainPerPx * fineMult);
             cmd.intParam1 = DysektProcessor::FieldVolume;
             break;
         case ColPan:
@@ -2277,13 +2734,17 @@ void MixerPanel::mouseDoubleClick (const juce::MouseEvent& e)
     if (! c.isMaster && c.row >= 0)
     {
         const auto& snap = processor.getUiSliceSnapshot();
-        if (c.row < snap.numSlices && e.getPosition().x < kNameColW)
+        const bool nameHit = stripMode() ? (c.col == ColName)
+                                         : (e.getPosition().x < kNameColW);
+        if (c.row < snap.numSlices && nameHit)
         {
             const auto& sl = snap.slices[(size_t) c.row];
             const auto& theme = getTheme();
             const int displayRow = visibleRowOf (collectVisibleSlices (snap), c.row);
             const int ry = rowY (displayRow >= 0 ? displayRow : 0);
-            const juce::Rectangle<int> nameArea (3, ry + 2, kNameColW - 6, kRowH - 4);
+            const juce::Rectangle<int> nameArea = stripMode()
+                ? stripZones (c.stripX).name.withHeight (22).translated (0, 2)
+                : juce::Rectangle<int> (3, ry + 2, kNameColW - 6, kRowH - 4);
 
             // Select the row first
             DysektProcessor::Command sel;
@@ -2390,9 +2851,12 @@ void MixerPanel::mouseDoubleClick (const juce::MouseEvent& e)
 
     textEditor = std::make_unique<juce::TextEditor>();
     addAndMakeVisible (*textEditor);
-    textEditor->setBounds (cellBounds.getX() + kKnobR * 2 + 12,
-                           cellBounds.getY() + cellBounds.getHeight() / 2 - 8,
-                           cellBounds.getWidth() - kKnobR * 2 - 16, 16);
+    if (stripMode())
+        textEditor->setBounds (cellBounds.withSizeKeepingCentre (juce::jmax (64, cellBounds.getWidth()), 18));
+    else
+        textEditor->setBounds (cellBounds.getX() + kKnobR * 2 + 12,
+                               cellBounds.getY() + cellBounds.getHeight() / 2 - 8,
+                               cellBounds.getWidth() - kKnobR * 2 - 16, 16);
     textEditor->setFont (DysektLookAndFeel::makeFont (11.0f));
     const auto& theme = getTheme();
     textEditor->setColour (juce::TextEditor::backgroundColourId, theme.darkBar.brighter (0.15f));
@@ -2516,6 +2980,18 @@ void MixerPanel::mouseDoubleClick (const juce::MouseEvent& e)
 void MixerPanel::mouseWheelMove (const juce::MouseEvent&,
                                    const juce::MouseWheelDetails& wheel)
 {
+    if (stripMode())
+    {
+        const int n = (int) collectStripCells().size() - 1;          // master is pinned
+        const int contentW = juce::jmax (0, n) * (kStripW + kStripGap) + kStripGap;
+        const int visibleW = getWidth() - (kStripW + 2 * kStripGap);
+        const float d = wheel.deltaY != 0.f ? wheel.deltaY : wheel.deltaX;
+        scrollPixels = juce::jlimit (0, juce::jmax (0, contentW - visibleW),
+                                     scrollPixels - (int) (d * 80.f));
+        repaint();
+        return;
+    }
+
     const auto& snap = processor.getUiSliceSnapshot();
     const int visibleCount = (int) collectVisibleSlices (snap).size();
     const int contentH = visibleCount * kRowH + sf2TotalH() + sfz2TotalH() + netTotalH() + kMasterH;

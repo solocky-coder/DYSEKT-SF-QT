@@ -150,7 +150,8 @@ private:
     int selectedSfzZoneLo = -1;
     int selectedSfzZoneHi = -1;
 
-    enum Col { ColGain=0, ColPan, ColFcut, ColPres, ColMute, ColChro, ColLegato, ColOut };
+    enum Col { ColGain=0, ColPan, ColFcut, ColPres, ColMute, ColChro, ColLegato, ColOut,
+               ColName /* strip layout only: name area, select-only */ };
 
     // ── Hit-test cell ─────────────────────────────────────────────────────
     struct Cell {
@@ -166,6 +167,7 @@ private:
         int  netTrack  { -1 };    // SequencerEngine track index when isNet
         int  sf2Channel{ -1 };    // FluidSynth channel index (0-based) when isSf2Ch
         int  sfz2ZoneIdx{ -1 };   // sliceManager2 slice index (real, not display-row) when isSfz2Ch
+        int  stripX    { 0 };     // strip layout only: left edge of the strip this cell belongs to
     };
 
     // ── Drawing helpers ───────────────────────────────────────────────────
@@ -233,6 +235,26 @@ private:
     int   netRowY     (int netRowIdx) const;  // top Y of a network row (0-based index into collectNetworkTracks())
     Cell  hitTest     (juce::Point<int> pos) const;
 
+    // ── Bench vertical-strip layout ───────────────────────────────────────
+    // In the Bench themes every row type becomes a vertical channel strip.
+    // Strips build the same Cell values the row layout produces, so the
+    // mouse handlers (select, drag, double-click edit) are shared as they are.
+    static constexpr int kStripW   = 116;
+    static constexpr int kStripGap = 8;
+    struct StripZones {
+        juce::Rectangle<int> card, name, fcut, pres, outPill, mutePill, chroPill,
+                             legPill, pan, fader, meter, db;
+    };
+    bool                stripMode () const;
+    std::vector<Cell>   collectStripCells () const;
+    int                 stripLeft (const Cell& c, int index) const;
+    StripZones          stripZones (int x) const;
+    Cell                hitTestStrips (juce::Point<int> pos) const;
+    void                paintStrips (juce::Graphics&) const;
+    void                drawStrip   (juce::Graphics&, const Cell&, int x) const;
+    void                drawVMeter  (juce::Graphics&, juce::Rectangle<int> r,
+                                     float pkL, float pkR, int holdSlot) const;
+
     // ── Drag state ────────────────────────────────────────────────────────
     struct DragState {
         bool   active    { false };
@@ -249,6 +271,7 @@ private:
         Col    col       { ColGain };
         int    startY    { 0 };
         float  startVal  { 0.f };
+        float  gainPerPx { 0.5f };   // dB per pixel of vertical drag (strip faders track 1:1)
     } drag;
 
     // ── Peak-hold for phosphor meter (UI-side, decays in timerCallback) ──
