@@ -44,7 +44,9 @@ struct ThemeData
         if (! isLightBench() || c.getBrightness() >= 0.5f || c.getSaturation() > 0.45f) return c;
         return c.withBrightness (1.0f - c.getBrightness()).withAlpha (c.getAlpha());
     }
-    bool isBench() const noexcept { return name.startsWith ("bench"); }
+    /** Set for the stock Bench themes and for user themes saved from one, so a renamed copy keeps the Bench layout. */
+    bool benchLayout = false;
+    bool isBench() const noexcept { return benchLayout || name.startsWith ("bench"); }
 
     static void completeSlicePalette (ThemeData& theme)
     {
@@ -581,6 +583,7 @@ struct ThemeData
         ThemeData t;
         t.name             = themeName;
         t.cornerRadius     = 8.0f;   // rounded cards; Metro stays at 0 (flat)
+        t.benchLayout      = true;
         const juce::Colour accent (accentArgb);
         t.background       = juce::Colour (bg);
         t.waveformBg       = juce::Colour (panel);
@@ -611,17 +614,31 @@ struct ThemeData
 
     static ThemeData fromThemeFile (const juce::String& text)
     {
+        // The base is chosen by the exact "name:" line (not a substring match), so a
+        // saved copy such as "bench-mine" keeps its own colours instead of snapping back
+        // to the stock theme. Keys in the file then override the base below.
         ThemeData t = darkTheme(); // defaults
-        if (text.contains("name: midnight")) return midnightTheme();
-        if (text.contains("name: pigments")) return pigmentsTheme();
-        if (text.contains("name: cr8"))      return cr8Theme();
-        if (text.contains("name: dysekt"))   return dysektTheme();
-        if (text.contains("name: serum"))    return serumTheme();
-        if (text.contains("name: opendaw"))  return opendawTheme();
-        if (text.contains("name: metro"))    return metroTheme();
-        if (text.contains("name: bench-light")) return benchLightTheme();
-        if (text.contains("name: bench-black")) return benchBlackTheme();
-        if (text.contains("name: bench"))    return benchTheme();
+        {
+            juce::String fileName;
+            for (auto l : juce::StringArray::fromLines (text))
+            {
+                l = l.trim();
+                if (l.startsWith ("name:")) { fileName = l.substring (5).trim().unquoted(); break; }
+            }
+            if      (fileName == "midnight")    t = midnightTheme();
+            else if (fileName == "pigments")    t = pigmentsTheme();
+            else if (fileName == "cr8")         t = cr8Theme();
+            else if (fileName == "dysekt")      t = dysektTheme();
+            else if (fileName == "serum")       t = serumTheme();
+            else if (fileName == "opendaw")     t = opendawTheme();
+            else if (fileName == "metro")       t = metroTheme();
+            else if (fileName == "bench-light") t = benchLightTheme();
+            else if (fileName == "bench-black") t = benchBlackTheme();
+            else if (fileName == "bench")       t = benchTheme();
+            else if (text.contains ("style: bench-light")) t = benchLightTheme();
+            else if (text.contains ("style: bench-black")) t = benchBlackTheme();
+            else if (text.contains ("style: bench"))       t = benchTheme();
+        }
 
         for (auto line : juce::StringArray::fromLines (text))
         {
@@ -675,6 +692,9 @@ struct ThemeData
     {
         juce::String s;
         s << "name: " << name << "\n";
+        if (isBench())
+            s << "style: " << (name.startsWith ("bench-black") ? "bench-black"
+                              : (isLightBench() ? "bench-light" : "bench")) << "\n";
         s << "background: " << colourToHex (background) << "\n";
         s << "waveformBg: " << colourToHex (waveformBg) << "\n";
         s << "darkBar: " << colourToHex (darkBar) << "\n";
