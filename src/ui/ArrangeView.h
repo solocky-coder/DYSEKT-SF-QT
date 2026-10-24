@@ -2577,9 +2577,14 @@ private:
         const auto& theme = getTheme();
         const auto panel = dockedToolbarBounds();
         g.setColour (theme.header);
-        g.fillRect (panel);
-        g.setColour (theme.accent.withAlpha (0.8f));
-        g.fillRect (panel.getX(), panel.getY(), 3, panel.getHeight());
+        if (theme.isBench())
+            g.fillRoundedRectangle (panel.toFloat(), theme.cornerRadius);
+        else
+        {
+            g.fillRect (panel);
+            g.setColour (theme.accent.withAlpha (0.8f));
+            g.fillRect (panel.getX(), panel.getY(), 3, panel.getHeight());
+        }
 
         // Frame the button clusters with the transport bar's own group border
         // (Base::Border, 1px, 4px radius, 2px clear of the buttons) - the same
@@ -3087,7 +3092,7 @@ private:
             : info.colour;
 
         g.setColour (tile);
-        g.fillRect (clipR.reduced (1, 1));
+        g.fillRoundedRectangle (clipR.reduced (1, 1).toFloat(), getTheme().isBench() ? 5.0f : 0.0f);
 
         // Selection reads as a single accent-colour edge line rather than a
         // brightened outline — an outline implies "this shape has a
@@ -3095,7 +3100,10 @@ private:
         if (isSel)
         {
             g.setColour (getTheme().accent);
-            g.fillRect (clipR.getX() + 1, clipR.getY() + 1, clipR.getWidth() - 2, 3);
+            if (getTheme().isBench())
+                g.drawRoundedRectangle (clipR.reduced (1, 1).toFloat().reduced (1.0f), 5.0f, 2.0f);
+            else
+                g.fillRect (clipR.getX() + 1, clipR.getY() + 1, clipR.getWidth() - 2, 3);
         }
 
         // Track name
@@ -3175,7 +3183,7 @@ private:
             : info.colour;
 
         g.setColour (tile);
-        g.fillRect (clipR.reduced (1, 1));
+        g.fillRoundedRectangle (clipR.reduced (1, 1).toFloat(), getTheme().isBench() ? 5.0f : 0.0f);
 
         // Waveform, decoded from the recording itself — see
         // getAudioClipWaveform()/paintAudioClipWaveform() below. Peaks are
@@ -3186,7 +3194,10 @@ private:
         if (isSel)
         {
             g.setColour (getTheme().accent);
-            g.fillRect (clipR.getX() + 1, clipR.getY() + 1, clipR.getWidth() - 2, 3);
+            if (getTheme().isBench())
+                g.drawRoundedRectangle (clipR.reduced (1, 1).toFloat().reduced (1.0f), 5.0f, 2.0f);
+            else
+                g.fillRect (clipR.getX() + 1, clipR.getY() + 1, clipR.getWidth() - 2, 3);
         }
 
         // Filename rather than track name — several clips can share a track,
@@ -3325,7 +3336,7 @@ private:
         if (clipR.isEmpty() || ! clipGridBounds.intersects (clipR)) return;
 
         g.setColour (info.colour.withMultipliedBrightness (0.75f));
-        g.fillRect (clipR.reduced (1, 1));
+        g.fillRoundedRectangle (clipR.reduced (1, 1).toFloat(), getTheme().isBench() ? 5.0f : 0.0f);
 
         paintPeaksInRect (g, clipR, rec.peaks, juce::Colours::black.withAlpha (0.55f));
 
@@ -3337,7 +3348,8 @@ private:
         const double phase = juce::Time::getMillisecondCounterHiRes() * 0.006;
         const float  pulse = 0.5f + 0.5f * (float) std::sin (phase);
         g.setColour (juce::Colours::red.withAlpha (0.55f + 0.35f * pulse));
-        g.drawRect (clipR, 2);
+        if (getTheme().isBench()) g.drawRoundedRectangle (clipR.toFloat().reduced (1.0f), 5.0f, 2.0f);
+        else g.drawRect (clipR, 2);
 
         if (trackH >= 20)
         {

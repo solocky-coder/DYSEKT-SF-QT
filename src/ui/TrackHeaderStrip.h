@@ -109,7 +109,7 @@ public:
 
             {
             g.setColour (theme.header.withAlpha (0.92f));
-            g.fillRect (rowR);
+            g.fillRoundedRectangle (rowR.reduced (0, 1).toFloat(), theme.isBench() ? 6.0f : 0.0f);
 
             // Track-colour wash across the whole row — was previously just
             // the 4px swatch below with a flat dark background otherwise,
@@ -131,7 +131,7 @@ public:
             // below, drawn in full-opacity info.colour on top) to sit
             // against without flattening into its own background.
             g.setColour (info.colour.withAlpha (sel ? 0.62f : 0.14f));
-            g.fillRect (rowR);
+            g.fillRoundedRectangle (rowR.reduced (0, 1).toFloat(), theme.isBench() ? 6.0f : 0.0f);
 
             }
 
@@ -212,11 +212,11 @@ public:
             // colour language most of the time. Now all three literally
             // share on/off colours with the inspector's copy.
             g.setColour (info.enabled  ? kMuteAccent.darker (0.55f)   : kMuteAccent);
-            g.fillRoundedRectangle (muteR.toFloat(), 0.0f);
+            g.fillRoundedRectangle (muteR.toFloat(), theme.isBench() ? 4.0f : 0.0f);
             g.setColour (info.solo     ? kSoloAccent                  : kSoloAccent.darker (0.55f));
-            g.fillRoundedRectangle (soloR.toFloat(), 0.0f);
+            g.fillRoundedRectangle (soloR.toFloat(), theme.isBench() ? 4.0f : 0.0f);
             g.setColour (recordArmed   ? kRecordAccent                : kRecordAccent.darker (0.55f));
-            g.fillRoundedRectangle (recR.toFloat(), 0.0f);
+            g.fillRoundedRectangle (recR.toFloat(), theme.isBench() ? 4.0f : 0.0f);
 
             g.setColour (juce::Colours::white.withAlpha (0.7f));
             g.setFont (juce::Font (juce::jlimit (10.5f, 16.5f, (float)trackH * 0.22f), juce::Font::bold));

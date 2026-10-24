@@ -1716,17 +1716,18 @@ private:
                 : trackInfo.colour.withAlpha (0.88f);
 
             // Note body
+            const float nr = getTheme().isBench() ? juce::jmin (4.0f, h * 0.35f) : 0.0f;
             g.setColour (baseCol);
-            g.fillRoundedRectangle (x, y, w, h, 0.0f);
+            g.fillRoundedRectangle (x, y, w, h, nr);
 
             // Velocity shading overlay
             const float velAlpha = (1.f - n.velocity / 127.f) * 0.38f;
             g.setColour (juce::Colour::fromFloatRGBA (0.f, 0.f, 0.f, velAlpha));
-            g.fillRoundedRectangle (x, y, w, h, 0.0f);
+            g.fillRoundedRectangle (x, y, w, h, nr);
 
             // Border
             g.setColour (sel ? baseCol.brighter (0.4f) : baseCol.brighter (0.2f).withAlpha (0.7f));
-            g.drawRoundedRectangle (x + 0.5f, y + 0.5f, w - 1.f, h - 1.f, 0.0f, 0.75f);
+            g.drawRoundedRectangle (x + 0.5f, y + 0.5f, w - 1.f, h - 1.f, nr, 0.75f);
 
             // Resize handle on right edge
             const float handleW = juce::jmin (4.f, w * 0.2f);
