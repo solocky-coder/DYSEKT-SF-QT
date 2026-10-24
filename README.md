@@ -1,4 +1,4 @@
-# XIVA
+# XiVA
 
 Slicer, multisampler and SoundFont instrument (formerly DYSEKT-SF).
 
