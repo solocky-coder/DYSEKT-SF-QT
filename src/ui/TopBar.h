@@ -113,7 +113,7 @@ public:
         // Title + mode
         g.setColour (t.foreground);
         g.setFont (juce::Font (juce::FontOptions (15.0f * s, juce::Font::bold)));
-        juce::String titleText = "DYSEKT-SF";
+        juce::String titleText = "XIVA";
         if (auto snap = processor.sampleData.getSnapshot())
             if (! snap->filePath.containsIgnoreCase ("DYSEKT_default.wav") && snap->filePath.isNotEmpty())
                 titleText = juce::File (snap->filePath).getFileNameWithoutExtension();

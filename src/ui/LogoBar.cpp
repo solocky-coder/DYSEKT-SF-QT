@@ -19,22 +19,22 @@ void LogoBar::paint (juce::Graphics& g)
 
     static const ThemePng logos[] =
     {
-        { "cr8",      BinaryData::DYSEKTSF_logo_cr8_png,      BinaryData::DYSEKTSF_logo_cr8_pngSize      },
-        { "dark",     BinaryData::DYSEKTSF_logo_dark_png,     BinaryData::DYSEKTSF_logo_dark_pngSize     },
-        { "dysekt",   BinaryData::DYSEKTSF_logo_dysekt_png,   BinaryData::DYSEKTSF_logo_dysekt_pngSize   },
-        { "ghost",    BinaryData::DYSEKTSF_logo_ghost_png,    BinaryData::DYSEKTSF_logo_ghost_pngSize    },
-        { "hack",     BinaryData::DYSEKTSF_logo_hack_png,     BinaryData::DYSEKTSF_logo_hack_pngSize     },
-        { "lazy",     BinaryData::DYSEKTSF_logo_lazy_png,     BinaryData::DYSEKTSF_logo_lazy_pngSize     },
-        { "midnight", BinaryData::DYSEKTSF_logo_midnight_png, BinaryData::DYSEKTSF_logo_midnight_pngSize },
-        { "opendaw",  BinaryData::DYSEKTSF_logo_opendaw_png,  BinaryData::DYSEKTSF_logo_opendaw_pngSize  },
-        { "pigments", BinaryData::DYSEKTSF_logo_pigments_png, BinaryData::DYSEKTSF_logo_pigments_pngSize },
-        { "shell",    BinaryData::DYSEKTSF_logo_shell_png,    BinaryData::DYSEKTSF_logo_shell_pngSize    },
-        { "snow",     BinaryData::DYSEKTSF_logo_snow_png,     BinaryData::DYSEKTSF_logo_snow_pngSize     },
+        { "cr8",      BinaryData::XIVA_logo_cr8_png,      BinaryData::XIVA_logo_cr8_pngSize      },
+        { "dark",     BinaryData::XIVA_logo_dark_png,     BinaryData::XIVA_logo_dark_pngSize     },
+        { "dysekt",   BinaryData::XIVA_logo_dysekt_png,   BinaryData::XIVA_logo_dysekt_pngSize   },
+        { "ghost",    BinaryData::XIVA_logo_ghost_png,    BinaryData::XIVA_logo_ghost_pngSize    },
+        { "hack",     BinaryData::XIVA_logo_hack_png,     BinaryData::XIVA_logo_hack_pngSize     },
+        { "lazy",     BinaryData::XIVA_logo_lazy_png,     BinaryData::XIVA_logo_lazy_pngSize     },
+        { "midnight", BinaryData::XIVA_logo_midnight_png, BinaryData::XIVA_logo_midnight_pngSize },
+        { "opendaw",  BinaryData::XIVA_logo_opendaw_png,  BinaryData::XIVA_logo_opendaw_pngSize  },
+        { "pigments", BinaryData::XIVA_logo_pigments_png, BinaryData::XIVA_logo_pigments_pngSize },
+        { "shell",    BinaryData::XIVA_logo_shell_png,    BinaryData::XIVA_logo_shell_pngSize    },
+        { "snow",     BinaryData::XIVA_logo_snow_png,     BinaryData::XIVA_logo_snow_pngSize     },
     };
 
     const auto& themeName = getTheme().name;
-    const void* imgData = BinaryData::DYSEKTSF_logo_dysekt_png;   // fallback for custom themes
-    int         imgSize = BinaryData::DYSEKTSF_logo_dysekt_pngSize;
+    const void* imgData = BinaryData::XIVA_logo_dysekt_png;   // fallback for custom themes
+    int         imgSize = BinaryData::XIVA_logo_dysekt_pngSize;
 
     for (const auto& lp : logos)
     {

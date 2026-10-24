@@ -91,7 +91,7 @@ public:
 
         // ── Open log (append mode) ────────────────────────────────────────────
         logger = std::make_unique<juce::FileLogger> (logFile,
-            "DYSEKT-SF crash log — " + juce::Time::getCurrentTime().toString (true, true));
+            "XIVA crash log — " + juce::Time::getCurrentTime().toString (true, true));
 
         if (previousCrash)
         {

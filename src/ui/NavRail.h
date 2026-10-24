@@ -79,9 +79,26 @@ public:
                             .withCentre ({ (float) getWidth() * 0.5f, 30.0f * sf });
             g.setColour (t.foreground);
             g.fillRoundedRectangle (mark, 10.0f * sf);
+            // XIVA mark: a sliced X built from short bars along both diagonals
+            // with a cut line through the centre.
             g.setColour (t.waveformBg);
-            g.setFont (juce::Font (juce::FontOptions (15.0f * sf, juce::Font::bold)));
-            g.drawText ("DS", mark.toNearestInt(), juce::Justification::centred, false);
+            constexpr int   kCols = 7;
+            const float     rad   = mark.getWidth() * 0.30f;
+            const float     bw    = rad * 2.0f / ((float) kCols * 1.32f);
+            const float     len   = rad * 0.46f;
+            const auto      c     = mark.getCentre();
+            for (int i = 0; i < kCols; ++i)
+            {
+                const float tt = -1.0f + 2.0f * (float) i / (float) (kCols - 1);
+                const float x  = c.x + tt * rad;
+                const bool  mid = i == kCols / 2;
+                const float l  = mid ? rad * 0.75f : len;
+                g.fillRoundedRectangle (x - bw * 0.5f, c.y + tt * rad - l * 0.5f, bw, l, bw * 0.5f);
+                if (! mid)
+                    g.fillRoundedRectangle (x - bw * 0.5f, c.y - tt * rad - l * 0.5f, bw, l, bw * 0.5f);
+            }
+            g.setColour (t.accent);
+            g.fillRect (juce::Rectangle<float> (c.x - 0.6f * sf, mark.getY() + 3.0f * sf, 1.2f * sf, mark.getHeight() - 6.0f * sf));
         }
 
         // Group divider

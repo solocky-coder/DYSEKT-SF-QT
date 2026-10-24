@@ -1,7 +1,7 @@
-# DYSEKT-SF User Manual
+# XIVA User Manual
 
 ## Overview
-DYSEKT-SF is a powerful tool designed for [describe the purpose of DYSEKT and its core functionalities].
+XIVA is a powerful tool designed for [describe the purpose of XIVA and its core functionalities].
 
 ## Features
 - **Feature 1:** [description]

@@ -108,7 +108,7 @@ juce_add_plugin(Dysekt
     PLUGIN_MANUFACTURER_CODE Dnst
     PLUGIN_CODE Dysk
     FORMATS VST3
-    PRODUCT_NAME "DYSEKT-SF"
+    PRODUCT_NAME "XIVA"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
@@ -126,7 +126,7 @@ juce_add_binary_data(DysektFonts SOURCES
     src/ui/fonts/BarlowCondensed-SemiBold.ttf
     src/ui/fonts/JetBrainsMono-Regular.ttf
     src/ui/fonts/JetBrainsMono-Bold.ttf
-    src/ui/assets/dysekt_logo.svg
+    src/ui/assets/xiva_logo.svg
     src/ui/assets/Empty.wav
     src/ui/assets/icons/icon_mute.svg
     src/ui/assets/icons/icon_solo.svg
@@ -141,17 +141,17 @@ juce_add_binary_data(DysektFonts SOURCES
     src/ui/assets/knobs/knob_pointer.svg
     src/ui/assets/knobs/knob_sprite_64x64_64frames.svg
     src/ui/assets/knobs/knob_sprite_64x64_64frames.png
-    src/ui/assets/logos/DYSEKT-SF_logo_cr8.png
-    src/ui/assets/logos/DYSEKT-SF_logo_dark.png
-    src/ui/assets/logos/DYSEKT-SF_logo_dysekt.png
-    src/ui/assets/logos/DYSEKT-SF_logo_ghost.png
-    src/ui/assets/logos/DYSEKT-SF_logo_hack.png
-    src/ui/assets/logos/DYSEKT-SF_logo_lazy.png
-    src/ui/assets/logos/DYSEKT-SF_logo_midnight.png
-    src/ui/assets/logos/DYSEKT-SF_logo_opendaw.png
-    src/ui/assets/logos/DYSEKT-SF_logo_pigments.png
-    src/ui/assets/logos/DYSEKT-SF_logo_shell.png
-    src/ui/assets/logos/DYSEKT-SF_logo_snow.png
+    src/ui/assets/logos/XIVA_logo_cr8.png
+    src/ui/assets/logos/XIVA_logo_dark.png
+    src/ui/assets/logos/XIVA_logo_dysekt.png
+    src/ui/assets/logos/XIVA_logo_ghost.png
+    src/ui/assets/logos/XIVA_logo_hack.png
+    src/ui/assets/logos/XIVA_logo_lazy.png
+    src/ui/assets/logos/XIVA_logo_midnight.png
+    src/ui/assets/logos/XIVA_logo_opendaw.png
+    src/ui/assets/logos/XIVA_logo_pigments.png
+    src/ui/assets/logos/XIVA_logo_shell.png
+    src/ui/assets/logos/XIVA_logo_snow.png
 )
 
 target_sources(Dysekt PRIVATE
@@ -254,9 +254,9 @@ target_link_libraries(Dysekt
 )
 
 juce_add_gui_app(DysektStandalone
-    PRODUCT_NAME "DYSEKT-SF"
-    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/DYSEKT-SF.png"
-    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/assets/DYSEKT-SF.png"
+    PRODUCT_NAME "XIVA"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/XIVA.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/assets/XIVA.png"
 )
 
 if(MSVC)

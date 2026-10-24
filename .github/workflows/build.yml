@@ -1,4 +1,4 @@
-name: Build DYSEKT
+name: Build XIVA
 
 on:
   push:
@@ -179,7 +179,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: DYSEKT-build-diagnostics${{ matrix.artifact_suffix }}
+          name: XIVA-build-diagnostics${{ matrix.artifact_suffix }}
           path: build/*.binlog
           if-no-files-found: warn
 
@@ -190,8 +190,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts/VST3 | Out-Null
 
           # JUCE writes the standalone to DysektStandalone_artefacts/<config>/
-          # using PRODUCT_NAME (DYSEKT-SF), not the CMake target name.
-          $standaloneExes = @(Get-ChildItem -Recurse -File -Filter "DYSEKT-SF.exe" build/ |
+          # using PRODUCT_NAME (XIVA), not the CMake target name.
+          $standaloneExes = @(Get-ChildItem -Recurse -File -Filter "XIVA.exe" build/ |
             Where-Object { $_.FullName -match "DysektStandalone_artefacts" })
           if ($standaloneExes.Count -ne 1) {
             Write-Error "Expected exactly one standalone executable; found $($standaloneExes.Count)."
@@ -202,7 +202,7 @@ jobs:
 
           # VST3 bundle (JUCE outputs a .vst3 folder, not a file).
           # NOTE: matched by extension, not a hardcoded product name — the
-          # actual product name is "DYSEKT-SF" (see PluginEditor.cpp /
+          # actual product name is "XIVA" (see PluginEditor.cpp /
           # SfzPlayer.cpp), not "DYSEKT". A literal "DYSEKT.vst3" filter here
           # previously matched nothing, so this step silently copied zero
           # files while the PDB loop above (which matches *.pdb generically)
@@ -229,13 +229,13 @@ jobs:
       - name: Upload Standalone
         uses: actions/upload-artifact@v4
         with:
-          name: DYSEKT-Standalone${{ matrix.artifact_suffix }}
+          name: XIVA-Standalone${{ matrix.artifact_suffix }}
           path: artifacts/Standalone/
           if-no-files-found: error
 
       - name: Upload VST3
         uses: actions/upload-artifact@v4
         with:
-          name: DYSEKT-VST3${{ matrix.artifact_suffix }}
+          name: XIVA-VST3${{ matrix.artifact_suffix }}
           path: artifacts/VST3/
           if-no-files-found: error
