@@ -73,32 +73,29 @@ public:
         g.setColour (t.separator);
         g.fillRect (getWidth() - 1, 0, 1, getHeight());
 
-        // Mark
+        // Mark: the XIVA "fold" icon, four indigo arms on a light tile.
         {
             auto mark = juce::Rectangle<float> (36.0f * sf, 36.0f * sf)
                             .withCentre ({ (float) getWidth() * 0.5f, 30.0f * sf });
-            g.setColour (t.foreground);
+            g.setColour (juce::Colour (0xFFF3F4FF));
             g.fillRoundedRectangle (mark, 10.0f * sf);
-            // XIVA mark: a sliced X built from short bars along both diagonals
-            // with a cut line through the centre.
-            g.setColour (t.waveformBg);
-            constexpr int   kCols = 7;
-            const float     rad   = mark.getWidth() * 0.30f;
-            const float     bw    = rad * 2.0f / ((float) kCols * 1.32f);
-            const float     len   = rad * 0.46f;
-            const auto      c     = mark.getCentre();
-            for (int i = 0; i < kCols; ++i)
+            g.setColour (t.separator);
+            g.drawRoundedRectangle (mark.reduced (0.5f), 10.0f * sf, 1.0f);
+
+            const auto  c   = mark.getCentre();
+            const float k   = mark.getWidth() / 100.0f;
+            const float arm = 28.0f * k, w = 21.0f * k;
+            const juce::uint32 shade[4] = { 0xFF6366F1, 0xFF3730A3, 0xFF4338CA, 0xFF8B8FFF };
+            const float dir[4][2] = { { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } };
+            for (int i = 0; i < 4; ++i)
             {
-                const float tt = -1.0f + 2.0f * (float) i / (float) (kCols - 1);
-                const float x  = c.x + tt * rad;
-                const bool  mid = i == kCols / 2;
-                const float l  = mid ? rad * 0.75f : len;
-                g.fillRoundedRectangle (x - bw * 0.5f, c.y + tt * rad - l * 0.5f, bw, l, bw * 0.5f);
-                if (! mid)
-                    g.fillRoundedRectangle (x - bw * 0.5f, c.y - tt * rad - l * 0.5f, bw, l, bw * 0.5f);
+                juce::Path p;
+                p.addRectangle (0.0f, -w * 0.5f, arm * 1.41421356f, w);
+                p.applyTransform (juce::AffineTransform::rotation (std::atan2 (dir[i][1], dir[i][0]))
+                                      .translated (c.x, c.y));
+                g.setColour (juce::Colour (shade[i]));
+                g.fillPath (p);
             }
-            g.setColour (t.accent);
-            g.fillRect (juce::Rectangle<float> (c.x - 0.6f * sf, mark.getY() + 3.0f * sf, 1.2f * sf, mark.getHeight() - 6.0f * sf));
         }
 
         // Group divider
