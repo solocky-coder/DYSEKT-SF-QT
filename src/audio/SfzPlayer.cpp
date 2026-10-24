@@ -320,15 +320,20 @@ void SfzPlayer::setFineTune (float cents)
 void SfzPlayer::setReverb (float level)
 {
     reverb.store (juce::jlimit (0.0f, 1.0f, level), std::memory_order_relaxed);
+    // The FluidSynth reverb level stays fixed; per-channel amounts come from the CC91 sends.
+    applyFluidReverb();
+}
+
+void SfzPlayer::applyFluidReverb()
+{
 #if DYSEKT_HAS_FLUIDSYNTH
-    if (synth != nullptr && !isSfzFile)
+    if (synth != nullptr && ! isSfzFile)
         fluid_synth_set_reverb (synth,
-            0.6,           // room size  (0.0–1.0)
-            0.5,           // damping    (0.0–1.0)
-            0.5,           // width      (0.0–100.0)
-            (double) level); // level    (0.0–1.0)
+            (double) reverbSize .load (std::memory_order_relaxed) * 0.01,   // room size 0..1
+            (double) reverbDamp .load (std::memory_order_relaxed) * 0.01,   // damping   0..1
+            (double) reverbWidth.load (std::memory_order_relaxed) * 0.01,   // width
+            0.9);                                                           // FluidSynth's default level
 #endif
-    // sfizz: no reverb API — SFZ files define reverb via opcodes internally
 }
 
 void SfzPlayer::setChorus (float level)
@@ -523,16 +528,19 @@ void SfzPlayer::applySf2Delay (float* l, float* r, int n) noexcept
 void SfzPlayer::setReverbSize (float pct) noexcept
 {
     reverbSize.store (juce::jlimit (0.0f, 100.0f, pct), std::memory_order_relaxed);
+    applyFluidReverb();
 }
 
 void SfzPlayer::setReverbDamp (float pct) noexcept
 {
     reverbDamp.store (juce::jlimit (0.0f, 100.0f, pct), std::memory_order_relaxed);
+    applyFluidReverb();
 }
 
 void SfzPlayer::setReverbWidth (float pct) noexcept
 {
     reverbWidth.store (juce::jlimit (0.0f, 100.0f, pct), std::memory_order_relaxed);
+    applyFluidReverb();
 }
 
 void SfzPlayer::setReverbMix (float pct) noexcept
@@ -557,6 +565,29 @@ void SfzPlayer::setSf2FilterResonance (float pct) noexcept
 {
     sf2FilterResonancePct.store (juce::jlimit (kSf2FilterResonanceMinPct, kSf2FilterResonanceMaxPct, pct),
                                   std::memory_order_relaxed);
+}
+
+void SfzPlayer::processPostReverb (float* l, float* r, int n)
+{
+    if (reverbMix.load (std::memory_order_relaxed) < 0.01f)
+    {
+        if (reverbWasActive)
+        {
+            dspReverb.reset();
+            reverbWasActive = false;
+        }
+        // juce::Reverb multiplies the dry signal by 2 (+6 dB), and the output was tuned with that
+        // in place - keep exactly the same level when the reverb is skipped.
+        constexpr float kJuceReverbDryGain = 2.0f;
+        for (int i = 0; i < n; ++i) { l[i] *= kJuceReverbDryGain; r[i] *= kJuceReverbDryGain; }
+        return;
+    }
+    reverbWasActive = true;
+    updateReverbParams();
+    float* planes[2] = { l, r };
+    juce::dsp::AudioBlock<float> block (planes, 2, (size_t) n);
+    juce::dsp::ProcessContextReplacing<float> ctx (block);
+    dspReverb.process (ctx);
 }
 
 void SfzPlayer::updateReverbParams()
@@ -1055,13 +1086,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
         }
 
         // Apply post-processing reverb
-        updateReverbParams();
-        {
-            float* rvPlanes[2] = { scratchL.data(), scratchR.data() };
-            juce::dsp::AudioBlock<float> block (rvPlanes, 2, (size_t) numSamples);
-            juce::dsp::ProcessContextReplacing<float> ctx (block);
-            dspReverb.process (ctx);
-        }
+        processPostReverb (scratchL.data(), scratchR.data(), numSamples);
 
         // ── Apply JUCE ADSR (Option B) ────────────────────────────────────────
         // Flush param changes first, then handle note-on/off atomics.
@@ -1403,13 +1428,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
     applySf2Drive (scratchL.data(), scratchR.data(), numSamples);
 
     // Apply post-processing reverb
-    updateReverbParams();
-    {
-        float* planes[2] = { scratchL.data(), scratchR.data() };
-        juce::dsp::AudioBlock<float> block (planes, 2, (size_t) numSamples);
-        juce::dsp::ProcessContextReplacing<float> ctx (block);
-        dspReverb.process (ctx);
-    }
+    processPostReverb (scratchL.data(), scratchR.data(), numSamples);
 
     applySf2Delay (scratchL.data(), scratchR.data(), numSamples);
 

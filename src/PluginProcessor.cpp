@@ -342,6 +342,12 @@ void DysektProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         spec.maximumBlockSize = (juce::uint32) (samplesPerBlock > 0 ? samplesPerBlock : 512);
         spec.numChannels      = 2;
         globalEq.prepare (spec);
+        // Give every band a full 5-term biquad up front so later updates can write in place.
+        auto seed = [] (juce::dsp::IIR::Filter<float>& f)
+        { f.coefficients = new juce::dsp::IIR::Coefficients<float> (1.f, 0.f, 0.f, 1.f, 0.f, 0.f); };
+        seed (globalEq.get<0>()); seed (globalEq.get<1>()); seed (globalEq.get<2>());
+        seed (globalEq.get<3>()); seed (globalEq.get<4>());
+        globalEq.reset();
         globalEqNeedsUpdate = true;
     }
 }
@@ -3092,8 +3098,7 @@ void DysektProcessor::processMidi2 (const juce::MidiBuffer& midi)
 
 static inline float sanitiseSample (float x)
 {
-    if (! std::isfinite (x)) return 0.0f;
-    return juce::jlimit (-1.0f, 1.0f, x);
+    return dysektSoftLimit (x);
 }
 
 void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
@@ -3151,35 +3156,24 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // ── Poll global EQ param changes ──────────────────────────────────────────
+    // ── Poll global EQ param changes (per-instance cache) ──────────────────────
     {
-        static float cachedEqLow = -999.f, cachedEqLowF = -999.f,
-                     cachedEqMidG = -999.f, cachedEqMidF = -999.f,
-                     cachedEqMidQ = -999.f,
-                     cachedEqHigh = -999.f, cachedEqHighF = -999.f;
-        auto* pLow  = apvts.getRawParameterValue (ParamIds::globalEqLowGain);
-        auto* pLowF = apvts.getRawParameterValue (ParamIds::globalEqLowFreq);
-        auto* pMidG = apvts.getRawParameterValue (ParamIds::globalEqMidGain);
-        auto* pMidF = apvts.getRawParameterValue (ParamIds::globalEqMidFreq);
-        auto* pMidQ = apvts.getRawParameterValue (ParamIds::globalEqMidQ);
-        auto* pHigh = apvts.getRawParameterValue (ParamIds::globalEqHighGain);
-        auto* pHighF = apvts.getRawParameterValue (ParamIds::globalEqHighFreq);
-        if (pLow && pLowF && pMidG && pMidF && pMidQ && pHigh && pHighF)
+        const juce::String* ids[13] = {
+            &ParamIds::globalEqLowGain,     &ParamIds::globalEqLowFreq,
+            &ParamIds::globalEqLowMidGain,  &ParamIds::globalEqLowMidFreq,  &ParamIds::globalEqLowMidQ,
+            &ParamIds::globalEqMidGain,     &ParamIds::globalEqMidFreq,     &ParamIds::globalEqMidQ,
+            &ParamIds::globalEqHighMidGain, &ParamIds::globalEqHighMidFreq, &ParamIds::globalEqHighMidQ,
+            &ParamIds::globalEqHighGain,    &ParamIds::globalEqHighFreq };
+        for (int k = 0; k < 13; ++k)
         {
-            float l = pLow->load(), lf = pLowF->load(),
-                  mg = pMidG->load(), mf = pMidF->load(),
-                  mq = pMidQ->load(),
-                  h = pHigh->load(), hf = pHighF->load();
-            if (l != cachedEqLow || lf != cachedEqLowF ||
-                mg != cachedEqMidG || mf != cachedEqMidF ||
-                mq != cachedEqMidQ ||
-                h != cachedEqHigh || hf != cachedEqHighF)
+            if (auto* pr = apvts.getRawParameterValue (*ids[k]))
             {
-                cachedEqLow = l; cachedEqLowF = lf;
-                cachedEqMidG = mg; cachedEqMidF = mf;
-                cachedEqMidQ = mq;
-                cachedEqHigh = h; cachedEqHighF = hf;
-                globalEqNeedsUpdate = true;
+                const float v = pr->load();
+                if (v != globalEqSeen[(size_t) k])
+                {
+                    globalEqSeen[(size_t) k] = v;
+                    globalEqNeedsUpdate = true;
+                }
             }
         }
     }
@@ -4923,21 +4917,30 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // ── Global post-mix EQ (applied to main bus only) ─────────────────────────
     if (busL[0] != nullptr && buffer.getNumSamples() > 0)
     {
-        // Rebuild coefficients if any global EQ param changed
+        // Rebuild coefficients if any global EQ param changed. All five bands are applied
+        // (low shelf, low-mid, mid, high-mid peaks, high shelf); the coefficients are written
+        // in place so no memory is allocated on the audio thread.
         if (globalEqNeedsUpdate)
         {
-            double sr = getSampleRate();
-            auto lowG  = apvts.getRawParameterValue (ParamIds::globalEqLowGain)->load();
-            auto lowF  = apvts.getRawParameterValue (ParamIds::globalEqLowFreq)->load();
-            auto midG  = apvts.getRawParameterValue (ParamIds::globalEqMidGain)->load();
-            auto midF  = apvts.getRawParameterValue (ParamIds::globalEqMidFreq)->load();
-            auto midQ  = apvts.getRawParameterValue (ParamIds::globalEqMidQ)->load();
-            auto hiG   = apvts.getRawParameterValue (ParamIds::globalEqHighGain)->load();
-            auto hiF   = apvts.getRawParameterValue (ParamIds::globalEqHighFreq)->load();
+            using AC = juce::dsp::IIR::ArrayCoefficients<float>;
+            const double sr = getSampleRate();
+            auto P = [this] (const juce::String& id) { return apvts.getRawParameterValue (id)->load(); };
+            auto lin = [] (float dB) { return std::pow (10.f, dB / 20.f); };
 
-            *globalEq.get<0>().coefficients = *juce::dsp::IIR::Coefficients<float>::makeLowShelf  (sr, lowF, 1.f, std::pow (10.f, lowG / 20.f));
-            *globalEq.get<1>().coefficients = *juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, midF, midQ, std::pow (10.f, midG / 20.f));
-            *globalEq.get<2>().coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf  (sr, hiF,  1.f, std::pow (10.f, hiG  / 20.f));
+            auto store = [] (juce::dsp::IIR::Filter<float>& f, const std::array<float, 6>& c)
+            {
+                auto& co = f.coefficients->coefficients;
+                if (co.size() != 5) { co.clearQuick(); co.insertMultiple (0, 0.0f, 5); }
+                float* d = co.getRawDataPointer();
+                const float inv = 1.0f / c[3];
+                d[0] = c[0] * inv; d[1] = c[1] * inv; d[2] = c[2] * inv; d[3] = c[4] * inv; d[4] = c[5] * inv;
+            };
+
+            store (globalEq.get<0>(), AC::makeLowShelf  (sr, P (ParamIds::globalEqLowFreq), 1.f, lin (P (ParamIds::globalEqLowGain))));
+            store (globalEq.get<1>(), AC::makePeakFilter (sr, P (ParamIds::globalEqLowMidFreq), P (ParamIds::globalEqLowMidQ), lin (P (ParamIds::globalEqLowMidGain))));
+            store (globalEq.get<2>(), AC::makePeakFilter (sr, P (ParamIds::globalEqMidFreq), P (ParamIds::globalEqMidQ), lin (P (ParamIds::globalEqMidGain))));
+            store (globalEq.get<3>(), AC::makePeakFilter (sr, P (ParamIds::globalEqHighMidFreq), P (ParamIds::globalEqHighMidQ), lin (P (ParamIds::globalEqHighMidGain))));
+            store (globalEq.get<4>(), AC::makeHighShelf (sr, P (ParamIds::globalEqHighFreq), 1.f, lin (P (ParamIds::globalEqHighGain))));
             globalEqNeedsUpdate = false;
         }
 
@@ -4947,6 +4950,13 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         juce::dsp::AudioBlock<float> eqBlock (chans, 2, (size_t) ns);
         juce::dsp::ProcessContextReplacing<float> eqCtx (eqBlock);
         globalEq.process (eqCtx);
+
+        // EQ boosts can push the sum past full scale; keep the main bus bounded.
+        for (int i = 0; i < ns; ++i)
+        {
+            chans[0][i] = dysektSoftLimit (chans[0][i]);
+            if (busR[0]) chans[1][i] = dysektSoftLimit (chans[1][i]);
+        }
     }
 
     // ── Post-EQ spectrum analyser tap ─────────────────────────────────────────

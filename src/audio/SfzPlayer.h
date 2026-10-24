@@ -557,6 +557,9 @@ private:
     std::atomic<float> reverbMix    {  0.0f };   // 0–100 (default dry)
     std::atomic<bool>  reverbFreeze { false };
 
+    void processPostReverb (float* l, float* r, int n);   ///< bypassed (and cleared) when MIX is 0
+    void applyFluidReverb();                              ///< sends SIZE/DAMP/WIDTH to FluidSynth's built-in reverb too
+    bool reverbWasActive = false;
     void updateReverbParams();  ///< maps atomics → juce::dsp::Reverb::Parameters
 
     // ── SF2 filter atomics (UI-written, audio-thread-read; see applyFluidFilterFromUi) ──

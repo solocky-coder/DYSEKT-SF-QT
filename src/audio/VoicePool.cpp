@@ -16,6 +16,33 @@ static inline float dbToLinear (float dB)
 }
 
 
+
+// 2-pole resonant low-pass (TPT state-variable). Resonance 0..1 maps to a 0..18 dB peak at the
+// cutoff, so the pass band stays at unity gain instead of dropping as RES goes up.
+static void setupVoiceFilter (Voice& v, float cutoffHz, float res, double sampleRate)
+{
+    cutoffHz = juce::jlimit (20.0f, 20000.0f, cutoffHz);
+    res      = juce::jlimit (0.0f, 1.0f, res);
+    v.filterRes = res;
+    v.filterIc1L = v.filterIc2L = v.filterIc1R = v.filterIc2R = 0.0f;
+    v.filterStateL = v.filterStateR = 0.0f;
+
+    if (cutoffHz >= 19999.0f && res <= 0.001f)
+    {
+        v.filterCoeff = 1.0f;   // bypass
+        return;
+    }
+
+    const float fc = juce::jmin (cutoffHz, (float) (sampleRate * 0.45));
+    const float g  = std::tan (juce::MathConstants<float>::pi * fc / (float) sampleRate);
+    const float q  = 0.7071f * std::pow (10.0f, res * 18.0f / 20.0f);
+    const float k  = 1.0f / q;
+    v.filterA1 = 1.0f / (1.0f + g * (g + k));
+    v.filterA2 = g * v.filterA1;
+    v.filterA3 = g * v.filterA2;
+    v.filterCoeff = 0.5f;       // any value < 1 = active
+}
+
 VoicePool::VoicePool()
 {
     for (auto& p : voicePositions)
@@ -170,12 +197,7 @@ void VoicePool::startVoiceUnsliced (int voiceIdx, const VoiceStartParams& p,
     v.panL = std::cos (panAngle);
     v.panR = std::sin (panAngle);
 
-    float w = 2.0f * juce::MathConstants<float>::pi
-              * juce::jlimit (20.0f, 20000.0f, p.globalFilterCutoff) / (float)sampleRate;
-    v.filterCoeff  = juce::jlimit (0.0f, 1.0f, 1.0f - std::exp (-w));
-    v.filterRes    = juce::jlimit (0.0f, 1.0f, p.globalFilterRes);
-    v.filterStateL = 0.0f;
-    v.filterStateR = 0.0f;
+    setupVoiceFilter (v, p.globalFilterCutoff, p.globalFilterRes, sampleRate);
 
     // Algorithm: derived from stretch flag — no user-facing algo selector needed.
     // Stretch ON  → Signalsmith (pitch-only; BPM time-stretch not available in unsliced mode)
@@ -286,12 +308,7 @@ void VoicePool::startVoice (int voiceIdx, const VoiceStartParams& p,
     // ── Filter (one-pole IIR low-pass with resonance feedback) ───────────────
     float resolvedCutoff = sm.resolveParam (sliceIdx, kLockFilter, s.filterCutoff, p.globalFilterCutoff);
     float resolvedFRes   = sm.resolveParam (sliceIdx, kLockFilter, s.filterRes,    p.globalFilterRes);
-    resolvedCutoff = juce::jlimit (20.0f, 20000.0f, resolvedCutoff);
-    float w = 2.0f * juce::MathConstants<float>::pi * resolvedCutoff / (float) sampleRate;
-    v.filterCoeff  = juce::jlimit (0.0f, 1.0f, 1.0f - std::exp (-w));
-    v.filterRes    = juce::jlimit (0.0f, 1.0f, resolvedFRes);
-    v.filterStateL = 0.0f;
-    v.filterStateR = 0.0f;
+    setupVoiceFilter (v, resolvedCutoff, resolvedFRes, sampleRate);
 
     // ── Per-slice 3-band EQ (chowdsp SVF — prepared once at note-on) ──────
     {
@@ -835,17 +852,20 @@ void VoicePool::processVoiceSample (int i, const SampleData& sample, double samp
     }
 
     // ── Filter (applied to all rendering paths) ───────────────────────────────
-    // One-pole IIR low-pass with resonance feedback.
-    // filterCoeff == 1.0 means bypass (cutoff at Nyquist).
+    // 2-pole resonant low-pass (TPT SVF). filterCoeff == 1.0 means bypass.
     if (v.filterCoeff < 0.9999f)
     {
-        float fbL = voiceL - v.filterRes * 3.5f * v.filterStateL;
-        v.filterStateL += v.filterCoeff * (fbL - v.filterStateL);
-        voiceL = v.filterStateL;
-
-        float fbR = voiceR - v.filterRes * 3.5f * v.filterStateR;
-        v.filterStateR += v.filterCoeff * (fbR - v.filterStateR);
-        voiceR = v.filterStateR;
+        auto tick = [&v] (float x, float& ic1, float& ic2)
+        {
+            const float v3 = x - ic2;
+            const float v1 = v.filterA1 * ic1 + v.filterA2 * v3;
+            const float v2 = ic2 + v.filterA2 * ic1 + v.filterA3 * v3;
+            ic1 = 2.0f * v1 - ic1;
+            ic2 = 2.0f * v2 - ic2;
+            return v2;
+        };
+        voiceL = tick (voiceL, v.filterIc1L, v.filterIc2L);
+        voiceR = tick (voiceR, v.filterIc1R, v.filterIc2R);
     }
 
     // ── Per-slice 3-band EQ (chowdsp SVF) ────────────────────────────────────

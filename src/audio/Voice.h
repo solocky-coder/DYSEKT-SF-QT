@@ -37,11 +37,13 @@ struct Voice
     float        panL         = 1.0f;
     float        panR         = 1.0f;
 
-    // Filter — one-pole IIR low-pass with resonance
-    float        filterCoeff  = 1.0f;   // 1.0 = bypass
+    // Filter — 2-pole resonant low-pass (TPT state-variable). filterCoeff == 1.0 means bypass.
+    float        filterCoeff  = 1.0f;
     float        filterRes    = 0.0f;
-    float        filterStateL = 0.0f;
+    float        filterStateL = 0.0f;   // kept for layout compatibility (unused by the SVF)
     float        filterStateR = 0.0f;
+    float        filterA1 = 0.0f, filterA2 = 0.0f, filterA3 = 0.0f;   // TPT coefficients
+    float        filterIc1L = 0.0f, filterIc2L = 0.0f, filterIc1R = 0.0f, filterIc2R = 0.0f;
 
     // ── Per-slice 3-band EQ (chowdsp SVF filters) ────────────────────────────
     // Prepared and reset at note-on. processSample(ch, x) is called per sample.

@@ -117,6 +117,18 @@ private:
 };
 
 //==============================================================================
+// Transparent below 0.9, then a smooth tanh knee that approaches (never exceeds) +-1.0.
+// Replaces a pass-through-up-to-8.0 sanity check, so overs no longer reach the host unbounded.
+inline float dysektSoftLimit (float s) noexcept
+{
+        if (! std::isfinite (s)) return 0.0f;
+        const float a = std::abs (s);
+        if (a <= 0.9f) return s;
+        const float y = 0.9f + 0.1f * std::tanh ((a - 0.9f) * 10.0f);
+        return s < 0.0f ? -y : y;
+}
+
+
 class DysektProcessor : public juce::AudioProcessor
 {
 public:
@@ -1414,6 +1426,10 @@ public:
         juce::dsp::IIR::Filter<float>    // band 4: high shelf (~12 kHz)
     > globalEq;
     bool globalEqNeedsUpdate = true;
+    // Last-seen values of the 13 global EQ parameters (per instance - this used to be
+    // function-local statics shared by every plugin instance).
+    std::array<float, 13> globalEqSeen { { -999.f, -999.f, -999.f, -999.f, -999.f, -999.f, -999.f,
+                                           -999.f, -999.f, -999.f, -999.f, -999.f, -999.f } };
 
     // ── v25: master audio-domain pitch shift (post-EQ, pre-output) ───────────
     // Uses signalsmith-stretch in pitch-only mode (stretch ratio = 1.0).
