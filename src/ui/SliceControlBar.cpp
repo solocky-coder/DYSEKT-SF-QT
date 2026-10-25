@@ -1039,7 +1039,6 @@ void SliceControlBar::paint (juce::Graphics& g)
  const float effPan      = resolveF (kLockPan,     s.pan,             apvtsVal (ParamIds::defaultPan));
  const float effTonality = resolveF (kLockTonality, s.tonalityHz,     apvtsVal (ParamIds::defaultTonality));
  const float effFormant  = resolveF (kLockFormant,  s.formantSemitones, apvtsVal (ParamIds::defaultFormant));
- const bool  effFComp    = resolveF (kLockFormantComp, s.formantComp ? 1.f : 0.f, apvtsVal (ParamIds::defaultFormantComp)) > 0.5f;
 
  const int   effOutputBus = (int) resolveF (kLockOutputBus, (float) s.outputBus, 0.0f);
  const bool  effStretch  = resolveF (kLockStretch, s.stretchEnabled ? 1.f : 0.f, apvtsVal (ParamIds::defaultStretchEnabled)) > 0.5f;
@@ -1138,13 +1137,6 @@ void SliceControlBar::paint (juce::Graphics& g)
  (fv >= 0.f ? "+" : "") + juce::String (fv, 1),
  toNorm (F::FieldFormant, fv),
  true, 0, F::FieldFormant, -24.f, 24.f, 0.1f, cw);
- x += cw + si (4);
-
- bool fmntCVal = effFComp;
- wrapCell (x, row1y);
- drawParamCell (g, x, row1y, "FMNT C", fmntCVal ? "ON" : "OFF",
- true, 0, F::FieldFormantComp,
- 0.f, 1.f, 1.f, true, false, cw);
  x += cw + si (4);
  }
  // STRETCH — boolean (no lock)
@@ -1860,7 +1852,6 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
  bool currentVal = false;
  using F = DysektProcessor;
  if (cell.fieldId == F::FieldStretchEnabled) currentVal = sliceLocked ? sl.stretchEnabled : (processor.apvts.getRawParameterValue (ParamIds::defaultStretchEnabled)->load() > 0.5f);
- else if (cell.fieldId == F::FieldFormantComp) currentVal = sliceLocked ? sl.formantComp : (processor.apvts.getRawParameterValue (ParamIds::defaultFormantComp)->load() > 0.5f);
  else if (cell.fieldId == F::FieldReleaseTail) currentVal = sliceLocked ? sl.releaseTail : (processor.apvts.getRawParameterValue (ParamIds::defaultReleaseTail)->load() > 0.5f);
  else if (cell.fieldId == F::FieldReverse) currentVal = sliceLocked ? sl.reverse : (processor.apvts.getRawParameterValue (ParamIds::defaultReverse)->load() > 0.5f);
  else if (cell.fieldId == F::FieldChromaticLegato) currentVal = sl.chromaticLegato;
