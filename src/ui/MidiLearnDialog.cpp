@@ -347,10 +347,13 @@ void MidiLearnDialog::paint (juce::Graphics& g)
     g.setColour (th.foreground.withAlpha (0.55f));
     g.setFont (DysektLookAndFeel::makeFont (10.0f, true));
     g.drawText ("PARAMETER",    14, hdrY, 136, hdrH, juce::Justification::centredLeft);
+    // x positions match the row controls (list x 10 + row x offsets in MappingRowComponent::resized()).
     g.drawText ("CHANNEL",     154, hdrY,  62, hdrH, juce::Justification::centredLeft);
-    g.drawText ("CC",          220, hdrY,  68, hdrH, juce::Justification::centredLeft);
-    g.drawText ("LEARN",       292, hdrY,  58, hdrH, juce::Justification::centredLeft);
-    g.drawText ("MODE",        390, hdrY, 120, hdrH, juce::Justification::centredLeft);
+    g.drawText ("CC",          218, hdrY,  68, hdrH, juce::Justification::centredLeft);
+    g.drawText ("LEARN",       288, hdrY,  58, hdrH, juce::Justification::centredLeft);
+    g.drawText ("CLR",         348, hdrY,  20, hdrH, juce::Justification::centredLeft);
+    g.drawText ("FLIP",        368, hdrY,  34, hdrH, juce::Justification::centredLeft);
+    g.drawText ("MODE",        404, hdrY, 120, hdrH, juce::Justification::centredLeft);
 }
 
 void MidiLearnDialog::resized()

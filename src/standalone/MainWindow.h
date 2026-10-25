@@ -193,7 +193,7 @@ public:
         }
         else
         {
-            menu.addItem (20, "About DYSEKT-SF");
+            menu.addItem (20, "About XIVA");
         }
         return menu;
     }
@@ -236,7 +236,7 @@ private:
                     juce::MemoryBlock blank;
                     processor->setStateInformation (blank.getData(), (int) blank.getSize());
                     currentProjectFile = juce::File();
-                    setName ("DYSEKT-SF");
+                    setName ("XIVA");
                 }
             }));
     }
@@ -244,7 +244,7 @@ private:
     void openProject()
     {
         fileChooser = std::make_unique<juce::FileChooser> (
-            "Open DYSEKT-SF Project",
+            "Open XIVA Project",
             juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.dysekt");
         fileChooser->launchAsync (
             juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -259,7 +259,7 @@ private:
                 fis.read (block.getData(), (int) size);
                 processor->setStateInformation (block.getData(), (int) block.getSize());
                 currentProjectFile = result;
-                setName ("DYSEKT-SF  —  " + result.getFileNameWithoutExtension());
+                setName ("XIVA  —  " + result.getFileNameWithoutExtension());
             });
     }
 
@@ -280,7 +280,7 @@ private:
     void saveProjectAs()
     {
         fileChooser = std::make_unique<juce::FileChooser> (
-            "Save DYSEKT-SF Project",
+            "Save XIVA Project",
             juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
                 .getChildFile ("Untitled.dysekt"), "*.dysekt");
         fileChooser->launchAsync (
@@ -291,7 +291,7 @@ private:
                 if (result == juce::File()) return;
                 currentProjectFile = result.withFileExtension ("dysekt");
                 saveProject();
-                setName ("DYSEKT-SF  —  " + currentProjectFile.getFileNameWithoutExtension());
+                setName ("XIVA  —  " + currentProjectFile.getFileNameWithoutExtension());
             });
     }
 
@@ -459,7 +459,7 @@ private:
             return;
 
         auto* panel = new NetworkMidiPanel (*networkMidiManager, 1);
-        panel->setSize (860, 700);
+        panel->setSize (860, 820);   // tall enough for the whole "How to connect" text
         launchScrollableSettingsDialog (panel, "Network MIDI", true);
     }
 
@@ -566,21 +566,15 @@ private:
         for (int i = 0; i < processor->sequencer.getNumTracks(); ++i)
             trackNames.add (processor->sequencer.getTrackInfo(i).name);
         auto* dlg = new MidiRoutingDialog (*midiRouter, trackNames);
-        juce::DialogWindow::LaunchOptions opts;
-        opts.content.setOwned (dlg);
-        opts.dialogTitle = "MIDI Routing";
-        opts.dialogBackgroundColour = juce::Colour (0xFF0D0D14);
-        opts.escapeKeyTriggersCloseButton = true;
-        opts.useNativeTitleBar = true;
-        opts.resizable = true;
-        opts.launchAsync();
+        // Scrolls when many tracks make the dialog taller than the screen.
+        launchScrollableSettingsDialog (dlg, "MIDI Routing", true);
     }
 
     void showAbout()
     {
         juce::AlertWindow::showMessageBoxAsync (
-            juce::AlertWindow::InfoIcon, "DYSEKT-SF Standalone",
-            "DYSEKT-SF Sampler + Sequencer\nVersion 1.0\n\nPowered by JUCE.");
+            juce::AlertWindow::InfoIcon, "XIVA Standalone",
+            "XIVA Sampler + Sequencer\nVersion 1.0\n\nPowered by JUCE.");
     }
 
     void timerCallback() override

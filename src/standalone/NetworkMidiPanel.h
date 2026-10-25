@@ -39,7 +39,7 @@ public:
 
         title.setText ("Network MIDI", juce::dontSendNotification);
         title.setFont (juce::Font (28.0f, juce::Font::bold));
-        subtitle.setText ("Send DYSEKT's live incoming MIDI over USB or advertise a discoverable RTP-MIDI host on Wi-Fi/LAN",
+        subtitle.setText ("Send XIVA's live incoming MIDI over USB or advertise a discoverable RTP-MIDI host on Wi-Fi/LAN",
                           juce::dontSendNotification);
         subtitle.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
 
@@ -80,7 +80,7 @@ public:
 
         wifiHostButton.setClickingTogglesState (true);
         wifiHostButton.setToggleState (values.wifiHost, juce::dontSendNotification);
-        wifiHostButton.setTooltip ("Advertise DYSEKT-SF as an AppleMIDI Bonjour service and accept a peer on the local network");
+        wifiHostButton.setTooltip ("Advertise XIVA as an AppleMIDI Bonjour service and accept a peer on the local network");
         wifiHostButton.onClick = [this] { onWifiHostClicked(); };
         updateWifiHostButtonText();
 
@@ -108,7 +108,7 @@ public:
         realtimeToggle.onClick = [this] { onFilterEdited(); };
 
         helpText.setText ("USB peer mode: plug in the iPad, start Apple USB Share, enable a Network MIDI session in the iPad app, then switch live MIDI on.\n\n"
-                          "Wi-Fi/LAN host mode: enable \"Advertise on Wi-Fi/LAN\". DYSEKT advertises an AppleMIDI Bonjour service on the local network; select DYSEKT-SF in a compatible RTP-MIDI client and connect. Both devices must be on the same LAN, and firewall rules must allow UDP 5004/5005 and mDNS UDP 5353.\n\n"
+                          "Wi-Fi/LAN host mode: switch on \"Wi-Fi Host\". XIVA advertises an AppleMIDI Bonjour service on the local network; select XIVA in a compatible RTP-MIDI client and connect. Both devices must be on the same LAN, and firewall rules must allow UDP 5004/5005 and mDNS UDP 5353.\n\n"
                           "Only one network peer can connect at a time. Incoming MIDI is filtered by the selected channels; SysEx is not forwarded.",
                           juce::dontSendNotification);
         helpText.setJustificationType (juce::Justification::topLeft);

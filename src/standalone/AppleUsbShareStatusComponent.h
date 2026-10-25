@@ -170,7 +170,7 @@ public:
         title.setBounds (area.removeFromTop (32));
         subtitle.setBounds (area.removeFromTop (25));
 
-        auto device = area.removeFromTop (150).reduced (10);
+        auto device = area.removeFromTop (172).reduced (10);   // 172: leaves the adapter line its full 28 px
         deviceCaption.setBounds (device.removeFromTop (24));
         deviceLabel.setBounds (device.removeFromTop (96));
         adapterLabel.setBounds (device.removeFromTop (28));

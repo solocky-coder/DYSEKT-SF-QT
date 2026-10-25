@@ -29,7 +29,10 @@ public:
 
         constexpr int kDeviceCardHeight = 2 * 10 + 260;
         constexpr int kSectionGapOuter = 14;
-        setSize (980, showDeviceSelector ? 980 : 980 - kDeviceCardHeight - kSectionGapOuter);
+        // +38: the Connection card now has room for its progress bar and connect-info row;
+        // +24: the Sources list shows two full 64 px rows instead of about 1.6.
+        constexpr int kExtraH = 38 + 24;
+        setSize (980, (showDeviceSelector ? 980 : 980 - kDeviceCardHeight - kSectionGapOuter) + kExtraH);
 
         if (showDeviceSelector)
             addAndMakeVisible (audioSelector);
@@ -390,6 +393,16 @@ public:
 
     juce::TextButton& getDirectUsbButton() noexcept { return directUsbButton; }
 
+    /** The connect-info button is only meant to appear once direct USB mode has produced its
+        text, and only while the AOO page is showing. Used by the page switcher. */
+    void applyDirectUsbInfoVisibility (bool pageVisible) noexcept
+    {
+        directUsbInfoButton.setVisible (pageVisible && directUsbInfoText.isNotEmpty());
+    }
+
+    /** Keeps the page title visible on the other tab too (it sits left of the tab buttons). */
+    void setNetworkTitleVisible (bool v) noexcept { networkTitle.setVisible (v); }
+
     void resized() override
     {
         constexpr int kPad = 16;
@@ -464,6 +477,7 @@ public:
 
         auto connectionCardArea = area.removeFromTop (2 * kCardPad + 3 * kRowH + 2 * kRowGap
                                                         + (kRowGap + 6) + 30 + 8 + kRowH
+                                                        + kRowGap + (kRowH + 6)       // progress row
                                                         + kRowGap + kInstructionsH);
         connectionPanelBounds = connectionCardArea;
         auto connectionInner = connectionCardArea.reduced (kCardPad);

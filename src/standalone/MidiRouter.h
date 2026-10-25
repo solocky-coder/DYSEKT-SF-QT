@@ -419,7 +419,7 @@ public:
         : midiRouter (router),
           names      (trackNames)
     {
-        setSize (560, 480);
+        setSize (520, 480);
         startTimerHz (4);  // refresh device open/close state
         rebuild();
     }

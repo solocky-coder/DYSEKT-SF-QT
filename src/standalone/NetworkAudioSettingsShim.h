@@ -188,6 +188,8 @@ private:
         // Apple USB Share tab made it read as that tab's link status. That
         // tab already has its own Start / Stop / Diagnostics for the link.
         getDirectUsbButton().setVisible (showBase);
+        applyDirectUsbInfoVisibility (showBase);   // the loop above made it visible unconditionally
+        setNetworkTitleVisible (true);             // keep the page title on both tabs
         usbStatusComponent->setVisible (showingUsbTab);
 
         auto style = [] (juce::TextButton& b, bool isActive)
