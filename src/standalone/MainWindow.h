@@ -574,7 +574,7 @@ private:
     {
         juce::AlertWindow::showMessageBoxAsync (
             juce::AlertWindow::InfoIcon, "XIVA Standalone",
-            "XIVA Sampler + Sequencer\nVersion 1.0\n\nPowered by JUCE.");
+            "XIVA Sampler + Sequencer\nVersion 1.0\n\nPowered by JUCE.\n\nCharacter effect modes (Global EQ) are independent\nimplementations inspired by the open-source Airwindows\nplug-ins by Chris Johnson (MIT licence).");
     }
 
     void timerCallback() override

@@ -22,6 +22,26 @@ GlobalEqPanel::GlobalEqPanel (DysektProcessor& p)
 
     setOpaque (false);
 
+    // CHARACTER strip controls
+    modeBox.addItemList ({ "Off", "Bit Crush", "Smooth Downsample", "Gritty Lo-Fi", "12-Bit Drum Sampler" }, 1);
+    modeBox.setTooltip ("Character: lo-fi / converter colour applied before the EQ. "
+                        "Modes are independent implementations inspired by Airwindows (MIT, Chris Johnson).");
+    addAndMakeVisible (modeBox);
+    for (auto* k : { &knob1, &knob2, &knobMix })
+    {
+        k->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        k->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        k->setRotaryParameters (juce::degreesToRadians (225.f), juce::degreesToRadians (495.f), true);
+        addAndMakeVisible (*k);
+    }
+    knob1.setDoubleClickReturnValue (true, 0.5);
+    knob2.setDoubleClickReturnValue (true, 0.4);
+    knobMix.setDoubleClickReturnValue (true, 1.0);
+    modeAttach = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, ParamIds::characterMode, modeBox);
+    k1Attach   = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (processor.apvts, ParamIds::characterP1, knob1);
+    k2Attach   = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (processor.apvts, ParamIds::characterP2, knob2);
+    mixAttach  = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>   (processor.apvts, ParamIds::characterMix, knobMix);
+
     startTimerHz (30);   // 30 fps repaint for spectrum
 }
 
@@ -34,6 +54,11 @@ GlobalEqPanel::~GlobalEqPanel()
 
 void GlobalEqPanel::timerCallback()
 {
+    {
+        const bool charOn = modeBox.getSelectedItemIndex() > 0;
+        for (auto* k : { &knob1, &knob2, &knobMix })
+            if (k->isEnabled() != charOn) k->setEnabled (charOn);
+    }
     spectrumSampleRate = processor.getSampleRate();
     if (spectrumSampleRate <= 0.0) spectrumSampleRate = 44100.0;
 
@@ -286,6 +311,7 @@ void GlobalEqPanel::paint (juce::Graphics& g)
     }
 
     // ── Band strip: per-band info cards along the bottom ──────────────────────
+    drawCharacterStrip (g, characterArea());
     drawBandStrip (g, stripArea());
 }
 
@@ -294,6 +320,88 @@ void GlobalEqPanel::paint (juce::Graphics& g)
 void GlobalEqPanel::resized()
 {
     layout();
+    layoutCharacter();
+}
+
+// ── CHARACTER strip ───────────────────────────────────────────────────────────
+
+juce::Rectangle<float> GlobalEqPanel::characterArea() const
+{
+    auto b = getLocalBounds().toFloat().reduced (8.f);
+    b.removeFromBottom (kStripHeight + kCharGap);
+    return b.removeFromBottom (kCharHeight);
+}
+
+void GlobalEqPanel::layoutCharacter()
+{
+    auto card = characterArea().reduced (4.f, 2.f);
+    modeBox.setBounds ((card.getX() + 14.f), (card.getY() + 26.f), 186, 26);
+    const float x0 = card.getX() + 290.f;
+    const float cy = card.getY() + 38.f;
+    auto place = [&] (juce::Slider& s, int i)
+    {
+        s.setBounds (juce::Rectangle<int> (44, 44).withCentre ({ juce::roundToInt (x0 + (float) i * 140.f), juce::roundToInt (cy) }));
+    };
+    place (knob1, 0); place (knob2, 1); place (knobMix, 2);
+}
+
+void GlobalEqPanel::drawCharacterStrip (juce::Graphics& g, juce::Rectangle<float> area) const
+{
+    auto& theme = getTheme();
+    auto card = area.reduced (4.f, 2.f);
+    const bool bench = theme.isBench();
+    g.setColour (theme.darkBar);
+    g.fillRoundedRectangle (card, bench ? theme.cornerRadius : 3.f);
+    g.setColour (theme.separator);
+    g.drawRoundedRectangle (card.reduced (0.5f), bench ? theme.cornerRadius : 3.f, 1.0f);
+
+    const int mode = modeBox.getSelectedItemIndex();
+    g.setColour (theme.foreground.withAlpha (0.55f));
+    g.setFont (DysektLookAndFeel::makeFont (10.f, true));
+    g.drawText ("CHARACTER", juce::Rectangle<float> (card.getX() + 14.f, card.getY() + 8.f, 120.f, 14.f),
+                juce::Justification::centredLeft, false);
+
+    const bool on = mode > 0;
+    g.setColour (on ? theme.accent : theme.foreground.withAlpha (0.25f));
+    g.fillEllipse (card.getX() + 14.f, card.getY() + 62.f, 10.f, 10.f);
+    g.setColour (theme.foreground.withAlpha (0.6f));
+    g.setFont (DysektLookAndFeel::makeFont (10.5f));
+    g.drawText (on ? "Active  -  mix " + juce::String (juce::roundToInt ((float) knobMix.getValue() * 100.f)) + "%" : "Off",
+                juce::Rectangle<float> (card.getX() + 30.f, card.getY() + 58.f, 170.f, 18.f),
+                juce::Justification::centredLeft, false);
+
+    g.setColour (theme.separator);
+    g.fillRect (card.getX() + 222.f, card.getY() + 10.f, 1.f, card.getHeight() - 20.f);
+
+    static const char* l1[] = { "", "BITS", "RATE", "RATE", "DRIVE" };
+    static const char* l2[] = { "", "DITHER", "SMOOTH", "GRIT", "TONE" };
+    const double sr = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 44100.0;
+    const double a = knob1.getValue(), b = knob2.getValue();
+    juce::String v1, v2;
+    auto khz = [] (double hz) { return juce::String (hz / 1000.0, 1) + " kHz"; };
+    switch (mode)
+    {
+        case 1: v1 = juce::String (juce::roundToInt ((float) (16.0 - a * 12.0))) + " bit"; v2 = juce::String (juce::roundToInt ((float) b * 100.f)) + "%"; break;
+        case 2: v1 = khz (sr * std::pow (0.04, a)); v2 = juce::String (juce::roundToInt ((float) b * 100.f)) + "%"; break;
+        case 3: v1 = khz (sr * std::pow (0.08, a)); v2 = juce::String (juce::roundToInt ((float) b * 100.f)) + "%"; break;
+        case 4: v1 = juce::String (juce::roundToInt ((float) a * 100.f)) + "%"; v2 = khz (6000.0 + b * 7000.0); break;
+        default: break;
+    }
+
+    const juce::String labels[3] = { l1[mode], l2[mode], "DRY / WET" };
+    const juce::String values[3] = { v1, v2, juce::String (juce::roundToInt ((float) knobMix.getValue() * 100.f)) + "%" };
+    const juce::Slider* ks[3] = { &knob1, &knob2, &knobMix };
+    for (int i = 0; i < 3; ++i)
+    {
+        const auto cx = (float) ks[i]->getBounds().getCentreX();
+        const float alpha = on ? 1.f : 0.35f;
+        g.setColour (theme.foreground.withAlpha (0.6f * alpha));
+        g.setFont (DysektLookAndFeel::makeFont (9.5f, true));
+        g.drawText (labels[i], juce::Rectangle<float> (cx - 60.f, card.getY() + 6.f, 120.f, 13.f), juce::Justification::centred, false);
+        g.setColour (theme.foreground.withAlpha (0.85f * alpha));
+        g.setFont (DysektLookAndFeel::makeMonoFont (11.f));
+        g.drawText (values[i], juce::Rectangle<float> (cx - 60.f, card.getY() + 62.f, 120.f, 16.f), juce::Justification::centred, false);
+    }
 }
 
 // ── Mouse ─────────────────────────────────────────────────────────────────────
@@ -474,7 +582,7 @@ juce::Rectangle<float> GlobalEqPanel::plotArea() const
     return getLocalBounds().toFloat()
            .reduced (8.f)
            .withTrimmedTop (kHeaderHeight)
-           .withTrimmedBottom (kStripHeight + kFreqLabelGap)
+           .withTrimmedBottom (kStripHeight + kCharHeight + kCharGap + kFreqLabelGap)
            .withTrimmedLeft (kDbLabelWidth)
            .withTrimmedRight (6.f);
 }

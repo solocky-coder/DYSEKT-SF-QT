@@ -349,6 +349,7 @@ void DysektProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         seed (globalEq.get<3>()); seed (globalEq.get<4>());
         globalEq.reset();
         globalEqNeedsUpdate = true;
+        characterFx.prepare (sampleRate);
     }
 }
 
@@ -4944,8 +4945,18 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             globalEqNeedsUpdate = false;
         }
 
-        // Build a 2-channel AudioBlock over busL[0] / busR[0] and process in-place
         const int ns = buffer.getNumSamples();
+
+        // Character (lo-fi / converter colour) sits in front of the EQ bands.
+        {
+            auto P = [this] (const juce::String& id) { return apvts.getRawParameterValue (id)->load(); };
+            characterFx.process (busL[0], busR[0] ? busR[0] : busL[0], ns,
+                                 (int) std::lround (P (ParamIds::characterMode)),
+                                 P (ParamIds::characterP1), P (ParamIds::characterP2),
+                                 P (ParamIds::characterMix));
+        }
+
+        // Build a 2-channel AudioBlock over busL[0] / busR[0] and process in-place
         float* chans[2] = { busL[0], busR[0] ? busR[0] : busL[0] };
         juce::dsp::AudioBlock<float> eqBlock (chans, 2, (size_t) ns);
         juce::dsp::ProcessContextReplacing<float> eqCtx (eqBlock);

@@ -51,6 +51,10 @@ namespace ParamIds
     inline const juce::String globalEqHighMidQ    { "globalEqHighMidQ" };
     inline const juce::String globalEqHighGain    { "globalEqHighGain" };
     inline const juce::String globalEqHighFreq    { "globalEqHighFreq" };
+    inline const juce::String characterMode       { "characterMode" };
+    inline const juce::String characterP1         { "characterP1" };
+    inline const juce::String characterP2         { "characterP2" };
+    inline const juce::String characterMix        { "characterMix" };
     // Default per-slice EQ globals (used as fallback when slice has no lock)
     inline const juce::String defaultEqLowGain    { "defaultEqLowGain" };
     inline const juce::String defaultEqMidGain    { "defaultEqMidGain" };

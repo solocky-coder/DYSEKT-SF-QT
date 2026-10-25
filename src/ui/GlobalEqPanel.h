@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <memory>
 
 class DysektProcessor;
 
@@ -75,6 +76,9 @@ private:
     juce::Rectangle<float> headerArea() const;
     juce::Rectangle<float> stripArea()  const;
     juce::Rectangle<float> analyzerToggleBounds() const;
+    juce::Rectangle<float> characterArea() const;
+    void drawCharacterStrip (juce::Graphics&, juce::Rectangle<float> card) const;
+    void layoutCharacter();
 
     void drawHeader    (juce::Graphics&, juce::Rectangle<float> area) const;
     void drawBandStrip (juce::Graphics&, juce::Rectangle<float> area) const;
@@ -95,6 +99,12 @@ private:
     int hitTest (juce::Point<float> p) const;  // returns band index or NoBand
 
     void resetBandToDefault (int band);
+
+    // ── Character strip (master-bus lo-fi / converter colour, runs before the EQ) ──
+    juce::ComboBox modeBox;
+    juce::Slider   knob1, knob2, knobMix;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttach;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   k1Attach, k2Attach, mixAttach;
 
     // ── Timer ─────────────────────────────────────────────────────────────────
     void timerCallback() override;
@@ -126,6 +136,8 @@ private:
     static constexpr float kHeaderHeight  = 32.f;  // title + subtitle + analyzer row
     static constexpr float kStripHeight   = 62.f;  // per-band info cards along the bottom
     static constexpr float kDbLabelWidth  = 36.f;  // left-hand dB scale column
+    static constexpr float kCharHeight    = 84.f;  // CHARACTER strip above the band cards
+    static constexpr float kCharGap       = 8.f;
     static constexpr float kFreqLabelGap  = 14.f;  // room for freq axis labels above the strip
 
     // Frequency extents for the plot (log scale)

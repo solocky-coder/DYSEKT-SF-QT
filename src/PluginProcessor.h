@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "audio/Slice.h"
+#include "audio/CharacterFx.h"
 #include "audio/SampleData.h"
 #include "audio/SliceManager.h"
 #include "audio/VoicePool.h"
@@ -1426,6 +1427,7 @@ public:
         juce::dsp::IIR::Filter<float>    // band 4: high shelf (~12 kHz)
     > globalEq;
     bool globalEqNeedsUpdate = true;
+    CharacterFx characterFx;   // runs on the main bus before the global EQ
     // Last-seen values of the 13 global EQ parameters (per instance - this used to be
     // function-local statics shared by every plugin instance).
     std::array<float, 13> globalEqSeen { { -999.f, -999.f, -999.f, -999.f, -999.f, -999.f, -999.f,

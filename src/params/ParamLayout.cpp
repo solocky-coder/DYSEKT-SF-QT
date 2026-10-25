@@ -269,6 +269,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout ParamLayout::createLayout()
         juce::NormalisableRange<float> (2000.0f, 20000.0f, 1.0f, 0.4f),
         12000.0f));
 
+    // Character (master bus lo-fi / converter colour, before the Global EQ)
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { ParamIds::characterMode, 1 }, "Character Mode",
+        juce::StringArray { "Off", "Bit Crush", "Smooth Downsample", "Gritty Lo-Fi", "12-Bit Drum Sampler" }, 0));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ParamIds::characterP1, 1 }, "Character Knob 1",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.5f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ParamIds::characterP2, 1 }, "Character Knob 2",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.4f));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ParamIds::characterMix, 1 }, "Character Dry/Wet",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 1.0f));
+
     // v25: master audio-domain pitch shift (semitones) — applied post-EQ on summed output
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { ParamIds::masterPitch, 1 },
