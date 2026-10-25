@@ -888,10 +888,10 @@ void SliceLcdDisplay::paint (juce::Graphics& g)
         drawRowPair (g, 7, susStr, relStr);
     }
 
-    // ── Row 8:  BODY:+x.xst  |  ROOT:xxxHz ────────────────────────────────────
+    // ── Row 8:  TIMBRE:+x.xst  |  ROOT:xxxHz ────────────────────────────────────
     {
         const float fmnt = data.formantSemitones;
-        juce::String fmntStr = juce::String ("BODY:") + (fmnt >= 0.0f ? "+" : "")
+        juce::String fmntStr = juce::String ("TIMBRE:") + (fmnt >= 0.0f ? "+" : "")
                              + juce::String (fmnt, 1) + "st";
         juce::String tonalStr = "ROOT:" + (data.tonalityHz < 1.0f
                               ? juce::String ("OFF")

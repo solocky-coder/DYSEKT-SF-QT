@@ -1134,7 +1134,7 @@ void SliceControlBar::paint (juce::Graphics& g)
 
  float fv = effFormant;
  wrapCell (x, row1y);
- drawKnobCell (g, x, row1y, "BODY",
+ drawKnobCell (g, x, row1y, "TIMBRE",
  (fv >= 0.f ? "+" : "") + juce::String (fv, 1),
  toNorm (F::FieldFormant, fv),
  true, 0, F::FieldFormant, -24.f, 24.f, 0.1f, cw);
