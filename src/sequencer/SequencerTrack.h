@@ -76,6 +76,15 @@ struct SequencerTrack
     bool networkMidiIsChild = false;
     juce::String networkMidiPeer;
 
+    // Network MIDI tracks only: name of a physical MIDI output port this track sends to
+    // instead of the network peer. Empty = send over the network (the default). Read on the
+    // audio thread, so it is published as an immutable snapshot. Saved from stream v8.
+    juce::String getMidiOutPort() const { return *midiOutPortSnapshot.load (std::memory_order_acquire); }
+    void setMidiOutPort (const juce::String& port)
+    {
+        midiOutPortSnapshot.store (std::make_shared<const juce::String> (port), std::memory_order_release);
+    }
+
     // Runtime audio-take metadata. Persisted from project stream version 4
     // onward (see SequencerEngine.cpp's kStreamVersion4); older project
     // files simply have no AudioClip block to read and load with an empty list.
@@ -151,14 +160,14 @@ struct SequencerTrack
         auto snap = getClips(); s.writeInt ((int) snap->size()); for (auto& slot : *snap) slot->writeToStream (s);
         s.writeBool (solo.load()); s.writeFloat (volumeDb.load()); s.writeFloat (pan.load());
         if (type == TrackType::Audio) { s.writeInt64 (networkRouteId); s.writeInt (networkSourceId); s.writeInt (networkSourceChannel); s.writeInt (linkedMidiDeviceId); }
-        if (type == TrackType::NetworkMidi) { s.writeInt(networkMidiDeviceId); s.writeBool(networkMidiIsChild); s.writeString(networkMidiPeer); }
+        if (type == TrackType::NetworkMidi) { s.writeInt(networkMidiDeviceId); s.writeBool(networkMidiIsChild); s.writeString(networkMidiPeer); s.writeString(getMidiOutPort()); }
         auto audioSnap = getAudioClips();
         s.writeInt ((int) audioSnap->size());
         for (auto& c : *audioSnap) c.writeToStream (s);
         // Stream v7: SFZ instrument / layer info.
         s.writeBool (isSfzInstrument); s.writeBool (isSfzLayer); s.writeInt (layerLoKey.load()); s.writeInt (layerHiKey.load());
     }
-    bool readFromStream (juce::MemoryInputStream& s, bool hasExtendedFields = true, bool hasAudioClips = false, bool hasNetworkMidi = false, bool hasMidiLink = false, bool hasSfzLayer = false)
+    bool readFromStream (juce::MemoryInputStream& s, bool hasExtendedFields = true, bool hasAudioClips = false, bool hasNetworkMidi = false, bool hasMidiLink = false, bool hasSfzLayer = false, bool hasMidiPort = false)
     {
         type = (TrackType) s.readInt(); enabled.store (s.readBool()); name = s.readString(); colour = juce::Colour ((juce::uint32) s.readInt()); sliceIdx = s.readInt(); midiChannel.store (s.readInt());
         preset.bank = s.readInt(); preset.preset = s.readInt(); preset.name = s.readString();
@@ -167,7 +176,7 @@ struct SequencerTrack
         sortAndPublish (std::move (next));
         if (hasExtendedFields) { solo.store (s.readBool()); volumeDb.store (s.readFloat()); pan.store (s.readFloat()); }
         if (type == TrackType::Audio) { networkRouteId = s.readInt64(); networkSourceId = s.readInt(); networkSourceChannel = s.readInt(); if (hasMidiLink) linkedMidiDeviceId = s.readInt(); }
-        if (hasNetworkMidi && type == TrackType::NetworkMidi) { networkMidiDeviceId=s.readInt(); networkMidiIsChild=s.readBool(); networkMidiPeer=s.readString(); }
+        if (hasNetworkMidi && type == TrackType::NetworkMidi) { networkMidiDeviceId=s.readInt(); networkMidiIsChild=s.readBool(); networkMidiPeer=s.readString(); if (hasMidiPort) setMidiOutPort (s.readString()); }
         if (hasAudioClips)
         {
             const int an = s.readInt(); if (an < 0 || an > 4096) return false;
@@ -192,6 +201,7 @@ struct SequencerTrack
     { type = (TrackType) s.readInt(); enabled.store (s.readBool()); name = s.readString(); colour = juce::Colour ((juce::uint32) s.readInt()); sliceIdx = s.readInt(); midiChannel.store (s.readInt()); preset.bank = s.readInt(); preset.preset = s.readInt(); preset.name = s.readString(); auto slot = std::make_shared<ClipSlot>(); slot->startTick.store (0); if (! slot->clip.readFromStream (s)) return false; auto next = std::make_shared<ClipList>(); next->push_back (std::move (slot)); publish (std::move (next)); return true; }
 private:
     std::atomic<std::shared_ptr<const ClipList>> clipsSnapshot { std::make_shared<const ClipList>() };
+    std::atomic<std::shared_ptr<const juce::String>> midiOutPortSnapshot { std::make_shared<const juce::String>() };
     std::atomic<std::shared_ptr<const AudioClipList>> audioClipsSnapshot { std::make_shared<const AudioClipList>() };
     void publish (std::shared_ptr<const ClipList> next) { clipsSnapshot.store (std::move (next), std::memory_order_release); }
     void sortAndPublish (std::shared_ptr<ClipList> next) { std::sort (next->begin(), next->end(), [] (const auto& a, const auto& b) { return a->getStartTick() < b->getStartTick(); }); publish (std::move (next)); }

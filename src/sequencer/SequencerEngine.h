@@ -19,6 +19,7 @@ struct SequencerTrackInfo
     bool isSfzLayer = false; int layerLoKey = 0; int layerHiKey = 127; bool layerShown = false;
     int64_t networkRouteId = 0; int32_t networkSourceId = 0; int networkSourceChannel = 0;
     int linkedMidiDeviceId=0; int networkMidiDeviceId=0; bool networkMidiIsChild=false; juce::String networkMidiPeer;
+    juce::String midiOutPort;   // Network MIDI tracks: physical output port name ("" = network)
 };
 
 /** Name shown in the arranger. Network audio tracks are stored as
@@ -106,6 +107,15 @@ public:
     using AudioPeerResolver=juce::String(*)(void*,int64_t sourceKey,int32_t sourceId);
     void setNetworkAudioPeerResolver(AudioPeerResolver,void*) noexcept;
     void sendNetworkMidi(int,const juce::MidiMessage&) const noexcept;
+    /** Physical MIDI output ports. The host installs a sink that queues the message for the
+        named port (called on the audio thread, so it must not block). */
+    using MidiPortSink=void(*)(void*,const juce::String& portName,const juce::MidiMessage&);
+    void setMidiPortSink(MidiPortSink,void*) noexcept;
+    /** Network MIDI track -> physical port name ("" = send over the network). */
+    bool setNetworkMidiOutPort(int trackIndex,const juce::String& portName);
+    juce::String getNetworkMidiOutPort(int trackIndex) const;
+    /** Live MIDI for the selected Network MIDI track: goes to its port, or to its network device. */
+    void sendLiveNetworkMidi(const juce::MidiMessage&) const noexcept;
     int addNetworkMidiTrack(const juce::String&,const juce::String&);
     int addNetworkMidiChild(int,int=-1);
     bool removeNetworkMidiTrack(int);

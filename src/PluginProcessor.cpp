@@ -4023,10 +4023,9 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Clip playback is already handled by SequencerEngine::processBlock().
     if (selectedTarget.player == LiveTargetPlayer::network)
     {
-        const int deviceId = sequencer.getSelectedNetworkMidiDevice();
-        if (deviceId != 0)
+        if (sequencer.getSelectedNetworkMidiDevice() != 0)
             for (const auto meta : midi)
-                sequencer.sendNetworkMidi (deviceId, meta.getMessage());
+                sequencer.sendLiveNetworkMidi (meta.getMessage());
         standaloneSfLiveInput.clear();
         midi.clear();
     }

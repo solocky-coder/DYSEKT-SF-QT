@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_audio_devices/juce_audio_devices.h>
 #include "../sequencer/SequencerEngine.h"
 #include "DysektLookAndFeel.h"
 #include <cmath>
@@ -155,6 +156,8 @@ public:
                                 static_cast<juce::Component*> (&peerLabel),
                                 static_cast<juce::Component*> (&peerEditor),
                                 static_cast<juce::Component*> (&channelCombo),
+                                static_cast<juce::Component*> (&outLabel),
+                                static_cast<juce::Component*> (&outCombo),
                                 static_cast<juce::Component*> (&addChildButton),
                                 static_cast<juce::Component*> (&addMidiChildButton),
                                 static_cast<juce::Component*> (&deleteNetworkButton),
@@ -162,6 +165,21 @@ public:
             addAndMakeVisible (*control);
 
         peerLabel.setText ("DEVICE", juce::dontSendNotification);
+        outLabel.setText ("OUT", juce::dontSendNotification);
+        outCombo.setTooltip ("Where this track's notes go: over the network, or to a physical MIDI port.");
+        outCombo.onBeforePopup = [this]
+        {
+            if (hasTrack() && engine.isNetworkMidiTrack (selectedTrack))
+                populateOutCombo (engine.getNetworkMidiOutPort (selectedTrack));
+        };
+        outCombo.onChange = [this]
+        {
+            if (! (hasTrack() && engine.isNetworkMidiTrack (selectedTrack))) return;
+            const int id = outCombo.getSelectedId();
+            if (id == 1000) return;   // the "missing" entry: keep the stored port
+            engine.setNetworkMidiOutPort (selectedTrack, id == 1 ? juce::String() : portNames[id]);
+            refresh();
+        };
         peerEditor.setInputRestrictions (15, "0123456789.");
         peerEditor.onReturnKey = [this] { commitNetworkPeer(); };
         peerEditor.onFocusLost = [this] { commitNetworkPeer(); };
@@ -221,6 +239,8 @@ public:
         for (auto* c : { static_cast<juce::Component*> (&peerLabel),
                          static_cast<juce::Component*> (&peerEditor),
                          static_cast<juce::Component*> (&channelCombo),
+                         static_cast<juce::Component*> (&outLabel),
+                         static_cast<juce::Component*> (&outCombo),
                          static_cast<juce::Component*> (&addChildButton),
                          static_cast<juce::Component*> (&addMidiChildButton),
                          static_cast<juce::Component*> (&deleteNetworkButton),
@@ -294,6 +314,7 @@ public:
         const auto info = engine.getTrackInfo (selectedTrack);
         const bool isNetwork = info.type == TrackType::NetworkMidi;
         peerLabel.setVisible (isNetwork); peerEditor.setVisible (isNetwork); channelCombo.setVisible (isNetwork);
+        outLabel.setVisible (isNetwork); outCombo.setVisible (isNetwork);
         addChildButton.setVisible (isNetwork && ! info.networkMidiIsChild && engine.getNetworkMidiChildCount (selectedTrack) < SequencerEngine::kMaxNetworkMidiChildren);
         deleteNetworkButton.setVisible (isNetwork); networkStatusLabel.setVisible (isNetwork);
         addMidiChildButton.setVisible (info.type == TrackType::Audio && engine.isNetworkAudioTrack (selectedTrack));
@@ -364,6 +385,9 @@ public:
         {
             peerEditor.setText (info.networkMidiPeer, false);
             channelCombo.setSelectedItemIndex (juce::jlimit (0, 15, info.midiChannel), juce::dontSendNotification);
+            populateOutCombo (info.midiOutPort);
+            peerEditor.setEnabled (info.midiOutPort.isEmpty());
+            outLabel.setVisible (true); outCombo.setVisible (true);
             networkStatusLabel.setText (info.networkMidiIsChild ? "CHILD TRACK - device " + juce::String (info.networkMidiDeviceId)
                                                                  : "DEVICE TRACK - " + juce::String (engine.getNetworkMidiChildCount (selectedTrack)) + " child(s)", juce::dontSendNotification);
             addChildButton.setVisible (! info.networkMidiIsChild && engine.getNetworkMidiChildCount (selectedTrack) < SequencerEngine::kMaxNetworkMidiChildren);
@@ -373,6 +397,7 @@ public:
         else
         {
             peerLabel.setVisible (false); peerEditor.setVisible (false); channelCombo.setVisible (false);
+            outLabel.setVisible (false); outCombo.setVisible (false);
             addChildButton.setVisible (false); deleteNetworkButton.setVisible (false); networkStatusLabel.setVisible (false);
         }
         const bool isNetworkAudio = info.type == TrackType::Audio && engine.isNetworkAudioTrack (selectedTrack);
@@ -392,6 +417,10 @@ public:
             auto peerRow = area.removeFromTop (28);
             peerLabel.setBounds (peerRow.removeFromLeft (54));
             peerEditor.setBounds (peerRow);
+            area.removeFromTop (5);
+            auto outRow = area.removeFromTop (28);
+            outLabel.setBounds (outRow.removeFromLeft (54));
+            outCombo.setBounds (outRow);
             area.removeFromTop (5);
             auto netRow = area.removeFromTop (28);
             channelCombo.setBounds (netRow.removeFromLeft (72));
@@ -529,7 +558,7 @@ public:
         if (info.type == TrackType::NetworkMidi)
         {
             sectionLabel (g, "NETWORK MIDI", content.removeFromTop (kSectionLabelH));
-            content.removeFromTop (kGapS + 28 + 5 + 28 + 4 + 18 + kGapL);
+            content.removeFromTop (kGapS + 28 + 5 + 28 + 5 + 28 + 4 + 18 + kGapL);
         }
 
         // ── Network MIDI section (network audio tracks) ────────────────
@@ -666,6 +695,16 @@ private:
     juce::Label peerLabel, networkStatusLabel;
     juce::TextEditor peerEditor;
     juce::ComboBox channelCombo;
+
+    /** OUT selector for Network MIDI tracks: "Network" or one of the MIDI output ports.
+        The port list is re-read each time the menu opens so newly plugged devices show up. */
+    struct OutCombo : juce::ComboBox
+    {
+        std::function<void()> onBeforePopup;
+        void showPopup() override { if (onBeforePopup) onBeforePopup(); juce::ComboBox::showPopup(); }
+    };
+    juce::Label outLabel;
+    OutCombo    outCombo;
     juce::TextButton addChildButton, addMidiChildButton, deleteNetworkButton;
 
     juce::OwnedArray<juce::TextButton> colourButtons;   // fixed palette — see constructor
@@ -708,6 +747,29 @@ private:
         button.getProperties().set ("transportFontSize", 14.0);
         addAndMakeVisible (button);
     }
+
+    void populateOutCombo (const juce::String& current)
+    {
+        outCombo.clear (juce::dontSendNotification);
+        outCombo.addItem ("Network (RTP-MIDI)", 1);
+        bool found = current.isEmpty();
+        int sel = 1, id = 2;
+        for (const auto& d : juce::MidiOutput::getAvailableDevices())
+        {
+            outCombo.addItem ("Port: " + d.name, id);
+            portNames.set (id, d.name);
+            if (d.name == current) { sel = id; found = true; }
+            ++id;
+        }
+        if (! found)
+        {
+            outCombo.addItem ("Port: " + current + " (missing)", 1000);
+            sel = 1000;
+        }
+        outCombo.setSelectedId (sel, juce::dontSendNotification);
+    }
+
+    juce::HashMap<int, juce::String> portNames;
 
     void commitNetworkPeer()
     {

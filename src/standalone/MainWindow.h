@@ -48,9 +48,10 @@ public:
 
         player.setProcessor (processor.get());
         deviceManager.addAudioCallback (&player);
-        midiRouter = std::make_unique<MidiRouter> (deviceManager);
+        midiRouter = std::make_unique<MidiRouter>();
         networkMidiManager = std::make_unique<NetworkMidiManager>();
         processor->sequencer.setNetworkMidiSink (&NetworkMidiManager::engineSink, networkMidiManager.get());
+        processor->sequencer.setMidiPortSink (&MidiRouter::enginePortSink, midiRouter.get());
         // Network MIDI live input is routed by PluginProcessor::processBlock()
         // after the selected arranger track is resolved. Do not also install
         // the legacy standalone MidiInput callback forwarder here: JUCE feeds
@@ -148,6 +149,7 @@ public:
                 deviceManager.removeMidiInputDeviceCallback (id, midiRouter.get());
         }
 
+        processor->sequencer.setMidiPortSink (nullptr, nullptr);
         processor->sequencer.setNetworkMidiSink (nullptr, nullptr);
         processor->sequencer.setNetworkAudioPeerResolver (nullptr, nullptr);
         RtpMidiInputForwarder::instance().setEngine (nullptr);
@@ -562,10 +564,14 @@ private:
     void showMidiRouting()
     {
         if (midiRouter == nullptr) return;
-        juce::StringArray trackNames;
+        std::vector<MidiRoutingDialog::TrackOut> outs;
         for (int i = 0; i < processor->sequencer.getNumTracks(); ++i)
-            trackNames.add (processor->sequencer.getTrackInfo(i).name);
-        auto* dlg = new MidiRoutingDialog (*midiRouter, trackNames);
+        {
+            const auto info = processor->sequencer.getTrackInfo (i);
+            if (info.type != TrackType::NetworkMidi) continue;
+            outs.push_back ({ info.name, info.midiChannel + 1, info.midiOutPort, info.networkMidiPeer });
+        }
+        auto* dlg = new MidiRoutingDialog (*midiRouter, std::move (outs));
         // Scrolls when many tracks make the dialog taller than the screen.
         launchScrollableSettingsDialog (dlg, "MIDI Routing", true);
     }
@@ -593,6 +599,7 @@ private:
         {
             const auto info = seq.getTrackInfo (i);
             if (info.type != TrackType::NetworkMidi || info.networkMidiPeer.isEmpty()
+                || info.midiOutPort.isNotEmpty()   // sends to a physical port: no RTP session needed
                 || ! configuredDevices.insert (info.networkMidiDeviceId).second)
                 continue;
 
