@@ -47,6 +47,12 @@ public:
     SequencerEngine(); ~SequencerEngine();
     bool isPlaying() const noexcept; bool isLooping() const noexcept; bool isRecording() const noexcept;
     int getCountInBars() const noexcept; void setCountInBars (int bars) noexcept;
+    /** Count-in length before a recording take: 0 = off, 1 or 2 bars. */
+    /** Click while playing / recording (separate from the count-in). Volume 0..1.
+        clickOutput: 0 = main mix, 1..8 = extra output pair "Out 2".."Out 9". */
+    void setMetronomeEnabled (bool on) noexcept; bool isMetronomeEnabled() const noexcept;
+    void setMetronomeVolume (float v) noexcept;  float getMetronomeVolume() const noexcept;
+    void setClickOutput (int bus) noexcept;      int   getClickOutput() const noexcept;
     int64_t getPlayheadTick() const noexcept; double getPlayheadBeats() const noexcept; float getBpm() const noexcept; bool getSyncToHost() const noexcept;
     int64_t getLengthTicks() const noexcept; int64_t getLoopStartTick() const noexcept; int64_t getLoopEndTick() const noexcept;
     void play(); void stop(); void rewind(); void setLooping (bool v); void setRecording (bool v);

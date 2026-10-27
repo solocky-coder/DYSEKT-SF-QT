@@ -4064,7 +4064,7 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                     const int clickLength = juce::jmax (1, (int) std::round (0.055 * currentSampleRate));
                     countInClickSamplesLeft = clickLength;
                     countInClickPhase = 0.0f;
-                    countInClickGain = msg.getVelocity() >= 110 ? 0.22f : 0.15f;
+                    countInClickGain = (msg.getVelocity() >= 110 ? 0.5f : 0.35f) * sequencer.getMetronomeVolume();
                     continue;
                 }
 
@@ -4077,26 +4077,8 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
         standaloneSfPlayerRecordedEvents = std::move (sfPlayerSeqEvents);
 
-        // Render the short count-in click directly into the audio buffer.
-        // This is deliberately a tiny generated tone (no allocation, locks,
-        // or sample lookup) so the count-in remains safe on the audio thread.
-        if (countInClickSamplesLeft > 0)
-        {
-            const double phaseStep = 2.0 * juce::MathConstants<double>::pi * 1760.0
-                                     / currentSampleRate;
-            const int n = buffer.getNumSamples();
-            for (int s = 0; s < n && countInClickSamplesLeft > 0; ++s)
-            {
-                const float env = (float) countInClickSamplesLeft
-                                  / (float) juce::jmax (1, (int) std::round (0.055 * currentSampleRate));
-                const float sample = countInClickGain * env
-                                   * (float) std::sin ((double) countInClickPhase);
-                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                    buffer.addSample (ch, s, sample);
-                countInClickPhase += (float) phaseStep;
-                --countInClickSamplesLeft;
-            }
-        }
+        // The click itself is rendered at the end of processBlock (after the mix),
+        // so nothing downstream can clear or process it.
 
         // The slicer only ever sees the already-transformed live channel-1
         // input (now on the selected track's own channel, whatever it is)
@@ -4971,6 +4953,30 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     // ── Post-EQ spectrum analyser tap ─────────────────────────────────────────
     spectrumAnalyser.pushSamples (buffer);
+
+    // ── Click (count-in and metronome) ────────────────────────────────────────
+    // Rendered after the master chain, so it is neither EQ'd nor soft-limited with
+    // the music. Goes to the main mix, or to one of the extra output pairs when
+    // the user picked one (falls back to the main mix if that output is not active).
+    if (countInClickSamplesLeft > 0)
+    {
+        int target = sequencer.getClickOutput();
+        if (target < 0 || target >= numActiveBuses || busL[target] == nullptr) target = 0;
+        float* cl = busL[target];
+        float* cr = busR[target] != nullptr ? busR[target] : busL[target];
+        const int clickLen = juce::jmax (1, (int) std::round (0.055 * currentSampleRate));
+        const double phaseStep = 2.0 * juce::MathConstants<double>::pi * 1760.0 / currentSampleRate;
+        const int n = buffer.getNumSamples();
+        for (int s = 0; s < n && countInClickSamplesLeft > 0 && cl != nullptr; ++s)
+        {
+            const float env = (float) countInClickSamplesLeft / (float) clickLen;
+            const float sample = countInClickGain * env * (float) std::sin ((double) countInClickPhase);
+            cl[s] += sample;
+            if (cr != cl) cr[s] += sample;
+            countInClickPhase += (float) phaseStep;
+            --countInClickSamplesLeft;
+        }
+    }
 
     // Decay all slice peak meters toward zero (60 dB/s at typical block sizes)
     static const float kDecayPerBlock = 0.60f;  // approx 60 dB/s at 512 @ 44100

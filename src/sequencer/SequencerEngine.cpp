@@ -54,6 +54,7 @@ static constexpr int kStreamVersion5 = 5;
 static constexpr int kStreamVersion6 = 6;  // + audio track -> Network MIDI device link
 static constexpr int kStreamVersion7 = 7;  // + SFZ instrument / layer track info
 static constexpr int kStreamVersion8 = 8;  // + Network MIDI track physical output port
+static constexpr int kStreamVersion9 = 9;  // + metronome / count-in / click output settings
 
 //==============================================================================
 struct SequencerEngine::Impl
@@ -90,6 +91,9 @@ struct SequencerEngine::Impl
     // Recording is armed immediately, but actual capture waits for the
     // configured count-in. The audio thread owns the countdown state.
     std::atomic<int>     countInBars { 1 };
+    std::atomic<bool>    metronomeOn { false };
+    std::atomic<float>   metronomeVol { 0.6f };
+    std::atomic<int>     clickOutput { 0 };
     std::atomic<bool>    countInActive { false };
     std::atomic<int64_t> countInRemainingTicks { 0 };
     int64_t countInElapsedTicks = 0;
@@ -369,8 +373,14 @@ bool    SequencerEngine::isRecording()      const noexcept { return impl->record
 int     SequencerEngine::getCountInBars()   const noexcept { return impl->countInBars.load (std::memory_order_relaxed); }
 void    SequencerEngine::setCountInBars (int bars) noexcept
 {
-    impl->countInBars.store (juce::jlimit (1, 2, bars), std::memory_order_relaxed);
+    impl->countInBars.store (juce::jlimit (0, 2, bars), std::memory_order_relaxed);
 }
+void  SequencerEngine::setMetronomeEnabled (bool on) noexcept { impl->metronomeOn.store (on, std::memory_order_relaxed); }
+bool  SequencerEngine::isMetronomeEnabled() const noexcept    { return impl->metronomeOn.load (std::memory_order_relaxed); }
+void  SequencerEngine::setMetronomeVolume (float v) noexcept  { impl->metronomeVol.store (juce::jlimit (0.0f, 1.0f, v), std::memory_order_relaxed); }
+float SequencerEngine::getMetronomeVolume() const noexcept    { return impl->metronomeVol.load (std::memory_order_relaxed); }
+void  SequencerEngine::setClickOutput (int bus) noexcept      { impl->clickOutput.store (juce::jlimit (0, 8, bus), std::memory_order_relaxed); }
+int   SequencerEngine::getClickOutput() const noexcept        { return impl->clickOutput.load (std::memory_order_relaxed); }
 int64_t SequencerEngine::getPlayheadTick()  const noexcept { return impl->playheadTick.load (std::memory_order_relaxed); }
 double  SequencerEngine::getPlayheadBeats() const noexcept { return (double) getPlayheadTick() / (double) MidiClip::kPPQ; }
 float   SequencerEngine::getBpm()           const noexcept { return impl->internalBpm.load (std::memory_order_relaxed); }
@@ -1583,14 +1593,23 @@ void SequencerEngine::processBlock (juce::MidiBuffer& outMidi, const juce::MidiB
         // land in the transport's already-passed opening block.
         if (impl->recording.load (std::memory_order_relaxed))
         {
-            const int bars = juce::jlimit (1, 2,
+            const int bars = juce::jlimit (0, 2,
                 impl->countInBars.load (std::memory_order_relaxed));
+            if (bars == 0)
+            {
+                // Count-in off: record from the start of the next block.
+                impl->liveRecordClip = {};
+                impl->beginLiveRecordClip (impl->recordingTrackIndex.load (std::memory_order_relaxed));
+            }
+            else
+            {
             impl->countInRemainingTicks.store (
                 (int64_t) bars * MidiClip::kPPQ * 4, std::memory_order_relaxed);
             impl->countInElapsedTicks = 0;
             impl->countInNextBeat = 0;
             impl->countInActive.store (true, std::memory_order_relaxed);
             impl->liveRecordClip = {};
+            }
         }
     }
     // ── React to a remote Link peer's Play/Stop ───────────────────────────
@@ -1724,6 +1743,32 @@ void SequencerEngine::processBlock (juce::MidiBuffer& outMidi, const juce::MidiB
     const int64_t loopEnd = configuredLoopEnd > loopStart ? configuredLoopEnd : masterLen;
     const int64_t loopLength = juce::jmax ((int64_t) MidiClip::kPPQ, loopEnd - loopStart);
 
+    // Metronome: one click per quarter note while the transport runs (the count-in has its own).
+    // Same private channel-16 trigger as the count-in; PluginProcessor turns it into an audio click.
+    if (impl->metronomeOn.load (std::memory_order_relaxed))
+    {
+        const int64_t beatTicks = MidiClip::kPPQ;
+        auto emit = [&] (double fromTick, double toTick, double offsetSamples)
+        {
+            int64_t k = (int64_t) std::ceil (fromTick / (double) beatTicks);
+            for (; (double) (k * beatTicks) < toTick; ++k)
+            {
+                const int pos = juce::jlimit (0, numSamples - 1,
+                    (int) std::llround (offsetSamples + ((double) (k * beatTicks) - fromTick) / ticksPerSample));
+                outMidi.addEvent (juce::MidiMessage::noteOn (16, 37, (juce::uint8) ((k % 4) == 0 ? 120 : 92)), pos);
+            }
+        };
+        const double tickEnd = impl->currentTick + ticksPerSample * numSamples;
+        if (doLoop && loopEnd > loopStart && tickEnd >= (double) loopEnd)
+        {
+            emit (impl->currentTick, (double) loopEnd, 0.0);
+            const double usedSamples = ((double) loopEnd - impl->currentTick) / ticksPerSample;
+            emit ((double) loopStart, (double) loopStart + (tickEnd - (double) loopEnd), usedSamples);
+        }
+        else
+            emit (impl->currentTick, tickEnd, 0.0);
+    }
+
     // Standard mixer convention: while any track is soloed, only soloed
     // tracks are audible, regardless of their own enabled/mute state.
     bool anySoloed = false;
@@ -1836,10 +1881,14 @@ void SequencerEngine::processBlock (juce::MidiBuffer& outMidi, const juce::MidiB
 //==============================================================================
 void SequencerEngine::writeToStream (juce::MemoryOutputStream& s) const
 {
-    s.writeInt   (kStreamVersion8);
+    s.writeInt   (kStreamVersion9);
     s.writeFloat (impl->internalBpm.load (std::memory_order_relaxed));
     s.writeBool  (impl->looping    .load (std::memory_order_relaxed));
     s.writeBool  (impl->syncToHost .load (std::memory_order_relaxed));
+    s.writeBool  (impl->metronomeOn.load (std::memory_order_relaxed));
+    s.writeFloat (impl->metronomeVol.load (std::memory_order_relaxed));
+    s.writeInt   (impl->countInBars.load (std::memory_order_relaxed));
+    s.writeInt   (impl->clickOutput.load (std::memory_order_relaxed));
 
     auto snap = impl->getTracks();
     s.writeInt ((int) snap->size());
@@ -1864,12 +1913,20 @@ bool SequencerEngine::readFromStream (juce::MemoryInputStream& s)
     const bool isV6 = (firstInt == kStreamVersion6);
     const bool isV7 = (firstInt == kStreamVersion7);
     const bool isV8 = (firstInt == kStreamVersion8);
+    const bool isV9 = (firstInt == kStreamVersion9);
 
-    if (isV2 || isV3 || isV4 || isV5 || isV6 || isV7 || isV8)
+    if (isV2 || isV3 || isV4 || isV5 || isV6 || isV7 || isV8 || isV9)
     {
         bpm  = s.readFloat();
         loop = s.readBool();
         sync = s.readBool();
+        if (isV9)
+        {
+            impl->metronomeOn .store (s.readBool());
+            impl->metronomeVol.store (juce::jlimit (0.0f, 1.0f, s.readFloat()));
+            impl->countInBars .store (juce::jlimit (0, 2, s.readInt()));
+            impl->clickOutput .store (juce::jlimit (0, 8, s.readInt()));
+        }
         n    = s.readInt();
     }
     else
@@ -1890,7 +1947,7 @@ bool SequencerEngine::readFromStream (juce::MemoryInputStream& s)
     for (int i = 0; i < n; ++i)
     {
         auto t  = std::make_shared<SequencerTrack>();
-        bool ok = (isV2 || isV3 || isV4 || isV5 || isV6 || isV7 || isV8) ? t->readFromStream (s, isV3 || isV4 || isV5 || isV6 || isV7 || isV8, isV4 || isV5 || isV6 || isV7 || isV8, isV5 || isV6 || isV7 || isV8, isV6 || isV7 || isV8, isV7 || isV8, isV8) : t->readFromStreamV1 (s);
+        bool ok = (isV2 || isV3 || isV4 || isV5 || isV6 || isV7 || isV8 || isV9) ? t->readFromStream (s, isV3 || isV4 || isV5 || isV6 || isV7 || isV8 || isV9, isV4 || isV5 || isV6 || isV7 || isV8 || isV9, isV5 || isV6 || isV7 || isV8 || isV9, isV6 || isV7 || isV8 || isV9, isV7 || isV8 || isV9, isV8 || isV9) : t->readFromStreamV1 (s);
         if (! ok) return false;
         loaded->push_back (t);
     }

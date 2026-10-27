@@ -11,6 +11,7 @@
 #include "UIHelpers.h"
 #include "ContextMenuButton.h"
 #include "TransportIconButton.h"
+#include "ClickMenus.h"
 
 using namespace dysekt::metro;   // Base/Text/Accent/Transport — same chrome
                                   // palette FloatingTransportBar.cpp uses,
@@ -95,7 +96,7 @@ public:
         stopBtn.onClick = [this] { engine.stop(); };
         recBtn.onStateChange  = [this] { engine.setRecording (recBtn.getToggleState()); };
         loopBtn.onStateChange = [this] { engine.setLooping   (loopBtn.getToggleState()); };
-        recBtn.setTooltip ("Record — right-click to choose Overdub/Add");
+        recBtn.setTooltip ("Record - right-click for record mode and count-in");
         recBtn.addMouseListener (this, false);
 
         // ── Musical position — amber, zero-padded bar.beat.tick, same
@@ -311,25 +312,7 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (e.eventComponent == &recBtn && e.mods.isPopupMenu())
-        {
-            const auto current = engine.getRecordMode();
-
-            juce::PopupMenu m;
-            m.addItem (1, "Overdub — merge into existing clip", true, current == SequencerEngine::RecordMode::Overdub);
-            m.addItem (2, "Add — always start a new clip",      true, current == SequencerEngine::RecordMode::Add);
-            m.addSeparator();
-            const int countIn = engine.getCountInBars();
-            m.addItem (3, "Count-in: 1 bar", true, countIn == 1);
-            m.addItem (4, "Count-in: 2 bars", true, countIn == 2);
-
-            m.showMenuAsync (juce::PopupMenu::Options(), [this] (int result)
-            {
-                if      (result == 1) engine.setRecordMode (SequencerEngine::RecordMode::Overdub);
-                else if (result == 2) engine.setRecordMode (SequencerEngine::RecordMode::Add);
-                else if (result == 3) engine.setCountInBars (1);
-                else if (result == 4) engine.setCountInBars (2);
-            });
-        }
+            ClickMenus::showRecordMenu (engine);
     }
 
 private:

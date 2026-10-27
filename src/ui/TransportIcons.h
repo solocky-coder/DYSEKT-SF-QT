@@ -24,7 +24,7 @@
 //==============================================================================
 namespace TransportIcons
 {
-    enum class Kind { ToStart, Back, Play, Stop, Record, Loop };
+    enum class Kind { ToStart, Back, Play, Stop, Record, Loop, Metronome };
 
     namespace detail
     {
@@ -165,6 +165,24 @@ namespace TransportIcons
                 arrowHead ({ cx + r * std::cos (juce::MathConstants<float>::pi * 0.95f),
                              cy + r * std::sin (juce::MathConstants<float>::pi * 0.95f) },
                            juce::MathConstants<float>::pi * 0.95f);
+                break;
+            }
+            case Kind::Metronome:
+            {
+                // Tapered body (rounded trapezoid) with a pendulum arm.
+                juce::Path body;
+                detail::addRoundedPolygon (body, {
+                    { cx - s * 0.12f, cy - s * 0.34f }, { cx + s * 0.12f, cy - s * 0.34f },
+                    { cx + s * 0.30f, cy + s * 0.34f }, { cx - s * 0.30f, cy + s * 0.34f }
+                }, s * 0.04f);
+                g.strokePath (body, juce::PathStrokeType (s * 0.08f, juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
+                juce::Path arm;
+                arm.startNewSubPath (cx, cy + s * 0.22f);
+                arm.lineTo (cx + s * 0.14f, cy - s * 0.26f);
+                g.strokePath (arm, juce::PathStrokeType (s * 0.07f, juce::PathStrokeType::curved,
+                                                         juce::PathStrokeType::rounded));
+                g.fillEllipse (cx + s * 0.075f - s * 0.055f, cy - s * 0.02f - s * 0.055f, s * 0.11f, s * 0.11f);
                 break;
             }
         }

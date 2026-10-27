@@ -1,4 +1,5 @@
 #include "FloatingTransportBar.h"
+#include "ClickMenus.h"
 #include <cmath>
 #include "../metro/MetroColours.h"
 #include "../metro/MetroMetrics.h"
@@ -390,17 +391,7 @@ void FloatingTransportBar::mouseUp (const juce::MouseEvent&)
 
 void FloatingTransportBar::showRecordModeMenu()
 {
-    const auto current = engine.getRecordMode();
-
-    juce::PopupMenu m;
-    m.addItem (1, "Overdub — merge into existing clip", true, current == SequencerEngine::RecordMode::Overdub);
-    m.addItem (2, "Add — always start a new clip",      true, current == SequencerEngine::RecordMode::Add);
-
-    m.showMenuAsync (juce::PopupMenu::Options(), [this] (int result)
-    {
-        if      (result == 1) engine.setRecordMode (SequencerEngine::RecordMode::Overdub);
-        else if (result == 2) engine.setRecordMode (SequencerEngine::RecordMode::Add);
-    });
+    ClickMenus::showRecordMenu (engine);
 }
 
 

@@ -4,6 +4,7 @@
 #include "../metro/MetroColours.h"
 #include "TransportIconButton.h"
 #include "DysektLookAndFeel.h"
+#include "ClickMenus.h"
 
 //==============================================================================
 //  MiniTransportBar
@@ -27,19 +28,25 @@ public:
         playButton  .configure (TransportIcons::Kind::Play,   M::Transport::Play,   "Play");
         recordButton.configure (TransportIcons::Kind::Record, M::Transport::Record, "Record");
         loopButton  .configure (TransportIcons::Kind::Loop,   M::Accent::Cyan,      "Toggle looping");
+        metroButton .configure (TransportIcons::Kind::Metronome, M::Accent::Yellow, "Metronome - right-click for volume and output");
+        recordButton.setTooltip ("Record - right-click for record mode and count-in");
 
         // Same wiring as FloatingTransportBar: PLAY only requests playback (the
         // engine flips isPlaying() on the next audio block, and timerCallback()
         // confirms it); REC / LOOP are plain toggles.
         recordButton.setClickingTogglesState (true);
         loopButton  .setClickingTogglesState (true);
+        metroButton .setClickingTogglesState (true);
 
         stopButton  .onClick       = [this] { engine.stop(); };
         playButton  .onClick       = [this] { engine.play(); };
         recordButton.onStateChange = [this] { engine.setRecording (recordButton.getToggleState()); };
         loopButton  .onStateChange = [this] { engine.setLooping   (loopButton.getToggleState()); };
+        metroButton .onStateChange = [this] { engine.setMetronomeEnabled (metroButton.getToggleState()); };
+        recordButton.addMouseListener (this, false);
+        metroButton .addMouseListener (this, false);
 
-        for (auto* b : { &stopButton, &playButton, &recordButton, &loopButton })
+        for (auto* b : { &stopButton, &playButton, &recordButton, &loopButton, &metroButton })
         {
             b->setWantsKeyboardFocus (false);   // keep Space/keys going to the editor
             addAndMakeVisible (*b);
@@ -50,6 +57,13 @@ public:
     }
 
     ~MiniTransportBar() override { stopTimer(); }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (! e.mods.isPopupMenu()) return;
+        if (e.eventComponent == &recordButton) ClickMenus::showRecordMenu (engine);
+        else if (e.eventComponent == &metroButton) ClickMenus::showClickMenu (engine);
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -70,9 +84,9 @@ public:
         const int   gap = juce::roundToInt (2 * sf);
 
         auto r = getLocalBounds().reduced (pad);
-        const int btnW = r.getWidth() / 4;
+        const int btnW = r.getWidth() / 5;
 
-        for (auto* b : { &stopButton, &playButton, &recordButton, &loopButton })
+        for (auto* b : { &stopButton, &playButton, &recordButton, &loopButton, &metroButton })
             b->setBounds (r.removeFromLeft (btnW).withTrimmedRight (gap));
         // (any 1-3 px of rounding remainder simply stays as right-hand padding)
     }
@@ -87,11 +101,13 @@ private:
         if (playButton.getToggleState()   != playing)   playButton  .setToggleState (playing,   juce::dontSendNotification);
         if (recordButton.getToggleState() != recording) recordButton.setToggleState (recording, juce::dontSendNotification);
         if (loopButton.getToggleState()   != looping)   loopButton  .setToggleState (looping,   juce::dontSendNotification);
+        const bool metro = engine.isMetronomeEnabled();
+        if (metroButton.getToggleState()  != metro)     metroButton .setToggleState (metro,     juce::dontSendNotification);
     }
 
     SequencerEngine& engine;
 
-    TransportIconButton stopButton, playButton, recordButton, loopButton;
+    TransportIconButton stopButton, playButton, recordButton, loopButton, metroButton;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MiniTransportBar)
 };
