@@ -47,6 +47,12 @@ public:
     SequencerEngine(); ~SequencerEngine();
     bool isPlaying() const noexcept; bool isLooping() const noexcept; bool isRecording() const noexcept;
     int getCountInBars() const noexcept; void setCountInBars (int bars) noexcept;
+    /** Record latency compensation. Recorded notes / audio takes are moved earlier by
+        (auto ? deviceLatencyMs : 0) + manualMs so they line up with what was heard. */
+    void  setRecordOffsetMs (float ms) noexcept;          float getRecordOffsetMs() const noexcept;
+    void  setRecordOffsetAuto (bool on) noexcept;         bool  isRecordOffsetAuto() const noexcept;
+    void  setDeviceLatencyMs (float ms) noexcept;         float getDeviceLatencyMs() const noexcept;
+    float getEffectiveRecordOffsetMs() const noexcept;
     /** Count-in length before a recording take: 0 = off, 1 or 2 bars. */
     /** Click while playing / recording (separate from the count-in). Volume 0..1.
         clickOutput: 0 = main mix, 1..8 = extra output pair "Out 2".."Out 9". */

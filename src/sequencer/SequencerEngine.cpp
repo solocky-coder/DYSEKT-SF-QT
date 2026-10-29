@@ -91,6 +91,9 @@ struct SequencerEngine::Impl
     // Recording is armed immediately, but actual capture waits for the
     // configured count-in. The audio thread owns the countdown state.
     std::atomic<int>     countInBars { 1 };
+    std::atomic<float>   recordOffsetMs { 0.f };
+    std::atomic<bool>    recordOffsetAuto { true };
+    std::atomic<float>   deviceLatencyMs { 0.f };
     std::atomic<bool>    metronomeOn { false };
     std::atomic<float>   metronomeVol { 0.6f };
     std::atomic<int>     clickOutput { 0 };
@@ -374,6 +377,16 @@ int     SequencerEngine::getCountInBars()   const noexcept { return impl->countI
 void    SequencerEngine::setCountInBars (int bars) noexcept
 {
     impl->countInBars.store (juce::jlimit (0, 2, bars), std::memory_order_relaxed);
+}
+void  SequencerEngine::setRecordOffsetMs (float ms) noexcept { impl->recordOffsetMs.store (juce::jlimit (-250.f, 250.f, ms), std::memory_order_relaxed); }
+float SequencerEngine::getRecordOffsetMs() const noexcept    { return impl->recordOffsetMs.load (std::memory_order_relaxed); }
+void  SequencerEngine::setRecordOffsetAuto (bool on) noexcept { impl->recordOffsetAuto.store (on, std::memory_order_relaxed); }
+bool  SequencerEngine::isRecordOffsetAuto() const noexcept   { return impl->recordOffsetAuto.load (std::memory_order_relaxed); }
+void  SequencerEngine::setDeviceLatencyMs (float ms) noexcept { impl->deviceLatencyMs.store (juce::jmax (0.f, ms), std::memory_order_relaxed); }
+float SequencerEngine::getDeviceLatencyMs() const noexcept   { return impl->deviceLatencyMs.load (std::memory_order_relaxed); }
+float SequencerEngine::getEffectiveRecordOffsetMs() const noexcept
+{
+    return (isRecordOffsetAuto() ? getDeviceLatencyMs() : 0.f) + getRecordOffsetMs();
 }
 void  SequencerEngine::setMetronomeEnabled (bool on) noexcept { impl->metronomeOn.store (on, std::memory_order_relaxed); }
 bool  SequencerEngine::isMetronomeEnabled() const noexcept    { return impl->metronomeOn.load (std::memory_order_relaxed); }
@@ -1837,7 +1850,9 @@ void SequencerEngine::processBlock (juce::MidiBuffer& outMidi, const juce::MidiB
                 && (msg.getNoteNumber() < recLo || msg.getNoteNumber() > recHi))
                 continue;
 
-            const double evTickGlobal = impl->currentTick + meta.samplePosition * ticksPerSample;
+            // Latency compensation: shift earlier by the effective offset (never before tick 0).
+            const double offsetTicks = (double) getEffectiveRecordOffsetMs() * 0.001 * sampleRate * ticksPerSample;
+            const double evTickGlobal = juce::jmax (0.0, impl->currentTick + meta.samplePosition * ticksPerSample - offsetTicks);
 
             if (msg.isNoteOn (true))        // true = treat velocity-0 as note-off
             {

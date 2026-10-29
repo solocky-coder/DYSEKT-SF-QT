@@ -6,6 +6,7 @@
 #include "../PluginEditor.h"
 #include "../sequencer/MidiClip.h"
 #include "MidiRouter.h"
+#include "../ui/ClickMenus.h"
 #include "NetworkAudioProcessor.h"
 #include "NetworkAudioAutoTrack.h"
 #include "NetworkAudioLabels.h"
@@ -46,6 +47,8 @@ public:
         editor = std::make_unique<DysektEditor> (*processor);
         editor->setWindowMenuBar (this, kMenuH);
 
+        RecordOffsetStore::load (processor->sequencer);
+        updateDeviceLatency();
         player.setProcessor (processor.get());
         deviceManager.addAudioCallback (&player);
         midiRouter = std::make_unique<MidiRouter>();
@@ -619,8 +622,19 @@ private:
         }
     }
 
+    void updateDeviceLatency()
+    {
+        if (processor == nullptr) return;
+        float ms = 0.f;
+        if (auto* d = deviceManager.getCurrentAudioDevice())
+            if (d->getCurrentSampleRate() > 0.0)
+                ms = (float) (1000.0 * (d->getOutputLatencyInSamples() + d->getCurrentBufferSizeSamples()) / d->getCurrentSampleRate());
+        processor->sequencer.setDeviceLatencyMs (ms);
+    }
+
     void changeListenerCallback (juce::ChangeBroadcaster*) override
     {
+        updateDeviceLatency();
         if (midiRouter != nullptr) midiRouter->refresh();
     }
 

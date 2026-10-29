@@ -2271,6 +2271,13 @@ void MetroNetworkAudio::setLatencyProfile (LatencyProfile profile)
     impl->applyLatencyProfile();
 }
 
+int MetroNetworkAudio::getSinkBufferMs() const noexcept
+{
+    if (impl == nullptr) return 0;
+    const auto cfg = impl->latencyConfig();
+    return impl->directMode.load (std::memory_order_acquire) ? cfg.directBufferMs : cfg.networkBufferMs;
+}
+
 MetroNetworkAudio::LatencyProfile MetroNetworkAudio::getLatencyProfile() const noexcept
 {
     return impl != nullptr

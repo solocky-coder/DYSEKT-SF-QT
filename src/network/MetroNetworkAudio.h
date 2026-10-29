@@ -116,6 +116,8 @@ public:
 
     void setLatencyProfile (LatencyProfile profile);
     LatencyProfile getLatencyProfile() const noexcept;
+    /** Current AOO sink buffer in ms (direct or network, per active profile). */
+    int getSinkBufferMs() const noexcept;
 
     // Call from the message thread whenever the audio device is (re)prepared
     // (AudioProcessor::prepareToPlay). Sets the AOO sink block size to the

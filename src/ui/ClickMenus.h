@@ -7,6 +7,33 @@
 //    showRecordMenu : record mode (Overdub / Add) and count-in length (Off / 1 / 2 bars)
 //    showClickMenu  : metronome on/off, click volume, click output
 //==============================================================================
+namespace RecordOffsetStore
+{
+    inline juce::File file()
+    {
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                   .getChildFile ("DYSEKT-SF").getChildFile ("record-offset.xml");
+    }
+    inline void save (const SequencerEngine& e)
+    {
+        juce::XmlElement x ("RECORDOFFSET");
+        x.setAttribute ("ms", (double) e.getRecordOffsetMs());
+        x.setAttribute ("auto", e.isRecordOffsetAuto());
+        const auto f = file();
+        f.getParentDirectory().createDirectory();
+        x.writeTo (f);
+    }
+    inline void load (SequencerEngine& e)
+    {
+        if (auto x = juce::XmlDocument::parse (file()))
+            if (x->hasTagName ("RECORDOFFSET"))
+            {
+                e.setRecordOffsetMs ((float) x->getDoubleAttribute ("ms", 0.0));
+                e.setRecordOffsetAuto (x->getBoolAttribute ("auto", true));
+            }
+    }
+}
+
 namespace ClickMenus
 {
     inline void showRecordMenu (SequencerEngine& engine)
@@ -21,6 +48,15 @@ namespace ClickMenus
         m.addItem (3, "Count-in: off",    true, countIn == 0);
         m.addItem (4, "Count-in: 1 bar",  true, countIn == 1);
         m.addItem (5, "Count-in: 2 bars", true, countIn == 2);
+        m.addSeparator();
+        juce::PopupMenu lat;
+        lat.addItem (30, "Auto (audio device latency: " + juce::String (engine.getDeviceLatencyMs(), 1) + " ms)", true, engine.isRecordOffsetAuto());
+        lat.addSeparator();
+        const float offs[] = { -20.f, -10.f, 0.f, 10.f, 20.f, 40.f };
+        for (int i = 0; i < 6; ++i)
+            lat.addItem (40 + i, "Extra offset " + juce::String (offs[i] > 0 ? "+" : "") + juce::String ((int) offs[i]) + " ms", true,
+                         std::abs (engine.getRecordOffsetMs() - offs[i]) < 0.5f);
+        m.addSubMenu ("Latency compensation", lat);
 
         m.showMenuAsync (juce::PopupMenu::Options(), [&engine] (int r)
         {
@@ -29,6 +65,14 @@ namespace ClickMenus
             else if (r == 3) engine.setCountInBars (0);
             else if (r == 4) engine.setCountInBars (1);
             else if (r == 5) engine.setCountInBars (2);
+            else if (r == 30) engine.setRecordOffsetAuto (! engine.isRecordOffsetAuto());
+            else if (r >= 40 && r <= 45)
+            {
+                const float offs2[] = { -20.f, -10.f, 0.f, 10.f, 20.f, 40.f };
+                engine.setRecordOffsetMs (offs2[r - 40]);
+            }
+            else return;
+            RecordOffsetStore::save (engine);
         });
     }
 

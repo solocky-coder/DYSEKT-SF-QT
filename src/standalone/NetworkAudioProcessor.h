@@ -319,7 +319,12 @@ public:
             // A track starts with its first delivered audio, and the clip's start
             // tick records exactly where on the timeline that was.
             if (slot != nullptr && transportRecording && playheadTick > 0 && ! slot->recorder.isRecording())
-                startTrackRecording (*slot, info.name, playheadTick);
+            {
+                // Shift the take earlier by output latency + manual offset + the AOO sink buffer.
+                const double shiftMs = (double) sequencer.getEffectiveRecordOffsetMs() + (double) audio->getSinkBufferMs();
+                const double ticksPerMs = (double) sequencer.getBpm() / 60000.0 * (double) MidiClip::kPPQ;
+                startTrackRecording (*slot, info.name, juce::jmax ((int64_t) 0, playheadTick - (int64_t) std::llround (shiftMs * ticksPerMs)));
+            }
 
             const float gain = juce::Decibels::decibelsToGain (info.volumeDb);
             const float pan = juce::jlimit (-1.0f, 1.0f, info.pan);
