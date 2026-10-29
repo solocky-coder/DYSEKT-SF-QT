@@ -52,6 +52,8 @@ public:
         networkMidiManager = std::make_unique<NetworkMidiManager>();
         processor->sequencer.setNetworkMidiSink (&NetworkMidiManager::engineSink, networkMidiManager.get());
         processor->sequencer.setMidiPortSink (&MidiRouter::enginePortSink, midiRouter.get());
+        midiRouter->setLiveEngine (&processor->sequencer);          // live input -> selected network track, off the audio thread
+        processor->sequencer.setLiveDirectForward (true);
         // Network MIDI live input is routed by PluginProcessor::processBlock()
         // after the selected arranger track is resolved. Do not also install
         // the legacy standalone MidiInput callback forwarder here: JUCE feeds
@@ -141,6 +143,8 @@ public:
         setMenuBar (nullptr);
         deviceManager.removeAudioCallback (&player);
 
+        if (midiRouter != nullptr) midiRouter->setLiveEngine (nullptr);
+        processor->sequencer.setLiveDirectForward (false);
         for (const auto& id : registeredMidiInputIds)
         {
             deviceManager.removeMidiInputDeviceCallback (id, &player);

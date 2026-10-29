@@ -78,6 +78,10 @@ public:
         }
     }
 
+    /** The audio thread only runs the FFT while something is showing the spectrum. */
+    void setWanted (bool on) noexcept { wanted.store (on, std::memory_order_relaxed); }
+    bool isWanted() const noexcept    { return wanted.load (std::memory_order_relaxed); }
+
     // UI thread: returns the latest completed FFT frame.
     // Values are normalised 0..1  (1.0 = 0 dBFS, 0.0 = –80 dBFS).
     const std::array<float, numBins>& getReadBuffer() const noexcept
@@ -106,6 +110,7 @@ private:
         }
     }
 
+    std::atomic<bool>                   wanted { false };
     juce::dsp::FFT                      fft;
     juce::dsp::WindowingFunction<float> window;
     std::array<float, fftSize>          fifo     {};

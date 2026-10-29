@@ -20,6 +20,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_events/juce_events.h>
+#include "../sequencer/SequencerEngine.h"
 #include <array>
 #include <memory>
 #include <vector>
@@ -106,8 +107,15 @@ public:
         return thruPort;
     }
 
+    /** Live input for the selected Network MIDI track goes out from here, on the MIDI input
+        thread, instead of waiting for the next audio block. */
+    void setLiveEngine (SequencerEngine* engine) noexcept { liveEngine.store (engine, std::memory_order_release); }
+
     void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& msg) override
     {
+        if (auto* e = liveEngine.load (std::memory_order_acquire))
+            e->forwardLiveMidi (msg);
+
         const juce::ScopedTryLock stl (routeLock);
         if (! stl.isLocked() || thruPort.isEmpty()) return;
         // Realtime messages (clock etc.) are not forwarded: they would double any clock the
@@ -139,6 +147,7 @@ private:
         const int n = m.getRawDataSize();
         if (n < 1 || n > 3) return;   // system-exclusive is not sent to track ports
 
+        const juce::SpinLock::ScopedLockType producer (producerLock);
         int s1, n1, s2, n2;
         fifo.prepareToWrite (1, s1, n1, s2, n2);
         if (n1 < 1) return;           // queue full: drop rather than block the audio thread
@@ -221,6 +230,8 @@ private:
     juce::String thruPort;
     juce::uint32 lastScanMs = 0, lastOpenFailMs = 0;
 
+    std::atomic<SequencerEngine*> liveEngine { nullptr };
+    juce::SpinLock producerLock;   // the audio thread (clips) and the MIDI thread (live) both queue
     juce::AbstractFifo fifo { kQueueSize };
     std::array<Queued, kQueueSize> items;
     juce::WaitableEvent wake;

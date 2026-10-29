@@ -55,6 +55,7 @@ struct Voice
     // Signalsmith stretch fields
     bool         stretchActive = false;
     std::shared_ptr<signalsmith::stretch::SignalsmithStretch<float, void>> stretcher;
+    double       stretcherCfgSr = 0.0;   // sample rate the stretcher was configured for (0 = not yet)
     std::vector<float> stretchInBufL, stretchInBufR;
     std::vector<float> stretchOutBufL, stretchOutBufR;
     int          stretchOutReadPos  = 0;

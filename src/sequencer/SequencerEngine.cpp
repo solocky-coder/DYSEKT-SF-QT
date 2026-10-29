@@ -143,7 +143,7 @@ struct SequencerEngine::Impl
     std::atomic<int>  selectedLiveNoteRange { 127 << 8 };
     std::atomic<int>  recordingTrackIndex  { -1 }; // which track receives recorded MIDI (-1 = none)
     std::atomic<SequencerEngine::AudioPeerResolver> audioPeerResolver{nullptr}; std::atomic<void*> audioPeerResolverCtx{nullptr}; std::atomic<SequencerEngine::NetworkMidiSink> netSink{nullptr}; std::atomic<void*> netSinkCtx{nullptr}; std::atomic<int> selectedNetworkMidiDevice{0}; std::atomic<int> netLinkState[64]{}; juce::MidiBuffer netScratch;
-    std::atomic<SequencerEngine::MidiPortSink> portSink{nullptr}; std::atomic<void*> portSinkCtx{nullptr}; std::atomic<int> selectedNetworkTrack{-1};
+    std::atomic<SequencerEngine::MidiPortSink> portSink{nullptr}; std::atomic<void*> portSinkCtx{nullptr}; std::atomic<int> selectedNetworkTrack{-1}; std::atomic<bool> liveDirect{false};
     void sendPort(const juce::String& port,const juce::MidiMessage&m) const noexcept { if(auto f=portSink.load(std::memory_order_acquire)) f(portSinkCtx.load(std::memory_order_relaxed),port,m); }
     void sendNet(int id,const juce::MidiMessage&m) const noexcept { if(auto f=netSink.load(std::memory_order_acquire)) f(netSinkCtx.load(std::memory_order_relaxed),id,m); }
     std::atomic<SequencerEngine::RecordMode> recordMode { SequencerEngine::RecordMode::Overdub };
@@ -1980,6 +1980,18 @@ juce::String SequencerEngine::getNetworkMidiOutPort(int idx) const
     auto cur=impl->getTracks();
     if(!juce::isPositiveAndBelow(idx,(int)cur->size())||(*cur)[(size_t)idx]->type!=TrackType::NetworkMidi) return {};
     return (*cur)[(size_t)idx]->getMidiOutPort();
+}
+void SequencerEngine::setLiveDirectForward (bool on) noexcept { impl->liveDirect.store (on, std::memory_order_relaxed); }
+bool SequencerEngine::isLiveDirectForward() const noexcept    { return impl->liveDirect.load (std::memory_order_relaxed); }
+void SequencerEngine::forwardLiveMidi (const juce::MidiMessage& m) const noexcept
+{
+    if (m.getRawDataSize() < 1 || m.getRawData()[0] >= 0xF0) return;   // realtime / system messages are not live notes
+    const auto target = getSelectedLiveTarget();
+    if (target.player != LiveTargetPlayer::network) return;
+    juce::MidiMessage out (m);
+    if (out.getChannel() == 1 && target.midiChannel >= 1 && target.midiChannel <= 16)
+        out.setChannel (target.midiChannel);
+    sendLiveNetworkMidi (out);
 }
 void SequencerEngine::sendLiveNetworkMidi(const juce::MidiMessage& m) const noexcept
 {

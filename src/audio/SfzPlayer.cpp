@@ -30,7 +30,16 @@
 // own file in the same log folder as dysekt_crash.log. Only called on
 // note-on (rare), never per-block, so it won't glitch playback. Remove once
 // the root cause is confirmed and fixed.
-static void sf2DebugLog (const juce::String& msg)
+// Diagnostic log for the SF2/SFZ player. It opens a file, takes a lock and builds strings, so it
+// must never run on the audio thread in a normal build: the SF2_DBG(...) calls compile to nothing
+// (arguments are not even evaluated) unless DYSEKT_SF2_DEBUG_LOG is defined.
+#if DYSEKT_SF2_DEBUG_LOG
+ #define SF2_DBG(...) sf2DebugLogImpl (__VA_ARGS__)
+#else
+ #define SF2_DBG(...) do {} while (0)
+#endif
+
+[[maybe_unused]] static void sf2DebugLogImpl (const juce::String& msg)
 {
     static juce::CriticalSection sf2DebugLogLock;
     juce::ScopedLock sl (sf2DebugLogLock);
@@ -918,7 +927,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
         if (! loggedEntryOnce)
         {
             loggedEntryOnce = true;
-            sf2DebugLog ("process() ENTRY — first call reached. numSamples=" + juce::String (numSamples)
+            SF2_DBG ("process() ENTRY — first call reached. numSamples=" + juce::String (numSamples)
                 + " midiIn.getNumEvents()=" + juce::String (midiIn.getNumEvents()));
         }
     }
@@ -929,7 +938,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
     // on an actual note-on. This logs every block that actually carries
     // MIDI, for as long as the session runs.
     if (! midiIn.isEmpty())
-        sf2DebugLog ("process(): non-empty block — " + juce::String (midiIn.getNumEvents())
+        SF2_DBG ("process(): non-empty block — " + juce::String (midiIn.getNumEvents())
             + " event(s), loaded=" + juce::String ((int) loaded.load (std::memory_order_relaxed))
             + " isSfzFile=" + juce::String ((int) isSfzFile)
             + " sfizzSynth=" + juce::String (sfizzSynth != nullptr ? "non-null" : "NULL")
@@ -940,7 +949,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
     if (! loaded.load (std::memory_order_relaxed))
     {
         if (! midiIn.isEmpty())
-            sf2DebugLog ("process(): loaded==false — bailing out at the very top with "
+            SF2_DBG ("process(): loaded==false — bailing out at the very top with "
                 + juce::String (midiIn.getNumEvents()) + " MIDI event(s) discarded this block.");
         return;
     }
@@ -978,7 +987,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
             const int  ch  = msg.getChannel();   // 1-16
 
             if (msg.isNoteOn() || msg.isNoteOff())
-                sf2DebugLog (juce::String ("  [sfizz] msg: ch=") + juce::String (ch)
+                SF2_DBG (juce::String ("  [sfizz] msg: ch=") + juce::String (ch)
                     + " filterCh=" + juce::String (filterCh)
                     + " note=" + juce::String (msg.getNoteNumber())
                     + (msg.isNoteOn() ? " NOTE-ON" : " NOTE-OFF")
@@ -1141,7 +1150,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
         if (! loggedNullSynthOnce)
         {
             loggedNullSynthOnce = true;
-            sf2DebugLog ("process(): synth == nullptr — bailing out before any FluidSynth "
+            SF2_DBG ("process(): synth == nullptr — bailing out before any FluidSynth "
                          "call. isSfzFile=" + juce::String ((int) isSfzFile)
                          + " loaded=" + juce::String ((int) loaded.load (std::memory_order_relaxed)));
         }
@@ -1185,7 +1194,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
     bool sf2DebugHadNoteOnThisBlock = false;   // TEMP diagnostic — see note below
 
     if (! midiIn.isEmpty())
-        sf2DebugLog ("process(): FluidSynth branch reached with " + juce::String (midiIn.getNumEvents())
+        SF2_DBG ("process(): FluidSynth branch reached with " + juce::String (midiIn.getNumEvents())
             + " MIDI event(s) this block. loaded=" + juce::String ((int) loaded.load (std::memory_order_relaxed))
             + " sfontId=" + juce::String (sfontId)
             + " liveMask=0x" + juce::String::toHexString ((int) liveMask));
@@ -1278,7 +1287,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
         // or the targetMask computation silently drops something.
         {
             const uint16_t previewTargetMask = (uint16_t) (1u << (midiCh - 1));
-            sf2DebugLog ("  msg: ch=" + juce::String (midiCh)
+            SF2_DBG ("  msg: ch=" + juce::String (midiCh)
                 + " desc=\"" + msg.getDescription() + "\""
                 + " isNoteOn(false)=" + juce::String ((int) msg.isNoteOn (false))
                 + " isNoteOn(true)=" + juce::String ((int) msg.isNoteOn (true))
@@ -1324,7 +1333,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
             {
                 const int note = juce::jlimit (0, 127, msg.getNoteNumber() + trans);
                 const int rc = fluid_synth_noteon (synth, fch, note, msg.getVelocity());
-                sf2DebugLog ("noteOn: incomingCh=" + juce::String (midiCh)
+                SF2_DBG ("noteOn: incomingCh=" + juce::String (midiCh)
                     + " fch=" + juce::String (fch)
                     + " note=" + juce::String (note)
                     + " vel=" + juce::String (msg.getVelocity())
@@ -1408,7 +1417,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
         float peak = 0.0f;
         for (int i = 0; i < numSamples; ++i)
             peak = std::max (peak, std::abs (scratchL[(size_t) i]));
-        sf2DebugLog ("post-render (note-on this block): fluid_synth_process rc=" + juce::String (lastProcessRc)
+        SF2_DBG ("post-render (note-on this block): fluid_synth_process rc=" + juce::String (lastProcessRc)
             + " outputPeakL=" + juce::String (peak, 6)
             + " sfontId=" + juce::String (sfontId)
             + " gain=" + juce::String (fluid_synth_get_gain (synth), 3));

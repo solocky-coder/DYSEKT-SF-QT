@@ -122,6 +122,14 @@ public:
     juce::String getNetworkMidiOutPort(int trackIndex) const;
     /** Live MIDI for the selected Network MIDI track: goes to its port, or to its network device. */
     void sendLiveNetworkMidi(const juce::MidiMessage&) const noexcept;
+    /** Standalone: the host forwards live MIDI input to the selected Network MIDI track straight
+        from the MIDI input thread (no wait for the next audio block). While set, processBlock no
+        longer forwards it, so nothing is sent twice. */
+    void setLiveDirectForward (bool on) noexcept;
+    bool isLiveDirectForward() const noexcept;
+    /** Called from the MIDI input thread: re-stamps channel 1 onto the selected track's channel
+        and sends to its destination. Does nothing unless a Network MIDI track is selected. */
+    void forwardLiveMidi (const juce::MidiMessage&) const noexcept;
     int addNetworkMidiTrack(const juce::String&,const juce::String&);
     int addNetworkMidiChild(int,int=-1);
     bool removeNetworkMidiTrack(int);

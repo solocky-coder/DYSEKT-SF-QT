@@ -99,6 +99,12 @@ public:
     void stopShiftPreview();
 
     // Public helpers so LazyChopEngine can initialise stretch on preview voice
+    /** Creates and configures the voice's stretcher if needed (allocates). Called from
+        prewarmStretchers() off the audio thread; initStretcher() only falls back to it. */
+    static void ensureStretcher (Voice& v, double sr);
+    /** Allocates stretchers for the first voices up front (prepareToPlay, message thread), so
+        the first notes do not allocate on the audio thread. */
+    void prewarmStretchers (double sr);
     static void initStretcher (Voice& v, float pitchSemis, double sr,
                                 float tonalityHz, float formantSemis,
                                 const SampleData& sample);

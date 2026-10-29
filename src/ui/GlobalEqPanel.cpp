@@ -47,6 +47,7 @@ GlobalEqPanel::GlobalEqPanel (DysektProcessor& p)
 
 GlobalEqPanel::~GlobalEqPanel()
 {
+    processor.spectrumAnalyser.setWanted (false);
     stopTimer();
 }
 
@@ -54,6 +55,7 @@ GlobalEqPanel::~GlobalEqPanel()
 
 void GlobalEqPanel::timerCallback()
 {
+    processor.spectrumAnalyser.setWanted (isShowing() && analyzerEnabled);
     {
         const bool charOn = modeBox.getSelectedItemIndex() > 0;
         for (auto* k : { &knob1, &knob2, &knobMix })

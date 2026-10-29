@@ -108,16 +108,36 @@ void VoicePool::setMaxActiveVoices (int n)
     maxActive = n;
 }
 
+void VoicePool::ensureStretcher (Voice& v, double sr)
+{
+    const int blockSize = std::max (256, (int)(sr * 0.023)); // ~1024 @ 44.1k (~23ms)
+    const int interval  = std::max (64,  (int)(sr * 0.006)); // ~256  @ 44.1k (~6ms)
+
+    if (! v.stretcher)
+    {
+        v.stretcher = std::make_shared<signalsmith::stretch::SignalsmithStretch<float>>();
+        v.stretcherCfgSr = 0.0;
+    }
+    if (v.stretcherCfgSr != sr)
+    {
+        v.stretcher->configure (2, blockSize, interval, false);   // allocates: only when the rate changes
+        v.stretcherCfgSr = sr;
+    }
+}
+
+void VoicePool::prewarmStretchers (double sr)
+{
+    constexpr int kPrewarmVoices = 32;
+    for (int i = 0; i < kPrewarmVoices && i < kMaxVoices; ++i)
+        ensureStretcher (voices[(size_t) i], sr);
+    ensureStretcher (voices[(size_t) kPreviewVoiceIndex], sr);
+}
+
 void VoicePool::initStretcher (Voice& v, float pitchSemis, double sr,
                                 float tonalityHz, float formantSemis,
                                 const SampleData& sample)
 {
-    int blockSize = std::max (256, (int)(sr * 0.023)); // ~1024 @ 44.1k (~23ms)
-    int interval  = std::max (64,  (int)(sr * 0.006)); // ~256  @ 44.1k (~6ms)
-
-    if (! v.stretcher)
-        v.stretcher = std::make_shared<signalsmith::stretch::SignalsmithStretch<float>>();
-    v.stretcher->configure (2, blockSize, interval, false);
+    ensureStretcher (v, sr);   // no-op once the voice slot has been warmed up
     v.stretcher->reset();  // flush stale STFT state from any prior voice that used this slot
 
     float tonalityLimit = (tonalityHz > 0.0f && sr > 0.0) ? (float)(tonalityHz / sr) : 0.0f;

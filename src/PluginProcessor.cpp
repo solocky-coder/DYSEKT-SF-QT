@@ -312,6 +312,8 @@ void DysektProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
     voicePool.setSampleRate (sampleRate);
     voicePool2.setSampleRate (sampleRate);
+    voicePool.prewarmStretchers (sampleRate);     // allocate off the audio thread
+    voicePool2.prewarmStretchers (sampleRate);
     sfzPlayer.prepare (sampleRate, samplesPerBlock > 0 ? samplesPerBlock : 512);
     sfzPlayer2.prepare (sampleRate, samplesPerBlock > 0 ? samplesPerBlock : 512);
     std::fill (std::begin (heldNotes), std::end (heldNotes), false);
@@ -4023,7 +4025,9 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Clip playback is already handled by SequencerEngine::processBlock().
     if (selectedTarget.player == LiveTargetPlayer::network)
     {
-        if (sequencer.getSelectedNetworkMidiDevice() != 0)
+        // Standalone forwards this straight from the MIDI input thread (see MidiRouter),
+        // so only do it here when that path is not active (plugin build).
+        if (! sequencer.isLiveDirectForward() && sequencer.getSelectedNetworkMidiDevice() != 0)
             for (const auto meta : midi)
                 sequencer.sendLiveNetworkMidi (meta.getMessage());
         standaloneSfLiveInput.clear();
@@ -4952,7 +4956,8 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
 
     // ── Post-EQ spectrum analyser tap ─────────────────────────────────────────
-    spectrumAnalyser.pushSamples (buffer);
+    if (spectrumAnalyser.isWanted())
+        spectrumAnalyser.pushSamples (buffer);
 
     // ── Click (count-in and metronome) ────────────────────────────────────────
     // Rendered after the master chain, so it is neither EQ'd nor soft-limited with
