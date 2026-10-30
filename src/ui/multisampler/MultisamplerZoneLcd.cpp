@@ -542,39 +542,52 @@ void MultisamplerZoneLcd::paint (juce::Graphics& g)
             n += (int) gr.size();
         return 2 * modPadX + (n + m.leadCells) * cw + ((int) m.groups.size() - 1) * groupGap;
     };
-    auto totalWidth = [&] (int cw)
+    // Two rows so the strip fits the panel (a single row needed ~1390 px). Row 1: KEY RANGE,
+    // TUNE / LEVEL, FILTER, PLAYBACK. Row 2: ENVELOPE, EQUALIZER. All cells share one width.
+    const std::vector<std::vector<size_t>> rows { { 0, 1, 3, 4 }, { 2, 5 } };
+    const int rowGap = juce::roundToInt (4.0f * sc);
+    const int rowH   = (content.getHeight() - rowGap) / 2;
+
+    auto rowFixedWidth = [&] (const std::vector<size_t>& row, int cw)
     {
-        int t = ((int) modules.size() - 1) * kModGap;
-        for (const auto& m : modules)
-            t += moduleWidth (m, cw);
+        int t = ((int) row.size() - 1) * kModGap;
+        for (auto mi : row)
+            t += moduleWidth (modules[mi], cw);
         return t;
     };
-
-    // Cells share ALL the width left after module padding/gaps, so the strip
-    // always fills the panel edge to edge (wider panel = wider cells, narrower
-    // panel = narrower cells, down to a floor).
-    int totalCells = 0;
-    for (const auto& m : modules)
+    auto rowCells = [&] (const std::vector<size_t>& row)
     {
-        totalCells += m.leadCells;
-        for (const auto& gr : m.groups)
-            totalCells += (int) gr.size();
-    }
+        int n = 0;
+        for (auto mi : row)
+        {
+            n += modules[mi].leadCells;
+            for (const auto& gr : modules[mi].groups)
+                n += (int) gr.size();
+        }
+        return n;
+    };
 
-    const int fixedWidth = totalWidth (0);
-    const int minCellW   = juce::roundToInt (48.0f * sc);
-    const int cellW      = juce::jmax (minCellW,
-                                       (content.getWidth() - fixedWidth) / juce::jmax (1, totalCells));
-    // Rounding leftover (< totalCells px) goes to the last module so the right
-    // edge lines up exactly with the panel.
-    int leftover = juce::jmax (0, content.getWidth() - totalWidth (cellW));
+    // Cells share all the width left after module padding/gaps in the tightest row, down to a floor.
+    const int minCellW = juce::roundToInt (48.0f * sc);
+    int cellW = 1 << 20;
+    for (const auto& row : rows)
+        cellW = juce::jmin (cellW, (content.getWidth() - rowFixedWidth (row, 0)) / juce::jmax (1, rowCells (row)));
+    cellW = juce::jmax (minCellW, cellW);
+
+    for (size_t ri = 0; ri < rows.size(); ++ri)
+    {
+    const auto& row = rows[ri];
+    const int rowY = content.getY() + (int) ri * (rowH + rowGap);
+    // Rounding leftover goes to the last module so the right edge lines up with the panel.
+    const int leftover = juce::jmax (0, content.getWidth() - rowFixedWidth (row, cellW));
 
     int x = content.getX();
-    for (const auto& m : modules)
+    for (auto mi : row)
     {
-        const bool isLast = (&m == &modules.back());
+        const auto& m = modules[mi];
+        const bool isLast = (mi == row.back());
         const int w = moduleWidth (m, cellW) + (isLast ? leftover : 0);
-        const juce::Rectangle<int> mb (x, content.getY(), w, content.getHeight());
+        const juce::Rectangle<int> mb (x, rowY, w, rowH);
 
         g.setColour (theme.darkBar.brighter (0.06f));
         g.fillRoundedRectangle (mb.toFloat(), 4.0f);
@@ -643,6 +656,7 @@ void MultisamplerZoneLcd::paint (juce::Graphics& g)
 
         x += w + kModGap;
     }
+    }   // rows
 }
 
 void MultisamplerZoneLcd::drawCell (juce::Graphics& g, juce::Rectangle<int> bounds, MultisamplerZoneField field)

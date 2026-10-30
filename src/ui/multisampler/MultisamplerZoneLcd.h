@@ -163,7 +163,7 @@ public:
     // MultisamplerEditor's own header toolbar (zoneTagLabel/zoneBadgeLabel),
     // so this constant shrank by the ~20px that row used to cost. Grew from
     // 80 (two rows) to 120 (three rows) when the EQ1/EQ2/EQ3 row was added.
-    static constexpr int kPreferredHeight = 104;   // one strip: 15px module title + 12px label + knob + 14px value
+    static constexpr int kPreferredHeight = 204;   // two module rows (was one row at 104)
 
 private:
     // Same base knob radius as SliceControlBar::kKnobR — see drawKnobField()
