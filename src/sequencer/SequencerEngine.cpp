@@ -147,7 +147,7 @@ struct SequencerEngine::Impl
     std::atomic<int>  recordingTrackIndex  { -1 }; // which track receives recorded MIDI (-1 = none)
     std::atomic<SequencerEngine::AudioPeerResolver> audioPeerResolver{nullptr}; std::atomic<void*> audioPeerResolverCtx{nullptr}; std::atomic<SequencerEngine::NetworkMidiSink> netSink{nullptr}; std::atomic<void*> netSinkCtx{nullptr}; std::atomic<int> selectedNetworkMidiDevice{0}; std::atomic<int> netLinkState[64]{}; juce::MidiBuffer netScratch;
     std::atomic<SequencerEngine::MidiPortSink> portSink{nullptr}; std::atomic<void*> portSinkCtx{nullptr}; std::atomic<int> selectedNetworkTrack{-1}; std::atomic<bool> liveDirect{false};
-    void sendPort(const juce::String& port,const juce::MidiMessage&m) const noexcept { if(auto f=portSink.load(std::memory_order_acquire)) f(portSinkCtx.load(std::memory_order_relaxed),port,m); }
+    void sendPort(const juce::String& port,const juce::MidiMessage&m,double delayMs=0.0) const noexcept { if(auto f=portSink.load(std::memory_order_acquire)) f(portSinkCtx.load(std::memory_order_relaxed),port,m,delayMs); }
     void sendNet(int id,const juce::MidiMessage&m) const noexcept { if(auto f=netSink.load(std::memory_order_acquire)) f(netSinkCtx.load(std::memory_order_relaxed),id,m); }
     std::atomic<SequencerEngine::RecordMode> recordMode { SequencerEngine::RecordMode::Overdub };
 
@@ -1814,7 +1814,8 @@ void SequencerEngine::processBlock (juce::MidiBuffer& outMidi, const juce::MidiB
             const juce::String port = track.getMidiOutPort();
             for(const auto meta:impl->netScratch)
             {
-                if (port.isNotEmpty()) impl->sendPort(port,meta.getMessage());
+                // Keep the in-block spacing (plus one block of lookahead) instead of bursting.
+                if (port.isNotEmpty()) impl->sendPort(port,meta.getMessage(),(double) (meta.samplePosition + numSamples) * 1000.0 / sampleRate);
                 else                   impl->sendNet(track.networkMidiDeviceId,meta.getMessage());
             }
         }

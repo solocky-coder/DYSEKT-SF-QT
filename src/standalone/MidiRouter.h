@@ -84,10 +84,10 @@ public:
     //==========================================================================
 
     /** SequencerEngine::MidiPortSink. Audio-thread safe: only copies the message into a queue. */
-    static void enginePortSink (void* context, const juce::String& portName, const juce::MidiMessage& message) noexcept
+    static void enginePortSink (void* context, const juce::String& portName, const juce::MidiMessage& message, double delayMs) noexcept
     {
         if (context != nullptr)
-            static_cast<MidiRouter*> (context)->queue (portName, message);
+            static_cast<MidiRouter*> (context)->queue (portName, message, delayMs);
     }
 
     //==========================================================================
@@ -138,11 +138,12 @@ private:
         juce::String port;
         juce::uint8  data[3] = { 0, 0, 0 };
         int          size = 0;
+        juce::int64  dueTicks = 0;   // high-resolution tick at which to send
     };
 
     static constexpr int kQueueSize = 2048;
 
-    void queue (const juce::String& port, const juce::MidiMessage& m) noexcept
+    void queue (const juce::String& port, const juce::MidiMessage& m, double delayMs) noexcept
     {
         const int n = m.getRawDataSize();
         if (n < 1 || n > 3) return;   // system-exclusive is not sent to track ports
@@ -154,6 +155,8 @@ private:
         auto& q = items[(size_t) s1];
         q.port = port;
         q.size = n;
+        q.dueTicks = juce::Time::getHighResolutionTicks()
+                   + (juce::int64) (juce::jmax (0.0, delayMs) * 0.001 * (double) juce::Time::getHighResolutionTicksPerSecond());
         for (int i = 0; i < n; ++i) q.data[i] = m.getRawData()[i];
         fifo.finishedWrite (1);
         wake.signal();
@@ -161,18 +164,40 @@ private:
 
     void run() override
     {
+        const double tps = (double) juce::Time::getHighResolutionTicksPerSecond();
+        std::vector<Queued> pending;
+        pending.reserve (kQueueSize);
+
         while (! threadShouldExit())
         {
-            wake.wait (2);
+            // Sleep until the next event is due (at most 1 ms when idle so new items are noticed).
+            int waitMs = 1;
+            if (! pending.empty())
+            {
+                juce::int64 next = pending.front().dueTicks;
+                for (const auto& q : pending) next = juce::jmin (next, q.dueTicks);
+                const double msLeft = (double) (next - juce::Time::getHighResolutionTicks()) * 1000.0 / tps;
+                waitMs = msLeft <= 0.0 ? 0 : juce::jlimit (0, 1, (int) msLeft);
+            }
+            if (waitMs > 0) wake.wait (waitMs);
+
             while (fifo.getNumReady() > 0)
             {
                 int s1, n1, s2, n2;
                 fifo.prepareToRead (1, s1, n1, s2, n2);
                 if (n1 < 1) break;
-                const Queued q = items[(size_t) s1];
+                if (pending.size() < (size_t) kQueueSize) pending.push_back (items[(size_t) s1]);
                 fifo.finishedRead (1);
-                send (q);
             }
+
+            const auto now = juce::Time::getHighResolutionTicks();
+            size_t keep = 0;
+            for (size_t i = 0; i < pending.size(); ++i)
+            {
+                if (pending[i].dueTicks <= now) send (pending[i]);
+                else                            pending[keep++] = pending[i];
+            }
+            pending.resize (keep);
         }
     }
 

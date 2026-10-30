@@ -121,7 +121,8 @@ public:
     void sendNetworkMidi(int,const juce::MidiMessage&) const noexcept;
     /** Physical MIDI output ports. The host installs a sink that queues the message for the
         named port (called on the audio thread, so it must not block). */
-    using MidiPortSink=void(*)(void*,const juce::String& portName,const juce::MidiMessage&);
+    /** delayMs: how long after this call the message should leave (block spacing); 0 = now. */
+    using MidiPortSink=void(*)(void*,const juce::String& portName,const juce::MidiMessage&,double delayMs);
     void setMidiPortSink(MidiPortSink,void*) noexcept;
     /** Network MIDI track -> physical port name ("" = send over the network). */
     bool setNetworkMidiOutPort(int trackIndex,const juce::String& portName);
