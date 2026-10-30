@@ -163,6 +163,10 @@ MultisamplerEditor::MultisamplerEditor (DysektProcessor& processorToUse)
     addAndMakeVisible (newButton);
     newButton.onClick = [this] { newInstrumentClicked(); };
 
+    addAndMakeVisible (saveButton);
+    saveButton.setEnabled (false);   // enabled while there are unsaved edits (kept in sync by paint())
+    saveButton.onClick = [this] { saveInPlace(); repaint(); };
+
     // ── Zone LCD ─────────────────────────────────────────────────────────
     addAndMakeVisible (zoneLcd);
     zoneLcd.onFieldEdited = [this] (MultisamplerZoneField field, float value, bool isCommit)
@@ -221,6 +225,9 @@ void MultisamplerEditor::paint (juce::Graphics& g)
 
     g.setColour (theme.separator);
     g.drawHorizontalLine (kHeaderH, 4.0f, bounds.getWidth() - 4.0f);
+
+    if (saveButton.isEnabled() != dirty)
+        saveButton.setEnabled (dirty);
 }
 
 void MultisamplerEditor::resized()
@@ -230,6 +237,8 @@ void MultisamplerEditor::resized()
     auto header = r.removeFromTop (kHeaderH - 6);
     const auto headerFull = header;   // full-width row, before left/right consumption below
     titleLabel.setBounds (header.removeFromLeft (140));
+    header.removeFromRight (4);
+    saveButton.setBounds   (header.removeFromRight (60));
     header.removeFromRight (4);
     newButton.setBounds    (header.removeFromRight (60));
     header.removeFromRight (4);
