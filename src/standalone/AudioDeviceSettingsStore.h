@@ -36,6 +36,46 @@ namespace AudioDeviceSettingsStore
         return xml;
     }
 
+    // Prefers ASIO when it offers a device, then the smallest buffer that is <= 256 samples.
+    // Anything that fails is rolled back to the setup JUCE chose.
+    inline void applyLowLatencyDefaults (juce::AudioDeviceManager& dm, int numOutputChannelsNeeded)
+    {
+        const auto original = dm.getAudioDeviceSetup();
+        const juce::String originalType = dm.getCurrentAudioDeviceType();
+
+        for (auto* type : dm.getAvailableDeviceTypes())
+        {
+            if (type->getTypeName() != "ASIO") continue;
+            type->scanForDevices();
+            if (type->getDeviceNames (false).isEmpty()) break;
+            dm.setCurrentAudioDeviceType ("ASIO", true);
+            break;
+        }
+
+        if (auto* dev = dm.getCurrentAudioDevice())
+        {
+            auto setup = dm.getAudioDeviceSetup();
+            int best = 0;
+            for (int b : dev->getAvailableBufferSizes())
+                if (b <= 256 && b > best) best = b;
+            if (best > 0 && best < setup.bufferSize)
+            {
+                setup.bufferSize = best;
+                if (dm.setAudioDeviceSetup (setup, true).isNotEmpty())
+                {
+                    dm.setCurrentAudioDeviceType (originalType, true);
+                    dm.setAudioDeviceSetup (original, true);
+                }
+            }
+        }
+        else
+        {
+            dm.setCurrentAudioDeviceType (originalType, true);
+            dm.setAudioDeviceSetup (original, true);
+        }
+        juce::ignoreUnused (numOutputChannelsNeeded);
+    }
+
     // Initialises the device manager from the saved configuration when there is one.
     // JUCE itself falls back to the default device if the saved device is gone; if the
     // saved state is unusable in any other way we retry with plain default init.
@@ -55,6 +95,10 @@ namespace AudioDeviceSettingsStore
             error = dm.initialise (numInputChannelsNeeded, numOutputChannelsNeeded,
                                    nullptr, true, {}, nullptr);
         }
+
+        // First run (nothing saved): prefer a low-latency driver (ASIO) and a small buffer.
+        if (error.isEmpty() && saved == nullptr)
+            applyLowLatencyDefaults (dm, numOutputChannelsNeeded);
 
         return error;
     }

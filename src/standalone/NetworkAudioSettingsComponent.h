@@ -54,9 +54,23 @@ public:
         latencyProfileBox.addItem ("Normal", 1);
         latencyProfileBox.addItem ("Low", 2);
         latencyProfileBox.addItem ("Ultra-low", 3);
-        latencyProfileBox.setSelectedId (1, juce::dontSendNotification);
+        devMgrPtr = &deviceManager;
+#if DYSEKT_HAS_AOO
+        if (networkAudio != nullptr)
+        {
+            const auto lp = networkAudio->getLatencyProfile();
+            latencyProfileBox.setSelectedId (lp == MetroNetworkAudio::LatencyProfile::Low ? 2
+                                           : lp == MetroNetworkAudio::LatencyProfile::UltraLow ? 3 : 1, juce::dontSendNotification);
+        }
+        else
+#endif
+            latencyProfileBox.setSelectedId (1, juce::dontSendNotification);
+        latencyReadout.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+        latencyReadout.setFont (juce::Font (13.0f));
+        addAndMakeVisible (latencyReadout);
         latencyProfileBox.onChange = [this]
         {
+            userPickedProfile = true;
 #if DYSEKT_HAS_AOO
             if (networkAudio == nullptr) return;
             switch (latencyProfileBox.getSelectedId())
@@ -234,6 +248,13 @@ public:
             networkAudio->stop();
             if (directUsbButton.getToggleState())
             {
+                // A wired (direct) link needs far less buffering than Wi-Fi/LAN: default to Low
+                // unless the user chose a profile themselves.
+                if (! userPickedProfile && networkAudio->getLatencyProfile() == MetroNetworkAudio::LatencyProfile::Normal)
+                {
+                    networkAudio->setLatencyProfile (MetroNetworkAudio::LatencyProfile::Low);
+                    latencyProfileBox.setSelectedId (2, juce::dontSendNotification);
+                }
                 if (! networkAudio->startDirect (kDirectUsbPort))
                 {
                     directUsbButton.setToggleState (false, juce::dontSendNotification);
@@ -446,7 +467,8 @@ public:
 
         auto latencyRow = channelInner.removeFromTop (kRowH);
         latencyProfileLabel.setBounds (latencyRow.removeFromLeft (kLabelColW));
-        latencyProfileBox.setBounds (latencyRow);
+        latencyProfileBox.setBounds (latencyRow.removeFromLeft (160));
+        latencyReadout.setBounds (latencyRow.reduced (10, 0));
         channelInner.removeFromTop (kRowGap);
 
         auto deviceRow = channelInner.removeFromTop (kRowH);
@@ -777,8 +799,29 @@ private:
 #endif
     }
 
+    void updateLatencyReadout()
+    {
+        juce::String t;
+        if (devMgrPtr != nullptr)
+            if (auto* d = devMgrPtr->getCurrentAudioDevice())
+                if (d->getCurrentSampleRate() > 0.0)
+                {
+                    const double sr = d->getCurrentSampleRate();
+                    t << "Audio out " << juce::String (1000.0 * (d->getOutputLatencyInSamples() + d->getCurrentBufferSizeSamples()) / sr, 1)
+                      << " ms (" << d->getCurrentBufferSizeSamples() << " smp, " << d->getTypeName() << ")";
+                }
+#if DYSEKT_HAS_AOO
+        if (networkAudio != nullptr && networkAudio->isRunning())
+            t << (t.isEmpty() ? "" : "  |  ") << "Network buffer " << networkAudio->getSinkBufferMs() << " ms"
+              << (networkAudio->isDirectMode() ? " (direct)" : "");
+#endif
+        if (latencyReadout.getText() != t)
+            latencyReadout.setText (t, juce::dontSendNotification);
+    }
+
     void timerCallback() override
     {
+        updateLatencyReadout();
         refreshSources();
         updateDirectUsbProgress();
 
@@ -1240,6 +1283,9 @@ private:
     juce::TextButton directUsbButton;
     juce::Label latencyProfileLabel;
     juce::ComboBox latencyProfileBox;
+    juce::Label latencyReadout;
+    juce::AudioDeviceManager* devMgrPtr = nullptr;
+    bool userPickedProfile = false;
     juce::TextButton enableButton { "Network audio: OFF" };
     juce::Label channelTitle;
     juce::Label deviceLabel;
