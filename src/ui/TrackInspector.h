@@ -751,7 +751,7 @@ private:
     void populateOutCombo (const juce::String& current)
     {
         outCombo.clear (juce::dontSendNotification);
-        outCombo.addItem ("Network (RTP-MIDI)", 1);
+        outCombo.addItem ("Network", 1);
         bool found = current.isEmpty();
         int sel = 1, id = 2;
         for (const auto& d : juce::MidiOutput::getAvailableDevices())

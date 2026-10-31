@@ -483,7 +483,6 @@ void MidiLearnDialog::loadFromFile()
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-void MidiLearnDialog::encoderModeChanged (int /*fieldId*/, MidiLearnManager::EncoderMode /*mode*/) {}
 
 void MidiLearnDialog::close()
 {

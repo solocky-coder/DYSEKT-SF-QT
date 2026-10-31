@@ -57,7 +57,6 @@ private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MappingRowComponent)
     };
 
-    void encoderModeChanged (int fieldId, MidiLearnManager::EncoderMode mode);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiLearnDialog)
 };
