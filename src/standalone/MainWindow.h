@@ -402,7 +402,7 @@ private:
         }
 
         juce::AudioDeviceManager& deviceManager;
-        MetroLookAndFeel settingsLookAndFeel;
+        BenchLookAndFeel settingsLookAndFeel;
         juce::AudioDeviceSelectorComponent audioSelector;
         juce::TextButton saveButton;
         juce::Label statusLabel;

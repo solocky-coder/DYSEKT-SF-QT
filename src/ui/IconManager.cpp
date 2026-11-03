@@ -1,7 +1,7 @@
 #include "IconManager.h"
 #include "BinaryData.h"
 #include "DysektLookAndFeel.h"
-#include "../metro/MetroIcons.h"
+#include "../bench/BenchIcons.h"
 
 namespace IconManager
 {
@@ -66,7 +66,7 @@ namespace IconManager
     // the "flat surfaces, no skeuomorphic frames" look the Metro spec calls for.
     std::unique_ptr<juce::Drawable> getButtonIdle()
     {
-        if (MetroIcons::suppressChromeSprites())
+        if (BenchIcons::suppressChromeSprites())
             return nullptr;
         return loadDrawableFromBinary (
             BinaryData::button_idle_svg, BinaryData::button_idle_svgSize, "button_idle");
@@ -74,7 +74,7 @@ namespace IconManager
 
     std::unique_ptr<juce::Drawable> getButtonHover()
     {
-        if (MetroIcons::suppressChromeSprites())
+        if (BenchIcons::suppressChromeSprites())
             return nullptr;
         return loadDrawableFromBinary (
             BinaryData::button_hover_svg, BinaryData::button_hover_svgSize, "button_hover");
@@ -82,7 +82,7 @@ namespace IconManager
 
     std::unique_ptr<juce::Drawable> getButtonActive()
     {
-        if (MetroIcons::suppressChromeSprites())
+        if (BenchIcons::suppressChromeSprites())
             return nullptr;
         return loadDrawableFromBinary (
             BinaryData::button_active_svg, BinaryData::button_active_svgSize, "button_active");

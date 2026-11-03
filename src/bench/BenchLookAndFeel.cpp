@@ -1,9 +1,9 @@
-#include "MetroLookAndFeel.h"
+#include "BenchLookAndFeel.h"
 
 // ── Buttons ──────────────────────────────────────────────────────────────────
 // Flat buttons. Hover: lighter panel. Pressed: accent fill. Disabled: reduced
 // opacity (handled upstream by JUCE's normal alpha-on-disabled behaviour).
-void MetroLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
+void BenchLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
                                               const juce::Colour& /*bgColour*/,
                                               bool isHighlighted, bool isDown)
 {
@@ -31,7 +31,7 @@ void MetroLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& bu
 // Flat fill, thin border, accent only when focused — no bevel/glow.
 // ── Popup menus ──────────────────────────────────────────────────────────────
 // Flat card, square corners per manual's corner-radius rule (base class uses 3px).
-void MetroLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int height)
+void BenchLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int height)
 {
     const auto& t = getTheme();
     auto bounds = juce::Rectangle<float> (0, 0, (float) width, (float) height).reduced (0.5f);
@@ -43,7 +43,7 @@ void MetroLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, in
 
 // ── Sliders ──────────────────────────────────────────────────────────────────
 // Thin tracks. Accent-colored value. Flat round thumb, no glow.
-void MetroLookAndFeel::drawLinearSlider (juce::Graphics& g, int /*x*/, int /*y*/, int width, int height,
+void BenchLookAndFeel::drawLinearSlider (juce::Graphics& g, int /*x*/, int /*y*/, int width, int height,
                                           float sliderPos, float /*minSliderPos*/, float /*maxSliderPos*/,
                                           const juce::Slider::SliderStyle /*style*/, juce::Slider& slider)
 {
@@ -75,7 +75,7 @@ void MetroLookAndFeel::drawLinearSlider (juce::Graphics& g, int /*x*/, int /*y*/
 // (Only reached if a real rotary juce::Slider is instantiated — DYSEKT's
 // visible knob strips are hand-painted cells in SliceControlBar, themed
 // separately via getTheme() there.)
-void MetroLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
+void BenchLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                           float sliderPosProportional, float rotaryStartAngle,
                                           float rotaryEndAngle, juce::Slider& /*slider*/)
 {
@@ -107,7 +107,7 @@ void MetroLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
 
 // ── LCD / text-editor panels ─────────────────────────────────────────────────
 // Dark cards with subtle border. No glowing effects.
-void MetroLookAndFeel::fillTextEditorBackground (juce::Graphics& g, int width, int height, juce::TextEditor& te)
+void BenchLookAndFeel::fillTextEditorBackground (juce::Graphics& g, int width, int height, juce::TextEditor& te)
 {
     auto bg = te.findColour (juce::TextEditor::backgroundColourId);
     if (bg.isTransparent())
@@ -118,7 +118,7 @@ void MetroLookAndFeel::fillTextEditorBackground (juce::Graphics& g, int width, i
     g.fillRoundedRectangle (bounds, getTheme().cornerRadius * 0.6f);
 }
 
-void MetroLookAndFeel::drawTextEditorOutline (juce::Graphics& g, int width, int height, juce::TextEditor& te)
+void BenchLookAndFeel::drawTextEditorOutline (juce::Graphics& g, int width, int height, juce::TextEditor& te)
 {
     if (te.isReadOnly())
         return;

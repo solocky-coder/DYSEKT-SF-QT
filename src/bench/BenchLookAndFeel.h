@@ -18,16 +18,16 @@
 // Note: most of DYSEKT-SF's actual on-screen surfaces (waveform, pads, mixer,
 // browser, LCDs, knob strips) are hand-painted directly in each component's
 // paint(), not routed through LookAndFeel virtual calls at all — those are
-// themed via getTheme().isMetro() checks inside the components
+// themed via getTheme().isFlat() checks inside the components
 // themselves (WaveformView.cpp, PadGridView.cpp, MixerPanel.cpp, etc.), and
 // are unaffected by which LookAndFeel object is active. This class overrides
 // TextButton, Slider (linear + rotary), PopupMenu, and TextEditor; ComboBox
 // is inherited unchanged from DysektLookAndFeel since the two are now
 // pixel-identical (flat, square corners) — see DysektLookAndFeel::drawComboBox.
-class MetroLookAndFeel : public DysektLookAndFeel
+class BenchLookAndFeel : public DysektLookAndFeel
 {
 public:
-    MetroLookAndFeel() = default;
+    BenchLookAndFeel() = default;
 
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
                                bool isHighlighted, bool isDown) override;

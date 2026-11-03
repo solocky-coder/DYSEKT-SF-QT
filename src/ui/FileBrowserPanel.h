@@ -38,7 +38,7 @@ static inline void drawFileListFolderGlyph (juce::Graphics& g, juce::Rectangle<f
 // Inherits DysektLookAndFeel (not juce::LookAndFeel_V4 directly) so popup menus,
 // the combo box, and every widget not overridden here automatically track the
 // app's shape language and theme colours — same pattern as TransportLAF/
-// MetroLookAndFeel. Only the small file-list's own sizing and row painting are
+// BenchLookAndFeel. Only the small file-list's own sizing and row painting are
 // genuinely specialized; everything else is inherited unchanged.
 class SmallListLookAndFeel : public DysektLookAndFeel
 {

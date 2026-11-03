@@ -401,7 +401,7 @@ void DualLcdControlFrame::paint (juce::Graphics& g)
     auto sf1 = [sf](float v) -> float { return v * sf; };
 
     // ── Background + border ───────────────────────────────────────────────────
-    if (getTheme().isMetro())
+    if (getTheme().isFlat())
     {
         g.setColour (getTheme().button);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), getTheme().cornerRadius);

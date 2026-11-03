@@ -5,7 +5,7 @@
 #include "../network/MetroNetworkAudio.h"
 #include "NetworkAudioLabels.h"
 #include "../network/NetworkAudioChannelState.h"
-#include "../metro/MetroLookAndFeel.h"
+#include "../bench/BenchLookAndFeel.h"
 #include "NetworkAudioProcessor.h"
 #include "Utf8Text.h"
 
@@ -383,7 +383,7 @@ public:
 
     // AUDIT: none of this panel's toggle-style controls (the two TextButton
     // toggles, plus the ToggleButton checkboxes) previously had any border —
-    // MetroLookAndFeel::drawButtonBackground only ever fills a flat rectangle
+    // BenchLookAndFeel::drawButtonBackground only ever fills a flat rectangle
     // (theme.button when off, theme.accent when on), with no outline drawn at
     // any point. That made an OFF toggle pixel-identical to a plain one-shot
     // action button (Connect / Join, Disconnect) — see the "Network audio:
@@ -1265,7 +1265,7 @@ private:
         MetroNetworkAudio* owner = nullptr;
     };
 
-    MetroLookAndFeel settingsLookAndFeel;
+    BenchLookAndFeel settingsLookAndFeel;
     bool showDeviceSelector = false;
 
 protected:

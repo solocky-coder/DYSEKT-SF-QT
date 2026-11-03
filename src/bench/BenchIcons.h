@@ -9,13 +9,13 @@
 // return null (that fallback path predates Metro — it exists for when the
 // binary sprite assets fail to load). Metro reuses that existing fallback
 // instead of shipping new flat icon art: IconManager::getButtonIdle/Hover/
-// Active() call MetroIcons::suppressChromeSprites() and return null when
+// Active() call BenchIcons::suppressChromeSprites() and return null when
 // it's true, which flattens every sprite-chrome button app-wide from this
 // one place — see IconManager.cpp.
-namespace MetroIcons
+namespace BenchIcons
 {
     inline bool suppressChromeSprites()
     {
-        return getTheme().isMetro();
+        return getTheme().isFlat();
     }
 }

@@ -3,9 +3,9 @@
 #include "IconManager.h"
 #include "ToolIcons.h"
 
-// Default theme is now Metro (flat, square, no-gloss chrome per the design
+// Default theme is Bench (flat, square, no-gloss chrome per the design
 // manual). Was previously ThemeData::opendawTheme(), which meant every
-// theme.isMetro() flat-rendering branch across the codebase
+// theme.isFlat() flat-rendering branch across the codebase
 // (ActionPanel, FileBrowserPanel, GlobalEqPanel, HeaderBar, LogoBar,
 // PadGridView, Sf2LcdDisplay, Sf2ProgramGrid, SfzDropdownPanel,
 // SfzLcdDisplay, ShortcutsPanel, SliceLcdDisplay, DualLcdControlFrame,
@@ -13,7 +13,7 @@
 // glow "opendaw" look by default even though the flat code path was already
 // implemented and correct. Flipping this one line activates the flat look
 // everywhere at once, with no other file needing to change.
-static ThemeData globalTheme = ThemeData::metroTheme();
+static ThemeData globalTheme = ThemeData::benchTheme();
 
 ThemeData& getTheme() { return globalTheme; }
 void setTheme (const ThemeData& t) { globalTheme = t; }
@@ -68,7 +68,7 @@ juce::Font DysektLookAndFeel::makeFont (float pointSize, bool bold)
     // Font selection is unrelated to the flat/square shape-language collapse —
     // Metro still asks for native Segoe UI chrome; every other theme still
     // uses the embedded Barlow Condensed faces. Left exactly as it was.
-    if (getTheme().isMetro())
+    if (getTheme().isFlat())
     {
         auto opts = juce::FontOptions().withName ("Segoe UI").withHeight (pointSize);
         if (bold)

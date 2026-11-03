@@ -167,8 +167,7 @@ target_sources(Dysekt PRIVATE
     src/params/ParamLayout.cpp
     src/ui/DysektLookAndFeel.cpp
     src/ui/IconManager.cpp
-    src/metro/MetroTheme.cpp
-    src/metro/MetroLookAndFeel.cpp
+    src/bench/BenchLookAndFeel.cpp
     src/ui/HeaderBar.cpp
     src/ui/SliceControlBar.cpp
     src/ui/WaveformView.cpp
@@ -283,8 +282,7 @@ target_sources(DysektStandalone PRIVATE
     src/params/ParamLayout.cpp
     src/ui/DysektLookAndFeel.cpp
     src/ui/IconManager.cpp
-    src/metro/MetroTheme.cpp
-    src/metro/MetroLookAndFeel.cpp
+    src/bench/BenchLookAndFeel.cpp
     src/ui/HeaderBar.cpp
     src/ui/SliceControlBar.cpp
     src/ui/WaveformView.cpp

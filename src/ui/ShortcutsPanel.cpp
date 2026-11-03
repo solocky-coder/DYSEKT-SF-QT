@@ -329,7 +329,7 @@ void ShortcutsPanel::paint (juce::Graphics& g)
     g.fillAll (juce::Colours::black.withAlpha (0.55f));
 
     auto panel = getLocalBounds().reduced (24, 20);
-    const bool metro = (getTheme().isMetro());
+    const bool metro = (getTheme().isFlat());
     g.setColour (getTheme().header);
     g.fillRoundedRectangle (panel.toFloat(), getTheme().cornerRadius);   // square unless Bench
     g.setColour (metro ? getTheme().separator : getTheme().accent.withAlpha (0.5f));

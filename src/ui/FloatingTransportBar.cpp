@@ -1,15 +1,15 @@
 #include "FloatingTransportBar.h"
 #include "ClickMenus.h"
 #include <cmath>
-#include "../metro/MetroColours.h"
-#include "../metro/MetroMetrics.h"
-#include "../metro/MetroTypography.h"
+#include "../bench/BenchColours.h"
+#include "../bench/BenchMetrics.h"
+#include "../bench/BenchTypography.h"
 #include "../sequencer/SequencerEngine.h"
 #include "../sequencer/MidiClip.h"
 #include "DysektLookAndFeel.h"
 
 
-using namespace dysekt::metro; // MetroColours' Base/Text/Accent/Transport + MetroMetrics/MetroTypography —
+using namespace dysekt::bench; // BenchColours' Base/Text/Accent/Transport + BenchMetrics/BenchTypography —
  // kept as this panel's own chrome palette, independent of whichever
  // main-window theme is active. See ArrangeView::showFloatingTransport().
 namespace
@@ -269,7 +269,7 @@ addAndMakeVisible (*b);
  // see the comment there), so the fixed floating-window width needs the
  // same increase or the left-anchored position/transport/locator block
  // would get squeezed short a grid unit.
- setSize (MetroMetrics::grid * 160, MetroMetrics::grid * 13); // widened for the larger L/R locator fields
+ setSize (BenchMetrics::grid * 160, BenchMetrics::grid * 13); // widened for the larger L/R locator fields
  startTimerHz (20);
 }
 
@@ -297,7 +297,7 @@ void FloatingTransportBar::show()
  // visible gap between it and LINK — while floating from a narrower host
  // (e.g. a laptop screen) happens to look fine purely by luck of the
  // previous docked width being closer to the intended size.
- setSize (MetroMetrics::grid * 160, MetroMetrics::grid * 13);
+ setSize (BenchMetrics::grid * 160, BenchMetrics::grid * 13);
 
  if (! isOnDesktop())
     {
@@ -427,7 +427,7 @@ FloatingTransportBar::Layout FloatingTransportBar::computeLayout() const
     // Docked: the title strip is empty (switcher + Float live in the content
     // row), so drop it and centre the content row vertically in the panel
     // instead of leaving a dead band above it.
-    L.titleStrip = docked ? juce::Rectangle<int>() : area.removeFromTop (MetroMetrics::grid * 5);
+    L.titleStrip = docked ? juce::Rectangle<int>() : area.removeFromTop (BenchMetrics::grid * 5);
     // ^ 24 -> 40 (floating): the old 24px strip left only 20px of button
     // height - too short for the MIXER / ARRANGER / GLOBAL EQ text - and put
     // the tab group's 3px frame right on the panel border and the strip's
@@ -442,23 +442,23 @@ FloatingTransportBar::Layout FloatingTransportBar::computeLayout() const
     // — so the docked title strip is left empty. ───────────────────────
     if (! docked)
     {
-        auto strip = L.titleStrip.reduced (MetroMetrics::halfGrid, MetroMetrics::grid);   // 24px-tall, vertically centred buttons
-        L.dockField = strip.removeFromRight (MetroMetrics::grid * 7);
-        strip.removeFromRight (MetroMetrics::halfGrid);
-        L.pinField  = strip.removeFromRight (MetroMetrics::grid * 6);
-        strip.removeFromLeft (MetroMetrics::grid * 6); // leave room for the drag grip / left margin
-        L.mixerButtonField   = strip.removeFromLeft (MetroMetrics::grid * 8);
-        strip.removeFromLeft (MetroMetrics::halfGrid);
-        L.arrangeButtonField = strip.removeFromLeft (MetroMetrics::grid * 13);
-        strip.removeFromLeft (MetroMetrics::halfGrid);
-        L.eqButtonField      = strip.removeFromLeft (MetroMetrics::grid * 13);
+        auto strip = L.titleStrip.reduced (BenchMetrics::halfGrid, BenchMetrics::grid);   // 24px-tall, vertically centred buttons
+        L.dockField = strip.removeFromRight (BenchMetrics::grid * 7);
+        strip.removeFromRight (BenchMetrics::halfGrid);
+        L.pinField  = strip.removeFromRight (BenchMetrics::grid * 6);
+        strip.removeFromLeft (BenchMetrics::grid * 6); // leave room for the drag grip / left margin
+        L.mixerButtonField   = strip.removeFromLeft (BenchMetrics::grid * 8);
+        strip.removeFromLeft (BenchMetrics::halfGrid);
+        L.arrangeButtonField = strip.removeFromLeft (BenchMetrics::grid * 13);
+        strip.removeFromLeft (BenchMetrics::halfGrid);
+        L.eqButtonField      = strip.removeFromLeft (BenchMetrics::grid * 13);
     }
 
-    area.reduce (MetroMetrics::grid, 0);
-    area.removeFromTop (juce::jmax (0, (area.getHeight() - MetroMetrics::largeControlHeight) / 2));
+    area.reduce (BenchMetrics::grid, 0);
+    area.removeFromTop (juce::jmax (0, (area.getHeight() - BenchMetrics::largeControlHeight) / 2));
 
 
- const int rowH = MetroMetrics::largeControlHeight;
+ const int rowH = BenchMetrics::largeControlHeight;
  auto row = area.removeFromTop (rowH);
 
 
@@ -466,12 +466,12 @@ FloatingTransportBar::Layout FloatingTransportBar::computeLayout() const
  // at the far left of the content row instead of the title strip above. ─
     if (docked)
     {
-        L.mixerButtonField   = row.removeFromLeft (MetroMetrics::grid * 8);
-        row.removeFromLeft (MetroMetrics::halfGrid);
-        L.arrangeButtonField = row.removeFromLeft (MetroMetrics::grid * 13);
-        row.removeFromLeft (MetroMetrics::halfGrid);
-        L.eqButtonField      = row.removeFromLeft (MetroMetrics::grid * 13);
-        row.removeFromLeft (MetroMetrics::grid * 2); // gap before the left-anchored cluster
+        L.mixerButtonField   = row.removeFromLeft (BenchMetrics::grid * 8);
+        row.removeFromLeft (BenchMetrics::halfGrid);
+        L.arrangeButtonField = row.removeFromLeft (BenchMetrics::grid * 13);
+        row.removeFromLeft (BenchMetrics::halfGrid);
+        L.eqButtonField      = row.removeFromLeft (BenchMetrics::grid * 13);
+        row.removeFromLeft (BenchMetrics::grid * 2); // gap before the left-anchored cluster
     }
 
 
@@ -489,19 +489,19 @@ FloatingTransportBar::Layout FloatingTransportBar::computeLayout() const
         // collide into a pinched "hourglass" seam instead of reading as
         // two separate boxes. Use a 2-grid gap between every framed field
         // so the corners always clear each other with room to spare.
-        const int fieldGap = MetroMetrics::grid * 2;
+        const int fieldGap = BenchMetrics::grid * 2;
         // 10 grid units for LINK (11 while floating, where there's no
         // Float button eating into the block) — enough for "LINK 3" once
         // there are peers, not just the bare "LINK" label.
-        const int rightW = MetroMetrics::grid * (docked ? 19 : 11);
+        const int rightW = BenchMetrics::grid * (docked ? 19 : 11);
         auto right = row.removeFromRight (rightW);
         if (docked)
         {
-            L.floatField = right.removeFromLeft (MetroMetrics::grid * 7);
+            L.floatField = right.removeFromLeft (BenchMetrics::grid * 7);
             right.removeFromLeft (fieldGap);
         }
         L.linkField    = right;
-        row.removeFromRight (MetroMetrics::grid * 2); // gap before the pinned block
+        row.removeFromRight (BenchMetrics::grid * 2); // gap before the pinned block
     }
 
 
@@ -518,16 +518,16 @@ FloatingTransportBar::Layout FloatingTransportBar::computeLayout() const
  // keeps the whole block snug against the view-switcher at any host
  // width, matching floating mode's own (already left-anchored) layout. ──
 
-    L.positionField = row.removeFromLeft (MetroMetrics::grid * 21);
-    row.removeFromLeft (MetroMetrics::grid);
+    L.positionField = row.removeFromLeft (BenchMetrics::grid * 21);
+    row.removeFromLeft (BenchMetrics::grid);
     L.divider0 = row.getX();
-    row.removeFromLeft (MetroMetrics::grid);
-    L.transportRow = row.removeFromLeft (MetroMetrics::grid * 37);
+    row.removeFromLeft (BenchMetrics::grid);
+    L.transportRow = row.removeFromLeft (BenchMetrics::grid * 37);
 
 
-    row.removeFromLeft (MetroMetrics::grid * 2);
+    row.removeFromLeft (BenchMetrics::grid * 2);
     L.divider1 = row.getX();
-    row.removeFromLeft (MetroMetrics::grid * 2);
+    row.removeFromLeft (BenchMetrics::grid * 2);
 
 
  // ── Middle: directly writable L/R locators ───────────────────────────
@@ -535,22 +535,22 @@ FloatingTransportBar::Layout FloatingTransportBar::computeLayout() const
     // both now show the same 10-character bars.beats.ticks format at the
     // same 26pt bold mono size (the old 11-grid width plus "L "/"R " prefix
     // is gone now that the prefix moved fully to the separate caption).
-    L.locatorsField = row.removeFromLeft (MetroMetrics::grid * 48);
+    L.locatorsField = row.removeFromLeft (BenchMetrics::grid * 48);
 
 
-    row.removeFromLeft (MetroMetrics::grid * 2);
+    row.removeFromLeft (BenchMetrics::grid * 2);
     L.divider2 = row.getX();
-    row.removeFromLeft (MetroMetrics::grid * 2);
+    row.removeFromLeft (BenchMetrics::grid * 2);
 
 
  // ── BPM, directly after the locators ──────────────────────────────────
     {
-        const int fieldGap = MetroMetrics::grid * 2;
+        const int fieldGap = BenchMetrics::grid * 2;
         // 9 grid units — at tempoLabel's 16pt bold mono font, "120.00"
         // needs more than the old 48px afforded and was getting
         // ellipsized ("120…") instead of showing the actual value.
-        const int tempoFieldW = MetroMetrics::grid * 9;
-        L.tempoCaption = row.removeFromLeft (MetroMetrics::grid * 4);
+        const int tempoFieldW = BenchMetrics::grid * 9;
+        L.tempoCaption = row.removeFromLeft (BenchMetrics::grid * 4);
         L.tempoField   = row.removeFromLeft (tempoFieldW);
         row.removeFromLeft (fieldGap);
     }
@@ -574,9 +574,9 @@ FloatingTransportBar::Layout FloatingTransportBar::computeLayout() const
     // the compact dropdown (gridField, grid*9 — same width as before) is
     // used instead.
     {
-        constexpr int minButtonW   = MetroMetrics::grid * 6;  // 48px — legibility floor for "1/16" etc.
-        constexpr int maxButtonW   = MetroMetrics::grid * 10; // 80px — cap so they don't sprawl on an ultrawide host
-        constexpr int buttonGap    = MetroMetrics::halfGrid;
+        constexpr int minButtonW   = BenchMetrics::grid * 6;  // 48px — legibility floor for "1/16" etc.
+        constexpr int maxButtonW   = BenchMetrics::grid * 10; // 80px — cap so they don't sprawl on an ultrawide host
+        constexpr int buttonGap    = BenchMetrics::halfGrid;
         constexpr int minGridButtonsW = kNumGridOptions * minButtonW + (kNumGridOptions - 1) * buttonGap;
         constexpr int maxGridButtonsW = kNumGridOptions * maxButtonW + (kNumGridOptions - 1) * buttonGap;
 
@@ -592,7 +592,7 @@ FloatingTransportBar::Layout FloatingTransportBar::computeLayout() const
             // where it was already accounted for as spare row width.
             L.gridButtonsField = row.removeFromRight (juce::jmin (row.getWidth(), maxGridButtonsW));
         else
-            L.gridField = row.removeFromRight (MetroMetrics::grid * 9);
+            L.gridField = row.removeFromRight (BenchMetrics::grid * 9);
     }
 
  return L;
@@ -640,15 +640,15 @@ void FloatingTransportBar::resized()
 
  // L/R captions sit outside their fields so the numerical values stay truly centred.
  auto locators = L.locatorsField;
-    locators.removeFromLeft (MetroMetrics::grid * 2);
-    leftLocatorLabel.setBounds (locators.removeFromLeft (MetroMetrics::grid * 21));
-    locators.removeFromLeft (MetroMetrics::grid * 2);
-    rightLocatorLabel.setBounds (locators.removeFromLeft (MetroMetrics::grid * 21));
+    locators.removeFromLeft (BenchMetrics::grid * 2);
+    leftLocatorLabel.setBounds (locators.removeFromLeft (BenchMetrics::grid * 21));
+    locators.removeFromLeft (BenchMetrics::grid * 2);
+    rightLocatorLabel.setBounds (locators.removeFromLeft (BenchMetrics::grid * 21));
 
 
     positionLabel.setBounds (L.positionField);
  auto transport = L.transportRow;
- const int btnGap = MetroMetrics::halfGrid;
+ const int btnGap = BenchMetrics::halfGrid;
  const int n = 6;
  const int btnW = (transport.getWidth() - btnGap * (n - 1)) / n;
  for (auto* b : { &toStartButton, &backButton, &playButton, &stopButton, &recordButton, &cycleButton })
@@ -672,7 +672,7 @@ void FloatingTransportBar::resized()
     else
     {
         auto buttons = L.gridButtonsField;
-        const int gap = MetroMetrics::halfGrid;
+        const int gap = BenchMetrics::halfGrid;
         for (int i = 0; i < kNumGridOptions; ++i)
         {
             const int w = buttons.getWidth() / (kNumGridOptions - i);
@@ -727,14 +727,14 @@ void FloatingTransportBar::paint (juce::Graphics& g)
  //
  // Same font as the BPM caption just to the right of these fields
  // (transportTextSize, i.e. the same size as the numeric values
- // themselves) rather than the much smaller MetroTypography::caption() —
+ // themselves) rather than the much smaller BenchTypography::caption() —
  // a single condensed capital letter at that size still fits easily
  // inside the 16px slot (BPM fits three letters in twice that width), and
  // matching size keeps every caption on this row reading at the same
  // weight instead of L/R looking like an afterthought next to it.
     g.setColour (Text::Muted);
     g.setFont (DysektLookAndFeel::makeFont (transportTextSize));
- const auto captionWidth = MetroMetrics::grid * 2;
+ const auto captionWidth = BenchMetrics::grid * 2;
  const auto leftCaption  = leftLocatorLabel.getBounds().withWidth (captionWidth)
                                                 .translated (-captionWidth, 0);
  const auto rightCaption = rightLocatorLabel.getBounds().withWidth (captionWidth)
@@ -755,9 +755,9 @@ void FloatingTransportBar::paint (juce::Graphics& g)
     g.setColour (Base::Border);
  for (int x : { L.divider0, L.divider1, L.divider2 })
         g.drawVerticalLine (x, docked ? (float) L.positionField.getY()
-                                      : (float) (L.titleStrip.getBottom() + MetroMetrics::grid),
+                                      : (float) (L.titleStrip.getBottom() + BenchMetrics::grid),
                            docked ? (float) L.positionField.getBottom()
-                                  : (float) (getHeight() - MetroMetrics::grid));
+                                  : (float) (getHeight() - BenchMetrics::grid));
 
  // ── Per-element frames — every functional cluster on the content row
  // gets its own bordered box instead of relying on the thin dividers

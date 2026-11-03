@@ -2,13 +2,13 @@
     DYSEKT 2
     Metro UI
 
-    MetroMetrics.h
+    BenchMetrics.h
 
     Shared, grid-based layout measurements for the Metro standalone UI.
 */
 #pragma once
 
-namespace dysekt::metro
+namespace dysekt::bench
 {
 /**
     The single source of truth for Metro UI geometry.
@@ -17,7 +17,7 @@ namespace dysekt::metro
     their dimensions from this 8 px grid rather than introducing local magic
     numbers, so the standalone retains consistent rhythm as it grows.
 */
-struct MetroMetrics final
+struct BenchMetrics final
 {
     // Base rhythm
     static constexpr int grid                 = 8;
@@ -61,4 +61,4 @@ struct MetroMetrics final
     static constexpr float focusRingThickness  = 1.0f;
 };
 
-} // namespace dysekt::metro
+} // namespace dysekt::bench

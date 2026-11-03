@@ -4,7 +4,7 @@
 #include "TrackHeaderStrip.h"
 #include "TrackInspector.h"
 #include "DysektLookAndFeel.h"
-#include "../metro/MetroColours.h"
+#include "../bench/BenchColours.h"
 #include "../sequencer/SequencerEngine.h"
 #include "../sequencer/MidiClip.h"
 #include "ToolIcons.h"
@@ -254,10 +254,10 @@ public:
                 b.setClickingTogglesState (true);
                 // Same palette as the MIXER / ARRANGER / GLOBAL EQ and FLOAT / LINK
                 // buttons (FloatingTransportBar::configureChrome).
-                b.setColour (juce::TextButton::buttonColourId,   dysekt::metro::Base::Elevated);
+                b.setColour (juce::TextButton::buttonColourId,   dysekt::bench::Base::Elevated);
                 b.setColour (juce::TextButton::buttonOnColourId, getTheme().accent);
-                b.setColour (juce::TextButton::textColourOffId,  dysekt::metro::Text::Secondary);
-                b.setColour (juce::TextButton::textColourOnId,   dysekt::metro::Base::White);
+                b.setColour (juce::TextButton::textColourOffId,  dysekt::bench::Text::Secondary);
+                b.setColour (juce::TextButton::textColourOnId,   dysekt::bench::Base::White);
                 b.getProperties().set ("flatFill", true);
                 b.onClick = [this, itemId] { transport.setSnapItemId (itemId); };
                 addAndMakeVisible (b);
@@ -289,10 +289,10 @@ public:
                 auto& b = arrangerButtons[i];
                 b.setButtonText (labels[i]);
                 b.setTooltip (tips[i]);
-                b.setColour (juce::TextButton::buttonColourId, dysekt::metro::Base::Elevated);
+                b.setColour (juce::TextButton::buttonColourId, dysekt::bench::Base::Elevated);
                 b.setColour (juce::TextButton::buttonOnColourId, getTheme().accent);
-                b.setColour (juce::TextButton::textColourOffId, dysekt::metro::Text::Secondary);
-                b.setColour (juce::TextButton::textColourOnId, dysekt::metro::Base::White);
+                b.setColour (juce::TextButton::textColourOffId, dysekt::bench::Text::Secondary);
+                b.setColour (juce::TextButton::textColourOnId, dysekt::bench::Base::White);
                 b.getProperties().set ("flatFill", true);
                 addAndMakeVisible (b);
             }
@@ -340,10 +340,10 @@ public:
         // ── Mini arranger expand/collapse toggle ─────────────────────────────
         miniArrangerToggleButton.setButtonText (miniToggleLabel (true));
         miniArrangerToggleButton.setTooltip ("Collapse mini arranger overview");
-        miniArrangerToggleButton.setColour (juce::TextButton::buttonColourId, dysekt::metro::Base::Elevated);
+        miniArrangerToggleButton.setColour (juce::TextButton::buttonColourId, dysekt::bench::Base::Elevated);
         miniArrangerToggleButton.setColour (juce::TextButton::buttonOnColourId, getTheme().accent);
-        miniArrangerToggleButton.setColour (juce::TextButton::textColourOffId, dysekt::metro::Text::Secondary);
-        miniArrangerToggleButton.setColour (juce::TextButton::textColourOnId, dysekt::metro::Base::White);
+        miniArrangerToggleButton.setColour (juce::TextButton::textColourOffId, dysekt::bench::Text::Secondary);
+        miniArrangerToggleButton.setColour (juce::TextButton::textColourOnId, dysekt::bench::Base::White);
         miniArrangerToggleButton.getProperties().set ("flatFill", true);
         miniArrangerToggleButton.onClick = [this]
         {
@@ -2592,7 +2592,7 @@ private:
         const int framePad = dockedToolbarTall() ? 3 : 2;
         auto frame = [&g, framePad] (juce::Rectangle<int> r)
         {
-            g.setColour (dysekt::metro::Base::Border);
+            g.setColour (dysekt::bench::Base::Border);
             g.drawRoundedRectangle (r.expanded (framePad).toFloat().reduced (0.5f), 4.0f, 1.0f);
         };
         auto quantizeGroup = quantizeButtons[0].getBounds().getUnion (quantizeButtons[kNumQuantizeOptions - 1].getBounds());

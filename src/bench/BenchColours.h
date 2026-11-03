@@ -2,12 +2,12 @@
     DYSEKT 2
     Metro UI
 
-    MetroColours.h
+    BenchColours.h
 */
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace dysekt::metro
+namespace dysekt::bench
 {
 using Colour = juce::Colour;
 

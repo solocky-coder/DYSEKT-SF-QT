@@ -1,7 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../sequencer/SequencerEngine.h"
-#include "../metro/MetroColours.h"
+#include "../bench/BenchColours.h"
 #include "TransportIconButton.h"
 #include "DysektLookAndFeel.h"
 #include "ClickMenus.h"
@@ -22,7 +22,7 @@ class MiniTransportBar final : public juce::Component,
 public:
     explicit MiniTransportBar (SequencerEngine& seq) : engine (seq)
     {
-        namespace M = dysekt::metro;
+        namespace M = dysekt::bench;
 
         stopButton  .configure (TransportIcons::Kind::Stop,   M::Accent::Orange,    "Stop");
         playButton  .configure (TransportIcons::Kind::Play,   M::Transport::Play,   "Play");
@@ -69,8 +69,8 @@ public:
     {
         const auto& theme = getTheme();
         if (theme.isBench()) return;   // Bench: the top bar draws one capsule behind the transport
-        const float r = theme.isMetro() ? theme.cornerRadius : 0.0f;
-        g.setColour (theme.isMetro() ? theme.waveformBg : theme.darkBar);
+        const float r = theme.isFlat() ? theme.cornerRadius : 0.0f;
+        g.setColour (theme.isFlat() ? theme.waveformBg : theme.darkBar);
         g.fillRoundedRectangle (getLocalBounds().toFloat(), r);
         g.setColour (theme.separator);
         g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), r, 1.0f);

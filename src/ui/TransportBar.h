@@ -5,15 +5,15 @@
 #include "../sequencer/SequencerEngine.h"
 #include "../sequencer/MidiClip.h"
 #include "../sequencer/AbletonLink.h"
-#include "../metro/MetroColours.h"
-#include "../metro/MetroTypography.h"
+#include "../bench/BenchColours.h"
+#include "../bench/BenchTypography.h"
 #include "DysektLookAndFeel.h"
 #include "UIHelpers.h"
 #include "ContextMenuButton.h"
 #include "TransportIconButton.h"
 #include "ClickMenus.h"
 
-using namespace dysekt::metro;   // Base/Text/Accent/Transport — same chrome
+using namespace dysekt::bench;   // Base/Text/Accent/Transport — same chrome
                                   // palette FloatingTransportBar.cpp uses,
                                   // deliberately independent of whichever
                                   // main-window theme is active. See this
@@ -29,7 +29,7 @@ using namespace dysekt::metro;   // Base/Text/Accent/Transport — same chrome
 //  per-button tints, same amber zero-padded bar.beat.tick position readout,
 //  same editable/wheel-scrollable L/R cycle locators, same BPM/GRID/LINK
 //  trio) rather than the previous unrelated BACK/PLAY/STOP/REC/LOOP
-//  text-button + plain-text BPM design. Colours come from MetroColours directly rather than
+//  text-button + plain-text BPM design. Colours come from BenchColours directly rather than
 //  DysektLookAndFeel's theme, for the same reason FloatingTransportBar.cpp
 //  does that (see its own top-of-file comment) — this row and its floating
 //  twin now share one chrome palette, so docking/undocking never changes
@@ -301,7 +301,7 @@ public:
         // paint() draws its own "L"/"R" — outside the editable field so the
         // numeric value inside stays centred.
         g.setColour (Text::Muted);
-        g.setFont (MetroTypography::caption());
+        g.setFont (BenchTypography::caption());
         g.drawText ("L", leftLocatorLabel.getBounds().translated (-14, 0).withWidth (14),
                     juce::Justification::centred);
         g.drawText ("R", rightLocatorLabel.getBounds().translated (-14, 0).withWidth (14),

@@ -1322,7 +1322,7 @@ void DysektEditor::paint (juce::Graphics& g)
  const auto& frameSrc = waveformView.getBounds();
  const auto outerF = waveformFrameRect (*this, frameSrc, trimDialog != nullptr);
 
- if (getTheme().isMetro())
+ if (getTheme().isFlat())
  {
      g.setColour (getTheme().waveformBg);
      g.fillRoundedRectangle (outerF, getTheme().cornerRadius);
@@ -1369,7 +1369,7 @@ void DysektEditor::paintOverChildren (juce::Graphics& g)
  const auto outerF = waveformFrameRect (*this, frameSrc, trimDialog != nullptr);
  const auto ac = getTheme().accent;
 
- if (getTheme().isMetro())
+ if (getTheme().isFlat())
  {
      g.setColour (getTheme().separator);
      g.drawRoundedRectangle (outerF.reduced (0.5f * sf), getTheme().cornerRadius, 1.0f * sf);
@@ -1407,7 +1407,7 @@ void DysektEditor::paintOverChildren (juce::Graphics& g)
  const auto outerF = waveformFrameRect (*this, sfzActiveBounds, false);
  const auto ac = getTheme().accent;
 
- if (getTheme().isMetro())
+ if (getTheme().isFlat())
  {
      g.setColour (getTheme().separator);
      g.drawRoundedRectangle (outerF.reduced (0.5f * sf), getTheme().cornerRadius, 1.0f * sf);
@@ -1454,7 +1454,7 @@ void DysektEditor::paintOverChildren (juce::Graphics& g)
  const auto outerF = waveformFrameRect (*this, slotBounds, false);
  const auto ac = getTheme().accent;
 
- if (getTheme().isMetro())
+ if (getTheme().isFlat())
  {
      g.setColour (getTheme().separator);
      g.drawRoundedRectangle (outerF.reduced (0.5f * sf), getTheme().cornerRadius, 1.0f * sf);
@@ -1484,7 +1484,7 @@ void DysektEditor::paintOverChildren (juce::Graphics& g)
  const auto ac = getTheme().accent;
  const juce::Rectangle<float> logoF (logoBar.getBounds().toFloat()
  .withTrimmedTop (4.0f * sf));
- if (getTheme().isMetro())
+ if (getTheme().isFlat())
  {
      g.setColour (getTheme().separator);
      g.drawRoundedRectangle (logoF.reduced (0.5f * sf), 0.0f, 1.0f * sf);
@@ -1504,7 +1504,7 @@ void DysektEditor::paintOverChildren (juce::Graphics& g)
  {
  const auto ac = getTheme().accent;
  const juce::Rectangle<float> win (getLocalBounds().toFloat());
- if (getTheme().isMetro())
+ if (getTheme().isFlat())
  {
      g.setColour (getTheme().separator);
      g.drawRoundedRectangle (win.reduced (2.0f * sf), 0.0f, 1.0f * sf);
@@ -2616,18 +2616,17 @@ void DysektEditor::ensureDefaultThemes()
  auto f = dir.getChildFile (name + ".dsk");
  if (! f.existsAsFile()) f.replaceWithText (t.toThemeFile());
  };
- // Metro is the only shipped/seeded theme now — everything else is
+ // The Bench themes are the only shipped/seeded themes — everything else is
  // user-created via the theme editor. Any of the old built-in preset
  // files left over from a previous version are removed below so they
  // don't linger in the picker after an update.
- write ("metro", ThemeData::metroTheme());
  write ("bench", ThemeData::benchTheme());
  write ("bench-light", ThemeData::benchLightTheme());
  write ("bench-black", ThemeData::benchBlackTheme());
 
  static const char* kRetiredBuiltIns[] = {
      "dark", "shell", "lazy", "snow", "ghost", "hack",
-     "midnight", "pigments", "cr8", "dysekt", "serum", "opendaw", "glass"
+     "midnight", "pigments", "cr8", "dysekt", "serum", "opendaw", "glass", "metro"
  };
  for (auto* name : kRetiredBuiltIns)
  {
@@ -2644,7 +2643,7 @@ juce::StringArray DysektEditor::getAvailableThemes()
  auto t = ThemeData::fromThemeFile (f.loadFileAsString());
  if (t.name.isNotEmpty()) names.add (t.name);
  }
- if (names.isEmpty()) { names.add ("metro"); }
+ if (names.isEmpty()) { names.add ("bench"); }
  return names;
 }
 
@@ -2656,7 +2655,7 @@ void DysektEditor::applyTheme (const juce::String& themeName)
  if (t.name == themeName)
  {
  setTheme (t);
- setLookAndFeel (t.isMetro() ? (juce::LookAndFeel*) &metroLnf : (juce::LookAndFeel*) &lnf);
+ setLookAndFeel (t.isFlat() ? (juce::LookAndFeel*) &benchLnf : (juce::LookAndFeel*) &lnf);
  processor.sliceManager.setSlicePalette (getTheme().slicePalette);
  saveUserSettings (themeName);
  applyWindowIcon (this);
@@ -2664,13 +2663,13 @@ void DysektEditor::applyTheme (const juce::String& themeName)
  repaint(); return;
  }
  }
- // Metro is the only built-in theme now; any other name should already
- // have matched a .dsk file above (a user-created theme). If not found,
- // fall back to Metro rather than a retired built-in preset.
- setTheme (ThemeData::metroTheme());
- setLookAndFeel ((juce::LookAndFeel*) &metroLnf);
+ // Any other name should already have matched a .dsk file above (a
+ // user-created theme). If not found (including the retired "metro" and
+ // "glass" themes), fall back to Bench.
+ setTheme (ThemeData::benchTheme());
+ setLookAndFeel ((juce::LookAndFeel*) &benchLnf);
  processor.sliceManager.setSlicePalette (getTheme().slicePalette);
- saveUserSettings ("metro");
+ saveUserSettings ("bench");
  applyWindowIcon (this);
  resized();
  repaint();
@@ -2689,7 +2688,7 @@ void DysektEditor::saveUserSettings (const juce::String& themeName)
 
 void DysektEditor::loadUserSettings()
 {
- juce::String themeName = "metro";
+ juce::String themeName = "bench";
  auto file = getUserSettingsFile();
  if (file.existsAsFile())
  {
@@ -2699,7 +2698,7 @@ void DysektEditor::loadUserSettings()
  if (line.startsWith ("theme:"))
  {
  themeName = line.fromFirstOccurrenceOf (":", false, false).trim();
-  if (themeName == "glass") themeName = "metro"; // Glass theme was removed — fall back to Metro
+  if (themeName == "glass" || themeName == "metro") themeName = "bench"; // retired themes fall back to Bench
  }
  else if (line.startsWith ("waveStyle:"))
  {

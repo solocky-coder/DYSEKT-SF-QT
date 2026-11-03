@@ -1,7 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "TransportIcons.h"
-#include "../metro/MetroColours.h"
+#include "../bench/BenchColours.h"
 
 // ────────────────────────────────────────────────────────────────────────────
 //  TransportIconButton — vector-icon replacement for the old ASCII-glyph
@@ -45,7 +45,7 @@ public:
 private:
     void paintButton (juce::Graphics& g, bool isMouseOverButton, bool isButtonDown) override
     {
-        using namespace dysekt::metro;
+        using namespace dysekt::bench;
 
         const auto b = getLocalBounds().toFloat();
         const bool on = getToggleState();

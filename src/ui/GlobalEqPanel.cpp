@@ -85,7 +85,7 @@ void GlobalEqPanel::paint (juce::Graphics& g)
 
     // ── Theme-aware frame: gradient background + accent border ────────────────
     {
-        if (theme.isMetro())
+        if (theme.isFlat())
         {
             g.setColour (theme.waveformBg);
             g.fillRoundedRectangle (bounds, getTheme().cornerRadius);
@@ -203,7 +203,7 @@ void GlobalEqPanel::paint (juce::Graphics& g)
     // Filled area — the soft glow-under-curve look. Metro skips this; its
     // flat aesthetic doesn't carry translucent fills the way the gradient
     // themes do, so a bare stroke reads cleaner against the flat frame.
-    if (!theme.isMetro())
+    if (!theme.isFlat())
     {
         auto filled = curve;
         filled.lineTo (plot.getRight(), gainToY (0.f));
@@ -215,8 +215,8 @@ void GlobalEqPanel::paint (juce::Graphics& g)
 
     // Curve stroke — slightly thinner and fuller-alpha for Metro, matching
     // its flat/precise line language rather than the softer glow strokes.
-    g.setColour (theme.accent.withAlpha (theme.isMetro() ? 0.95f : 0.85f));
-    g.strokePath (curve, juce::PathStrokeType (theme.isMetro() ? 1.4f : 1.8f,
+    g.setColour (theme.accent.withAlpha (theme.isFlat() ? 0.95f : 0.85f));
+    g.strokePath (curve, juce::PathStrokeType (theme.isFlat() ? 1.4f : 1.8f,
                           juce::PathStrokeType::curved,
                           juce::PathStrokeType::rounded));
 
@@ -237,7 +237,7 @@ void GlobalEqPanel::paint (juce::Graphics& g)
         auto  col = theme.accent.withAlpha (bandAlpha[i]);
         const bool active = (dragBand == i || hoverBand == i);
 
-        if (theme.isMetro())
+        if (theme.isFlat())
         {
             // Flat Metro tile, same restraint as TransportLAF: no shadow,
             // no gradient — a semantic-tinted fill and a hairline border
@@ -271,7 +271,7 @@ void GlobalEqPanel::paint (juce::Graphics& g)
         // Label inside node — Metro's flat fill is lighter than the
         // gradient themes' full-saturation fill, so a background-colour
         // label doesn't read; use foreground instead.
-        g.setColour (theme.isMetro() ? theme.foreground.withAlpha (0.90f)
+        g.setColour (theme.isFlat() ? theme.foreground.withAlpha (0.90f)
                                             : theme.background.withAlpha (0.90f));
         g.setFont (DysektLookAndFeel::makeFont (8.f, true));
         g.drawText (bandLabels[i],

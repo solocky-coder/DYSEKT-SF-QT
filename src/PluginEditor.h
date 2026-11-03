@@ -4,7 +4,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "PluginProcessor.h"
-#include "metro/MetroLookAndFeel.h"
+#include "bench/BenchLookAndFeel.h"
 #include "ui/LogoBar.h"
 #include "ui/HeaderBar.h"
 #include "ui/MiniTransportBar.h"
@@ -272,7 +272,7 @@ private:
 #endif
 
     DysektLookAndFeel lnf;
-    MetroLookAndFeel  metroLnf;   // swapped in via setLookAndFeel() only while theme == "metro"
+    BenchLookAndFeel  benchLnf;   // swapped in via setLookAndFeel() while a flat (Bench) theme is active
 
     TopBar          topBar { processor, processor.sequencer };   // Bench layout only; declared first so it sits behind logo/header/transport
     LogoBar         logoBar;

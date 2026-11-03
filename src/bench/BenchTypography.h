@@ -2,7 +2,7 @@
     DYSEKT 2
     Metro UI
 
-    MetroTypography.h
+    BenchTypography.h
 
     Shared type scale and font factories for the Metro standalone UI.
 */
@@ -10,7 +10,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace dysekt::metro
+namespace dysekt::bench
 {
 /**
     The complete Metro type scale.
@@ -19,7 +19,7 @@ namespace dysekt::metro
     than constructing fonts at call sites, ensuring labels and panels stay
     visually consistent throughout the standalone application.
 */
-struct MetroTypography final
+struct BenchTypography final
 {
     // Preferred Windows UI family. JUCE selects a suitable system fallback
     // when Segoe UI is unavailable on the current platform.
@@ -77,4 +77,4 @@ private:
     }
 };
 
-} // namespace dysekt::metro
+} // namespace dysekt::bench

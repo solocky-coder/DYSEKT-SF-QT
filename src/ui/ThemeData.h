@@ -1,6 +1,5 @@
 #pragma once
 #include <juce_graphics/juce_graphics.h>
-#include "../metro/MetroTheme.h"
 
 struct ThemeData
 {
@@ -30,10 +29,9 @@ struct ThemeData
 
     // The second pad bank (17–32) inherits a slightly muted variation of the
     // first bank by default. Themes may still override every swatch directly.
-    // True for the flat "Metro-family" themes. Panels that used to test
-    // `name == "metro"` call this instead so the Bench theme shares the same
-    // flat rendering path (it only changes colours).
-    bool isMetro() const noexcept { return name == "metro" || isBench(); }
+    // True for the flat themes (every Bench variant). Panels use this to pick
+    // the flat rendering path; the themes differ only in colours.
+    bool isFlat() const noexcept { return isBench(); }
     /** True only for the Bench theme, which also switches on the Bench layout (rail etc.). */
     /** True for a Bench theme with light panels (Bench Light). */
     bool isLightBench() const noexcept { return isBench() && background.getBrightness() > 0.5f; }
@@ -541,21 +539,9 @@ struct ThemeData
         return t;
     }
 
-    // ── METRO ─────────────────────────────────────────────────────────────────
-    // Windows Metro / Fluent reskin — flat surfaces, single accent, no glow.
-    // Palette lives in src/metro/MetroTheme.cpp; this just registers it with
-    // the app's existing theme system so every panel picks it up via
-    // getTheme(), same as every other theme below.
-    static ThemeData metroTheme()
-    {
-        auto t = MetroTheme::build();
-        completeSlicePalette (t);
-        return t;
-    }
-
     // ── BENCH ─────────────────────────────────────────────────────────────────
     // Ink-blue panels · periwinkle accent. Colour-only step of the Bench UI
-    // redesign; shares Metro's flat rendering path (see isMetro()).
+    // redesign; the default theme (see isFlat() for the shared flat rendering path).
     static ThemeData benchTheme()
     {
         return makeBench ("bench", 0xFF8090FF, 0xFF0C1018, 0xFF141926, 0xFF1A2030, 0xFFE8ECF5,
@@ -631,7 +617,6 @@ struct ThemeData
             else if (fileName == "dysekt")      t = dysektTheme();
             else if (fileName == "serum")       t = serumTheme();
             else if (fileName == "opendaw")     t = opendawTheme();
-            else if (fileName == "metro")       t = metroTheme();
             else if (fileName == "bench-light") t = benchLightTheme();
             else if (fileName == "bench-black") t = benchBlackTheme();
             else if (fileName == "bench")       t = benchTheme();
