@@ -37,7 +37,12 @@ jobs:
         run: |
           if (-not (Test-Path "JUCE/extras/Build/CMake/JUCEModuleSupport.cmake")) {
             Remove-Item -Recurse -Force JUCE -ErrorAction SilentlyContinue
-            git clone --depth 1 --branch 8.0.13 https://github.com/juce-framework/JUCE.git JUCE
+            # Pinned: JUCE master changes APIs (MessageBoxOptions, Drawable) without notice.
+            # This is the last master commit before the MessageBoxOptions::withButton change.
+            git init JUCE
+            git -C JUCE remote add origin https://github.com/juce-framework/JUCE.git
+            git -C JUCE fetch --depth 1 origin df978b66ae95842f5a1b32bed245d04ec5f4aa8d
+            git -C JUCE checkout FETCH_HEAD
           }
 
       - name: Fetch bungee
