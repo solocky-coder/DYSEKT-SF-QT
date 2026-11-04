@@ -1408,7 +1408,6 @@ public:
     std::atomic<float>* filterResParam    { nullptr };
     std::atomic<float>* sliceStartParam   { nullptr };
     std::atomic<float>* sliceEndParam     { nullptr };
-    std::atomic<float>* masterPitchParam  { nullptr };  // v25: master audio-domain pitch shift
 
     // =========================================================================
     // Playback state
@@ -1437,15 +1436,6 @@ public:
     // function-local statics shared by every plugin instance).
     std::array<float, 13> globalEqSeen { { -999.f, -999.f, -999.f, -999.f, -999.f, -999.f, -999.f,
                                            -999.f, -999.f, -999.f, -999.f, -999.f, -999.f } };
-
-    // ── v25: master audio-domain pitch shift (post-EQ, pre-output) ───────────
-    // Uses signalsmith-stretch in pitch-only mode (stretch ratio = 1.0).
-    // Allocated in prepareToPlay; nullptr until then.
-    std::unique_ptr<signalsmith::stretch::SignalsmithStretch<float, void>> masterPitchShifter;
-    float  masterPitchSemitones = 0.0f;   // last applied value — avoid reinit on no change
-    // Per-channel scratch buffers resized in prepareToPlay
-    std::vector<float> masterPitchScratchL;
-    std::vector<float> masterPitchScratchR;
 
     friend class SoundFontLoader;
 

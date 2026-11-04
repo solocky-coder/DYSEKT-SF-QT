@@ -174,6 +174,13 @@ bool ShortcutsPanel::keyPressed (const juce::KeyPress& key)
 
 void ShortcutsPanel::mouseDown (const juce::MouseEvent& e)
 {
+    // A click on the dimmed area outside the panel closes it, like Esc.
+    if (! getLocalBounds().reduced (24, 20).contains (e.getPosition()))
+    {
+        if (onDismiss) onDismiss();
+        return;
+    }
+
     // ── Trim preference ───────────────────────────────────────────────────────
     const int pref    = processor.trimPreference.load (std::memory_order_relaxed);
     int       newPref = pref;

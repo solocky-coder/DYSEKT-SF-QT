@@ -800,6 +800,7 @@ private:
             case TrackType::ChromaticSlice: return "CHROMATIC SLICE";
             case TrackType::SfPlayer:       return "SOUNDFONT PROGRAM";
             case TrackType::NetworkMidi:    return "NETWORK MIDI";
+            case TrackType::Audio:          return "AUDIO";
         }
         return {};
     }

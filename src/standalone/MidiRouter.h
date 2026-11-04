@@ -33,6 +33,7 @@ public:
     //==========================================================================
     MidiRouter() : juce::Thread ("XIVA MIDI out")
     {
+        loadThruSetting();
         refresh();
         startThread();
     }
@@ -97,8 +98,11 @@ public:
     /** Port name to forward live MIDI input to, or "" for off. */
     void setThruOutput (const juce::String& portName)
     {
-        const juce::ScopedLock sl (routeLock);
-        thruPort = portName;
+        {
+            const juce::ScopedLock sl (routeLock);
+            thruPort = portName;
+        }
+        saveThruSetting (portName);
     }
 
     juce::String getThruOutput() const
@@ -126,6 +130,27 @@ public:
     }
 
 private:
+    // The Thru port is remembered between launches (app-level setting, not part of a project).
+    static juce::File thruSettingFile()
+    {
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                   .getChildFile ("DYSEKT-SF").getChildFile ("midi-thru.xml");
+    }
+    void loadThruSetting()
+    {
+        if (auto x = juce::XmlDocument::parse (thruSettingFile()))
+            if (x->hasTagName ("MIDITHRU"))
+                thruPort = x->getStringAttribute ("port");
+    }
+    static void saveThruSetting (const juce::String& port)
+    {
+        juce::XmlElement x ("MIDITHRU");
+        x.setAttribute ("port", port);
+        const auto f = thruSettingFile();
+        f.getParentDirectory().createDirectory();
+        x.writeTo (f);
+    }
+
     //==========================================================================
     struct OpenOutput
     {

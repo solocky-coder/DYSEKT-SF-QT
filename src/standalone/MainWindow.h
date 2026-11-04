@@ -472,7 +472,8 @@ private:
         launchScrollableSettingsDialog (panel, "Network MIDI", true);
     }
 
-    class MidiOnlySettingsComponent : public juce::Component
+    class MidiOnlySettingsComponent : public juce::Component,
+                                      private juce::Timer
     {
     public:
         explicit MidiOnlySettingsComponent (juce::AudioDeviceManager& dm,
@@ -486,7 +487,10 @@ private:
             titleLabel.setColour (juce::Label::textColourId, juce::Colours::white);
             addAndMakeVisible (titleLabel);
             refreshDeviceList();
+            startTimerHz (1);   // follow plug / unplug while the window is open
         }
+
+        ~MidiOnlySettingsComponent() override { stopTimer(); }
 
         void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0xFF0D0D14)); }
 
@@ -499,10 +503,20 @@ private:
         }
 
     private:
+        void timerCallback() override
+        {
+            juce::StringArray ids;
+            for (const auto& d : juce::MidiInput::getAvailableDevices()) ids.add (d.identifier);
+            if (ids != lastDeviceIds)
+                refreshDeviceList();
+        }
+
         void refreshDeviceList()
         {
             rows.clear();
             const auto devices = juce::MidiInput::getAvailableDevices();
+            lastDeviceIds.clear();
+            for (const auto& d : devices) lastDeviceIds.add (d.identifier);
             if (devices.isEmpty())
             {
                 auto* lbl = new juce::Label();
@@ -545,8 +559,10 @@ private:
                 }
             }
             setSize (480, juce::jmax (120, 28 + 8 + (int) rows.size() * 28 + 16));
+            resized();
         }
 
+        juce::StringArray lastDeviceIds;
         juce::AudioDeviceManager& deviceManager;
         juce::AudioProcessorPlayer& player;
         juce::StringArray& registeredMidiInputIds;
