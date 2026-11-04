@@ -1341,15 +1341,13 @@ private:
         const juce::ScopedReadLock sl (clip->getLock());
         const auto& n = clip->getNotes().getReference (idx);
 
-        juce::MessageBoxOptions opts = juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::InfoIcon)
-            .withTitle ("Note Properties")
-            .withMessage ("Pitch: " + juce::MidiMessage::getMidiNoteName(n.note, true, true, 4) +
-                          "\nStart: " + juce::String(n.startTick) + " ticks" +
-                          "\nLength: " + juce::String(n.durationTick) + " ticks" +
-                          "\nVelocity: " + juce::String(n.velocity))
-            .withButton ("OK");
-        juce::AlertWindow::showAsync (opts, nullptr);
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::AlertWindow::InfoIcon, "Note Properties",
+            "Pitch: " + juce::MidiMessage::getMidiNoteName (n.note, true, true, 4)
+            + "\nStart: " + juce::String (n.startTick) + " ticks"
+            + "\nLength: " + juce::String (n.durationTick) + " ticks"
+            + "\nVelocity: " + juce::String (n.velocity),
+            "OK");
     }
 
     void showSetVelocityDialog (MidiClip* clip)
