@@ -37,7 +37,7 @@ jobs:
         run: |
           if (-not (Test-Path "JUCE/extras/Build/CMake/JUCEModuleSupport.cmake")) {
             Remove-Item -Recurse -Force JUCE -ErrorAction SilentlyContinue
-            git clone --depth 1 https://github.com/juce-framework/JUCE.git JUCE
+            git clone --depth 1 --branch 8.0.13 https://github.com/juce-framework/JUCE.git JUCE
           }
 
       - name: Fetch bungee
