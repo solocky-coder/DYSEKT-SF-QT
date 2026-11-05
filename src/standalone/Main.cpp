@@ -23,7 +23,7 @@ class DysektApplication : public juce::JUCEApplication
 public:
     DysektApplication() = default;
 
-    const juce::String getApplicationName()    override { return "DYSEKT-SF"; }
+    const juce::String getApplicationName()    override { return "XIVA"; }
     const juce::String getApplicationVersion() override { return "1.0.0";  }
     bool moreThanOneInstanceAllowed()          override { return true;      }
 

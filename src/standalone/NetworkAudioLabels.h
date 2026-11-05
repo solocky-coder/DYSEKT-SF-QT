@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include "../util/AppDataDir.h"
 
 // Persists user-chosen names for Direct USB devices (peer IP address -> label),
 // so a renamed iPad keeps its name across sessions. Stored next to the other
@@ -9,8 +10,7 @@ namespace NetworkAudioLabels
 {
     inline juce::File file()
     {
-        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("DYSEKT-SF")
+        return XivaPaths::appDataDir()
                    .getChildFile ("usb-device-labels.json");
     }
 

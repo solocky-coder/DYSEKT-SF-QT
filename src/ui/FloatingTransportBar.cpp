@@ -1,4 +1,5 @@
 #include "FloatingTransportBar.h"
+#include "../util/AppDataDir.h"
 #include "ClickMenus.h"
 #include <cmath>
 #include "../bench/BenchColours.h"
@@ -21,8 +22,7 @@ namespace
  // position is its own small piece of state, not part of settings.yaml.
     juce::File getSettingsDir()
     {
- return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("DYSEKT-SF");
+ return XivaPaths::appDataDir();
     }
 
 

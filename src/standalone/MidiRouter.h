@@ -18,6 +18,7 @@
 //==============================================================================
 
 #include <juce_audio_devices/juce_audio_devices.h>
+#include "../util/AppDataDir.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_events/juce_events.h>
 #include "../sequencer/SequencerEngine.h"
@@ -133,8 +134,7 @@ private:
     // The Thru port is remembered between launches (app-level setting, not part of a project).
     static juce::File thruSettingFile()
     {
-        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("DYSEKT-SF").getChildFile ("midi-thru.xml");
+        return XivaPaths::appDataDir().getChildFile ("midi-thru.xml");
     }
     void loadThruSetting()
     {

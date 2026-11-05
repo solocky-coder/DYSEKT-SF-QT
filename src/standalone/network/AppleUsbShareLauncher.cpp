@@ -246,7 +246,7 @@ namespace
         ComPtr<IRegistrationInfo> regInfo;
         if (SUCCEEDED (task->get_RegistrationInfo (regInfo.address())) && regInfo)
         {
-            regInfo->put_Author (Bstr (L"DYSEKT"));
+            regInfo->put_Author (Bstr (L"XIVA"));
             regInfo->put_Description (Bstr (L"Runs iPhoneUsbShare.exe elevated for DYSEKT's "
                                              L"Apple USB Share feature, without a UAC prompt on every launch."));
         }

@@ -1,4 +1,5 @@
 #include "FileBrowserPanel.h"
+#include "../util/AppDataDir.h"
 #include "DysektLookAndFeel.h"
 #include "UIHelpers.h"
 #include "../PluginProcessor.h"
@@ -1180,8 +1181,7 @@ void FileBrowserPanel::detectCloudFolders()
 
 static juce::File getBookmarksFile()
 {
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("DYSEKT-SF/bookmarks.txt");
+    return XivaPaths::appDataDir().getChildFile ("bookmarks.txt");
 }
 
 void FileBrowserPanel::loadCustomBookmarks()
@@ -1268,8 +1268,7 @@ void FileBrowserPanel::rebuildBookmarkBar()
 
 juce::File FileBrowserPanel::getArchiveBookmarksFile()
 {
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("DYSEKT-SF/archive_bookmarks.txt");
+    return XivaPaths::appDataDir().getChildFile ("archive_bookmarks.txt");
 }
 
 void FileBrowserPanel::loadArchiveBookmarks()

@@ -309,7 +309,7 @@ private:
         fileChooser = std::make_unique<juce::FileChooser> (
             "Export MIDI Clip",
             juce::File::getSpecialLocation (juce::File::userDesktopDirectory)
-                .getChildFile ("DYSEKT_clip.mid"), "*.mid");
+                .getChildFile ("XIVA_clip.mid"), "*.mid");
         fileChooser->launchAsync (
             juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
             [this] (const juce::FileChooser& fc)

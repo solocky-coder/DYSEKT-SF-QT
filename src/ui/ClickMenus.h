@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../util/AppDataDir.h"
 #include "../sequencer/SequencerEngine.h"
 
 //==============================================================================
@@ -11,8 +12,7 @@ namespace RecordOffsetStore
 {
     inline juce::File file()
     {
-        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("DYSEKT-SF").getChildFile ("record-offset.xml");
+        return XivaPaths::appDataDir().getChildFile ("record-offset.xml");
     }
     inline void save (const SequencerEngine& e)
     {

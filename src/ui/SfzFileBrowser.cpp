@@ -432,7 +432,7 @@ bool SfzFileBrowser::extractZipEntryToTemp (const juce::File& zipFile, const juc
     const auto ext        = juce::File (entryName).getFileExtension();   // includes leading '.'
 
     auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                       .getChildFile ("DYSEKT-SF_zip_extract");
+                       .getChildFile ("XIVA_zip_extract");
     tempDir.createDirectory();
 
     const auto tempFile = tempDir.getChildFile (
@@ -463,7 +463,7 @@ bool SfzFileBrowser::extractSfzFolderToTemp (const juce::File& zipFile, const ju
     const auto folderPfx = lastSlash >= 0 ? entryPath.substring (0, lastSlash + 1) : juce::String();
 
     auto tempDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                       .getChildFile ("DYSEKT-SF_zip_extract")
+                       .getChildFile ("XIVA_zip_extract")
                        .getChildFile ("sfz_" + juce::String (juce::Time::getCurrentTime().toMilliseconds()));
     if (! tempDir.createDirectory())
         return false;

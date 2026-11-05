@@ -74,7 +74,13 @@ private:
 
             // Retry on the next tick if the processor was not ready yet.
             if (trackIndex >= 0)
+            {
                 handled.insert (source.sourceKey);
+                // The device's MIDI comes with it: a Network MIDI child on the next free channel,
+                // pointed at the same device. (If the MIDI peer is not valid yet this does nothing;
+                // the child can still be added from the audio track's inspector.)
+                NetworkAudioProcessor::createActiveNetworkMidiChild (trackIndex);
+            }
         }
 
         // Forget sources that went away so a reconnect can create a track again.

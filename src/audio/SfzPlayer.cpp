@@ -49,13 +49,13 @@
     {
       #if JUCE_WINDOWS
         auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                       .getChildFile ("DunSoft/DYSEKT-SF");
+                       .getChildFile ("DunSoft/XIVA");
       #elif JUCE_MAC
         auto dir = juce::File::getSpecialLocation (juce::File::userHomeDirectory)
-                       .getChildFile ("Library/Logs/DunSoft/DYSEKT-SF");
+                       .getChildFile ("Library/Logs/DunSoft/XIVA");
       #else
         auto dir = juce::File::getSpecialLocation (juce::File::userHomeDirectory)
-                       .getChildFile (".config/DunSoft/DYSEKT-SF");
+                       .getChildFile (".config/DunSoft/XIVA");
       #endif
         dir.createDirectory();
         sf2Logger = std::make_unique<juce::FileLogger> (

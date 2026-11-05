@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include "../util/AppDataDir.h"
 #include "../network/RtpMidiSession.h"
 #include "../network/NetworkMidiManager.h"
 
@@ -25,8 +26,7 @@ namespace NetworkMidiSettings
 
     inline juce::File file()
     {
-        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("DYSEKT-SF")
+        return XivaPaths::appDataDir()
                    .getChildFile ("usb-midi.json");
     }
 

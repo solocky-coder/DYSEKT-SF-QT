@@ -1,5 +1,6 @@
 #pragma once
 #include "UIHelpers.h"
+#include "../util/AppDataDir.h"
 // =============================================================================
 //  AddZonePanel.h  —  Floating desktop window: configure a new SFZ zone
 // =============================================================================
@@ -562,8 +563,7 @@ private:
         // Same settings dir PluginEditor.cpp's file-local getSettingsDir()
         // resolves to (userApplicationDataDirectory/DYSEKT-SF) — sits
         // alongside theme_editor_position.xml there.
-        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-            .getChildFile ("DYSEKT-SF")
+        return XivaPaths::appDataDir()
             .getChildFile ("add_zone_panel_position.xml");
     }
 

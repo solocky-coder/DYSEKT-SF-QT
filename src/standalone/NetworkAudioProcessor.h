@@ -33,6 +33,14 @@ public:
         if (processor == nullptr) return -1;
         return processor->sequencer.addNetworkAudioTrack (sourceKey, sourceId, juce::jmax (0, sourceChannel), sourceName, userName);
     }
+    // Adds one Network MIDI child (next free channel) under the given audio track, using the
+    // audio source's own address as the MIDI peer when known. Message thread.
+    static int createActiveNetworkMidiChild (int audioTrackIndex) noexcept
+    {
+        auto* processor = activeProcessor.load (std::memory_order_acquire);
+        if (processor == nullptr) return -1;
+        return processor->sequencer.addNetworkMidiChildForAudio (audioTrackIndex, "192.168.99.2");
+    }
     // Applies a renamed Direct USB device label to the network audio tracks that were
     // created from it, so the Arranger and Mixer show the new name. Message thread.
     static int renameActiveNetworkAudioTracks (int64_t sourceKey, const juce::String& oldLabel, const juce::String& newLabel) noexcept
@@ -407,7 +415,7 @@ private:
 
     void startTrackRecording (TrackRecorder& slot, const juce::String& trackName, int64_t startTick) noexcept
     {
-        const auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("DYSEKT-SF Recordings");
+        const auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("XIVA Recordings");
         const auto stamp = juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
         auto safeName = trackName.replaceCharacters ("\\/:*?\"<>|", "_________");
         const auto file = dir.getNonexistentChildFile (safeName.isEmpty() ? "AOO" : safeName, "_" + stamp + ".wav");

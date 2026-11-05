@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_devices/juce_audio_devices.h>
+#include "../util/AppDataDir.h"
 
 // Persists the standalone app's global audio-device configuration (device type,
 // input/output devices, sample rate, buffer size, channel setup) using JUCE's own
@@ -16,8 +17,7 @@ namespace AudioDeviceSettingsStore
 {
     inline juce::File file()
     {
-        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("DYSEKT-SF")
+        return XivaPaths::appDataDir()
                    .getChildFile ("audio-device-state.xml");
     }
 

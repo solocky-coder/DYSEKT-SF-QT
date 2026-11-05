@@ -66,7 +66,7 @@ ShortcutsPanel::~ShortcutsPanel() = default;
 void ShortcutsPanel::openManualPdf()
 {
     juce::File tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                         .getChildFile ("DYSEKT_User_Manual.pdf");
+                         .getChildFile ("XIVA_User_Manual.pdf");
 
     if (! tmp.existsAsFile())
         tmp.replaceWithData (BinaryData::DYSEKT_User_Manual_pdf,

@@ -53,8 +53,8 @@
  *  Log location
  *  ------------
  *  Windows : %APPDATA%\DunSoft\DYSEKT-SF\dysekt_crash.log
- *  macOS   : ~/Library/Logs/DunSoft/DYSEKT-SF/dysekt_crash.log
- *  Linux   : ~/.config/DunSoft/DYSEKT-SF/dysekt_crash.log
+ *  macOS   : ~/Library/Logs/DunSoft/XIVA/dysekt_crash.log
+ *  Linux   : ~/.config/DunSoft/XIVA/dysekt_crash.log
  *
  *  Thread safety
  *  -------------
@@ -159,13 +159,13 @@ private:
     {
 #if JUCE_WINDOWS
         return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("DunSoft/DYSEKT-SF");
+                   .getChildFile ("DunSoft/XIVA");
 #elif JUCE_MAC
         return juce::File::getSpecialLocation (juce::File::userHomeDirectory)
-                   .getChildFile ("Library/Logs/DunSoft/DYSEKT-SF");
+                   .getChildFile ("Library/Logs/DunSoft/XIVA");
 #else
         return juce::File::getSpecialLocation (juce::File::userHomeDirectory)
-                   .getChildFile (".config/DunSoft/DYSEKT-SF");
+                   .getChildFile (".config/DunSoft/XIVA");
 #endif
     }
 

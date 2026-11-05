@@ -770,7 +770,7 @@ void MultisamplerEditor::performEngineSync (bool isFreshLoad)
     // SfzPlayer::loadFile()'s pending-load handoff makes each call replace
     // whatever the previous one queued.
     const auto cacheFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                .getChildFile ("DYSEKT")
+                                .getChildFile ("XIVA")
                                 .getChildFile ("multisampler_preview.sfz");
     cacheFile.getParentDirectory().createDirectory();
 

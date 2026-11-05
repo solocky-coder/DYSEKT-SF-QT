@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "util/AppDataDir.h"
 #include "ui/DysektLookAndFeel.h"
 #include "ui/PluginEditorConstants.h"
 #include "ui/LogoIcon.h"
@@ -17,8 +18,7 @@
 // ========================== FILEPATH HELPERS ==========================
 static juce::File getSettingsDir()
 {
- return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
- .getChildFile ("DYSEKT-SF");
+ return XivaPaths::appDataDir();
 }
 static juce::File getUserSettingsFile() { return getSettingsDir().getChildFile ("settings.yaml"); }
 static juce::File getThemesDir() { return getSettingsDir().getChildFile ("themes"); }

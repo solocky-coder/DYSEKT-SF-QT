@@ -29,13 +29,13 @@ public:
             basePageChildren.push_back (child);
 
         createTrackButton.setButtonText ("+ Create Audio Track");
-        createTrackButton.setTooltip ("Create a METRO audio track from a SonoBus/AOO source and choose its channel");
+        createTrackButton.setTooltip ("Create an audio track from a SonoBus/AOO source and choose its channel");
         createTrackButton.onClick = [this] { showCreateNetworkTrackMenu(); };
         addAndMakeVisible (createTrackButton);
 
         autoTrackToggle.setButtonText ("Auto-create");
-        autoTrackToggle.setTooltip ("When a USB audio source finishes connecting, automatically create a METRO audio track for it "
-                                    "(stereo if the source has two or more channels). Applies while USB AUDIO is on.");
+        autoTrackToggle.setTooltip ("When a USB audio source finishes connecting, automatically create an audio track for it "
+                                    "(stereo if the source has two or more channels) plus a MIDI track for the same device. Applies while USB AUDIO is on.");
         autoTrackToggle.setToggleState (NetworkAudioAutoTrack::isEnabled(), juce::dontSendNotification);
         autoTrackToggle.onClick = [this] { NetworkAudioAutoTrack::setEnabled (autoTrackToggle.getToggleState()); };
         addAndMakeVisible (autoTrackToggle);
@@ -315,7 +315,7 @@ private:
                 trackIndex >= 0 ? juce::AlertWindow::InfoIcon : juce::AlertWindow::WarningIcon,
                 trackIndex >= 0 ? "Audio Track Created" : "Audio Track Not Created",
                 trackIndex >= 0
-                    ? userName + " | " + sourceName + " — " + (MetroNetworkAudio::isStereoRoute (sourceChannel) ? juce::String ("Stereo (Channel 1+2)") : "Channel " + juce::String (sourceChannel + 1)) + " is now a METRO audio track."
+                    ? userName + " | " + sourceName + " — " + (MetroNetworkAudio::isStereoRoute (sourceChannel) ? juce::String ("Stereo (Channel 1+2)") : "Channel " + juce::String (sourceChannel + 1)) + " is now an audio track."
                     : "The standalone audio processor is not available.",
                 "OK");
         });

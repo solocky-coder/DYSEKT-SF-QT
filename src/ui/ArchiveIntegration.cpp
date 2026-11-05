@@ -1,4 +1,5 @@
 #include "ArchiveIntegration.h"
+#include "../util/AppDataDir.h"
 #include <juce_core/juce_core.h>
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -108,14 +109,12 @@ bool ArchiveIntegration::isValidArchiveUrl (const juce::String& url)
 
 juce::File ArchiveIntegration::getCacheDir()
 {
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("DYSEKT-SF/archive_cache");
+    return XivaPaths::appDataDir().getChildFile ("archive_cache");
 }
 
 juce::File ArchiveIntegration::getTempDir()
 {
-    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-               .getChildFile ("DYSEKT-SF/archive_temp");
+    return XivaPaths::appDataDir().getChildFile ("archive_temp");
 }
 
 void ArchiveIntegration::clearTemp()
