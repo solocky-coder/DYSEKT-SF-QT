@@ -415,49 +415,6 @@ struct ThemeData
         return t;
     }
 
-    // ── DYSEKT-SF ────────────────────────────────────────────────────────────────
-    // The signature industrial skin: near-void black chassis, neon teal accent,
-    // charcoal panel bars.  Only active / selected elements glow — everything
-    // else stays dim.  Matches the dark-mode UI mockup shown in the design docs.
-    static ThemeData dysektTheme()
-    {
-        ThemeData t;
-        t.name             = "dysekt";
-        t.background       = juce::Colour (0xFF000000);   // absolute black chassis
-        t.waveformBg       = juce::Colour (0xFF060609);   // near-void waveform panel
-        t.darkBar          = juce::Colour (0xFF0D0D12);   // charcoal panel bars
-        t.foreground       = juce::Colour (0xFFB8C8D0);   // cool blue-grey text
-        t.header           = juce::Colour (0xFF0A0A0F);   // top bar
-        t.waveform         = juce::Colour (0xFF00FFE0);   // neon teal waveform
-        t.selectionOverlay = juce::Colour (0xFF003830);   // deep teal selection tint
-        t.lockActive       = juce::Colour (0xFF00FFE0);   // teal lock-on
-        t.lockInactive     = juce::Colour (0xFF1A2028);   // dim steel lock-off
-        t.gridLine         = juce::Colour (0xFF101418);   // barely-visible grid
-        t.accent           = juce::Colour (0xFF00FFE0);   // #00ffe0 — the single glow colour
-        t.button           = juce::Colour (0xFF141A20);   // elevated panel button
-        t.buttonHover      = juce::Colour (0xFF1C2830);   // teal-tinted hover
-        t.separator        = juce::Colour (0xFF181E24);   // steel divider
-        // Slice palette: 16 vivid neons that read clearly against near-black
-        t.slicePalette[0 ] = juce::Colour (0xFFFF0090); // Hot Magenta
-        t.slicePalette[1 ] = juce::Colour (0xFF00FF6C); // Toxic Lime
-        t.slicePalette[2 ] = juce::Colour (0xFFFF5C00); // Molten Orange
-        t.slicePalette[3 ] = juce::Colour (0xFF00D4FF); // Ice Blue
-        t.slicePalette[4 ] = juce::Colour (0xFFFFE000); // Radioactive Yellow
-        t.slicePalette[5 ] = juce::Colour (0xFF7000FF); // UV Violet
-        t.slicePalette[6 ] = juce::Colour (0xFF00FFE0); // Absinthe (= accent)
-        t.slicePalette[7 ] = juce::Colour (0xFFFF1A30); // Alarm Red
-        t.slicePalette[8 ] = juce::Colour (0xFF30FF10); // Neon Green
-        t.slicePalette[9 ] = juce::Colour (0xFFFF0070); // Acid Pink
-        t.slicePalette[10] = juce::Colour (0xFF0090FF); // Reactor Blue
-        t.slicePalette[11] = juce::Colour (0xFFFFAA00); // Hazard Amber
-        t.slicePalette[12] = juce::Colour (0xFFFF3060); // Coral Crimson
-        t.slicePalette[13] = juce::Colour (0xFF30B8FF); // Steel Teal
-        t.slicePalette[14] = juce::Colour (0xFFC8FF00); // Chartreuse
-        t.slicePalette[15] = juce::Colour (0xFF8060FF); // Lavender
-        completeSlicePalette (t);
-        return t;
-    }
-
     // ── SERUM ─────────────────────────────────────────────────────────────────
     // Cold steel panels · Cyan glow accent · Metallic blue-grey — Serum 2 vibe
     static ThemeData serumTheme()
@@ -614,7 +571,6 @@ struct ThemeData
             if      (fileName == "midnight")    t = midnightTheme();
             else if (fileName == "pigments")    t = pigmentsTheme();
             else if (fileName == "cr8")         t = cr8Theme();
-            else if (fileName == "dysekt")      t = dysektTheme();
             else if (fileName == "serum")       t = serumTheme();
             else if (fileName == "opendaw")     t = opendawTheme();
             else if (fileName == "bench-light") t = benchLightTheme();

@@ -21,7 +21,6 @@ void LogoBar::paint (juce::Graphics& g)
     {
         { "cr8",      BinaryData::XIVA_logo_cr8_png,      BinaryData::XIVA_logo_cr8_pngSize      },
         { "dark",     BinaryData::XIVA_logo_dark_png,     BinaryData::XIVA_logo_dark_pngSize     },
-        { "dysekt",   BinaryData::XIVA_logo_dysekt_png,   BinaryData::XIVA_logo_dysekt_pngSize   },
         { "ghost",    BinaryData::XIVA_logo_ghost_png,    BinaryData::XIVA_logo_ghost_pngSize    },
         { "hack",     BinaryData::XIVA_logo_hack_png,     BinaryData::XIVA_logo_hack_pngSize     },
         { "lazy",     BinaryData::XIVA_logo_lazy_png,     BinaryData::XIVA_logo_lazy_pngSize     },

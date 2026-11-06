@@ -2698,7 +2698,7 @@ void DysektEditor::loadUserSettings()
  if (line.startsWith ("theme:"))
  {
  themeName = line.fromFirstOccurrenceOf (":", false, false).trim();
-  if (themeName == "glass" || themeName == "metro") themeName = "bench"; // retired themes fall back to Bench
+  if (themeName == "glass" || themeName == "metro" || themeName == "dysekt") themeName = "bench"; // retired themes fall back to Bench
  }
  else if (line.startsWith ("waveStyle:"))
  {
