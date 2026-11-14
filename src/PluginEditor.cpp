@@ -640,11 +640,25 @@ XivaEditor::XivaEditor (XivaProcessor& p)
 #endif
  navRail.onItem = [this] (NavRail::Item item)
  {
+     // Choosing a tab (Slicer / Multi / SF2) while a panel covers the workspace closes that panel first,
+     // otherwise the tab switches underneath the panel and nothing visibly happens.
+     auto openTab = [this] (int mode)
+     {
+         if (initBrowserOpen || activeSlot == SlotContent::Browser) toggleBrowserPanel();
+         else if (activeSlot == SlotContent::Mixer)                 toggleMixerPanel();
+         else if (activeSlot == SlotContent::Eq)                    toggleEqPanel();
+#if XIVA_STANDALONE
+         else if (activeSlot == SlotContent::Seq)                   toggleSeqPanel();
+#endif
+         setUiMode (mode);
+         resized();
+         repaint();
+     };
      switch (item)
      {
-         case NavRail::Slicer:   setUiMode (0);          break;
-         case NavRail::Multi:    setUiMode (1);          break;
-         case NavRail::Sf2:      setUiMode (2);          break;
+         case NavRail::Slicer:   openTab (0);            break;
+         case NavRail::Multi:    openTab (1);            break;
+         case NavRail::Sf2:      openTab (2);            break;
          case NavRail::Browser:  toggleBrowserPanel();   break;
          case NavRail::Mixer:    toggleMixerPanel();     break;
          case NavRail::Eq:       toggleEqPanel();        break;
