@@ -400,6 +400,7 @@ Sf2InstrumentWorkspace::Sf2InstrumentWorkspace (XivaProcessor& p)
 
     browseButton.onClick = [this]
     {
+        if (onRequestBrowser) { onRequestBrowser(); return; }
         fileChooser = std::make_unique<juce::FileChooser> (
             "Load SoundFont",
             juce::File::getSpecialLocation (juce::File::userMusicDirectory),

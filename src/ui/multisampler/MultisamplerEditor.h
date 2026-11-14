@@ -200,6 +200,13 @@ public:
         via refreshZoneLcdDisplay() and doesn't need this callback at all. */
     std::function<void()> onZoneSelectionOrEditChanged;
 
+    /** If set, ADD ZONE (addZone=true) and IMPORT SFZ (false) ask the host to open the in-app browser
+        instead of a native file dialog. */
+    std::function<void (bool addZone)> onRequestBrowser;
+
+    /** Continue the add-zone flow with a file chosen in the in-app browser. */
+    void addZoneFromFile (const juce::File& f) { beginAddZoneTrim (f); }
+
     /** -1 if the cursor isn't currently over a zone in the zone map (or has
         left the map entirely); otherwise the index into getInstrument().zones
         for the zone currently shown for read-only hover/inspection purposes.

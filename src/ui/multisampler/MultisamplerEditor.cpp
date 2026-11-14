@@ -152,10 +152,10 @@ MultisamplerEditor::MultisamplerEditor (XivaProcessor& processorToUse)
     };
 
     addAndMakeVisible (addZoneButton);
-    addZoneButton.onClick = [this] { addZoneClicked(); };
+    addZoneButton.onClick = [this] { if (onRequestBrowser) onRequestBrowser (true); else addZoneClicked(); };
 
     addAndMakeVisible (importButton);
-    importButton.onClick = [this] { importSfzClicked(); };
+    importButton.onClick = [this] { if (onRequestBrowser) onRequestBrowser (false); else importSfzClicked(); };
 
     addAndMakeVisible (exportButton);
     exportButton.onClick = [this] { exportSfzClicked(); };

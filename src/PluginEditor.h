@@ -145,6 +145,9 @@ private:
     /// Mutually exclusive.
     enum class SlotContent { None, Browser, Mixer, Eq, Seq };
     SlotContent activeSlot   = SlotContent::None;
+    juce::TextButton slicerLoadButton { "LOAD SAMPLE" };   // Bench Slicer with no sample yet (the header card carries Load otherwise)
+    bool browserAddZone      = false;  // Multi tab: browser was opened by ADD ZONE (audio) rather than IMPORT SFZ
+    void openBrowserForTab (bool addZone = false);
     bool initBrowserOpen     = false;  // true until the first real sample is loaded
 
 #if JUCE_WINDOWS && ! XIVA_STANDALONE

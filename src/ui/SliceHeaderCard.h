@@ -18,6 +18,9 @@ class SliceHeaderCard final : public juce::Component,
 public:
     static constexpr int kDesignHeight = 56;
 
+    /** Fired by the LOAD button: the editor opens the in-app browser for this tab. */
+    std::function<void()> onLoad;
+
     SliceHeaderCard (XivaProcessor& p, WaveformView& w) : processor (p), waveform (w) { startTimerHz (8); }
     ~SliceHeaderCard() override { stopTimer(); }
 
@@ -45,6 +48,8 @@ public:
         const int segY = (getHeight() - segH) / 2;
         int right = getWidth() - pad;
 
+        right = segmented (g, right, segY, segH, sf, { { "Load", 200 } }, -1);
+        right -= juce::roundToInt (8.0f * sf);
         right = segmented (g, right, segY, segH, sf, { { "Hard", 100 }, { "Soft", 101 }, { "Outline", 102 }, { "Bars", 105 }, { "RMS", 106 } },
                            waveform.getWaveformMode() + 100);
         right -= juce::roundToInt (8.0f * sf);
@@ -136,6 +141,7 @@ private:
 
     void activate (int id)
     {
+        if (id == 200) { if (onLoad) onLoad(); return; }
         if (id >= 100) { waveform.setWaveformMode (id - 100); return; }
 
         if (id == 50)   // MIDI slice (same flow as the waveform's context menu)

@@ -57,7 +57,8 @@ public:
         place (Slicer); place (Multi); place (Sf2);
         dividerY = y + gap * 0.5f;
         y += gap * 2.0f;
-        place (Browser); place (Mixer); place (Eq);
+        // Browser has no rail button: each tab has its own Load / Add zone / Browse button.
+        place (Mixer); place (Eq);
         if (seqAvailable) place (Seq);
 
         rects[Settings] = { x, (float) getHeight() - itemH - 10.0f * sf, itemW, itemH };

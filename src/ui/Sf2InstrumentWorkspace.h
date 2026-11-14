@@ -150,6 +150,9 @@ public:
      *  shared FileBrowserPanel::onLoadRequest when uiMode == SF2-PLAYER). */
     void onFileChosen (const juce::File& f);
 
+    /** If set, BROWSE SF2 asks the host to open the in-app browser instead of a native dialog. */
+    std::function<void()> onRequestBrowser;
+
     /** Fired when the user right-clicks a preset row and assigns a MIDI channel. */
     std::function<void (const Sf2PresetInfo&, int midiChannel1Based)> onPresetChannelAssigned;
 

@@ -550,6 +550,12 @@ XivaEditor::XivaEditor (XivaProcessor& p)
          // comment (plan §5.5/§5.8).
          if (ext == ".sfz")
              loadSfzIntoMultisampler (f, true);
+         else if (browserAddZone)
+         {
+             // ADD ZONE: close the browser so the trim / key-mapping overlays are visible.
+             toggleBrowserPanel();
+             multisamplerEditor.addZoneFromFile (f);
+         }
          return;
      }
      if (uiMode == 2)
@@ -638,6 +644,11 @@ XivaEditor::XivaEditor (XivaProcessor& p)
 #else
  navRail.setSeqAvailable (false);
 #endif
+ addChildComponent (slicerLoadButton);
+ slicerLoadButton.onClick = [this] { openBrowserForTab(); };
+ sliceHeader.onLoad = [this] { openBrowserForTab(); };
+ multisamplerEditor.onRequestBrowser = [this] (bool addZone) { openBrowserForTab (addZone); };
+ sfzDropdown.onRequestBrowser = [this] { openBrowserForTab(); };
  navRail.onItem = [this] (NavRail::Item item)
  {
      // Choosing a tab (Slicer / Multi / SF2) while a panel covers the workspace closes that panel first,
@@ -866,7 +877,7 @@ void XivaEditor::syncBrowserMode()
     // Filter browser files to match the active tab:
     // Slicer → audio files only, SFZ-PLAYER → .sfz only, SF2-PLAYER → .sf2 only
     browserPanel.setBrowserMode (uiMode == 0 ? SfzFileBrowser::Mode::kAddZone
-                                : uiMode == 1 ? SfzFileBrowser::Mode::kSfz
+                                : uiMode == 1 ? (browserAddZone ? SfzFileBrowser::Mode::kAddZone : SfzFileBrowser::Mode::kSfz)
                                              : SfzFileBrowser::Mode::kSf2);
 }
 
@@ -973,6 +984,8 @@ void XivaEditor::toggleBrowserPanel()
     if (initBrowserOpen)
     {
         initBrowserOpen = false;
+        browserAddZone = false;
+        syncBrowserMode();
         browserPanel.setVisible (false);
         headerBar.setBrowserActive (false);
         resized();
@@ -983,6 +996,8 @@ void XivaEditor::toggleBrowserPanel()
     if (activeSlot == SlotContent::Browser)
     {
         activeSlot = SlotContent::None;
+        browserAddZone = false;
+        syncBrowserMode();
         browserPanel.setVisible (false);
         headerBar.setBrowserActive (false);
     }
@@ -1026,6 +1041,20 @@ void XivaEditor::toggleBrowserPanel()
     }
     resized();
     repaint();
+}
+
+// Opens the in-app browser for the current tab (Load / Add zone / Import SFZ / Browse SF2).
+void XivaEditor::openBrowserForTab (bool addZone)
+{
+    browserAddZone = (uiMode == 1) && addZone;
+    if (initBrowserOpen || activeSlot == SlotContent::Browser)
+    {
+        syncBrowserMode();
+        resized();
+        repaint();
+        return;
+    }
+    toggleBrowserPanel();   // opens it; syncBrowserMode() runs inside
 }
 
 void XivaEditor::showTrimDialog (const juce::File& file, bool isRelink)
@@ -1737,6 +1766,15 @@ void XivaEditor::resized()
  }
 
  auto actionArea = area.removeFromTop (si (kActionH));
+ {
+     const bool showLoad = bench && uiMode == 0 && trimDialog == nullptr && ! benchInspector
+                           && ! initBrowserOpen && activeSlot == SlotContent::None;
+     slicerLoadButton.setVisible (showLoad);
+     if (showLoad)
+         slicerLoadButton.setBounds (actionArea.withTrimmedLeft (si (kMargin)).removeFromLeft (si (120)));
+     else
+         slicerLoadButton.setBounds ({});
+ }
 
  // ── Bench slicer inspector ────────────────────────────────────────────────
  // In the Bench layout the slice control bar becomes a tall panel on the right
