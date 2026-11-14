@@ -1301,8 +1301,10 @@ static juce::Rectangle<float> waveformFrameRect (const XivaEditor& ed,
  const auto& da = ed.getDesignArea();
  const float sf = (float) da.getHeight() / (float) kTotalH;
  const int kFrameInset = juce::roundToInt (4.0f * sf);
- const int kFX = da.getX() + juce::roundToInt (kMargin * sf);
- int kFW = da.getWidth() - juce::roundToInt (kMargin * sf) * 2;
+ // Start right of the Bench nav rail (if shown) and end at the design area's right edge.
+ const int left = ed.getContentLeft();
+ const int kFX = left + juce::roundToInt (kMargin * sf);
+ int kFW = da.getRight() - juce::roundToInt (kMargin * sf) - kFX;
  // Bench: the inspector panel sits to the right of the frame; stop the frame before it.
  const auto insp = ed.getInspectorBounds();
  if (insp.getWidth() > 0 && insp.getX() > kFX)

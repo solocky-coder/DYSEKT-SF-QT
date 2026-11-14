@@ -111,6 +111,7 @@ public:
      *  helper all read the same up-to-date value without needing their own
      *  Component reference plumbing. */
     const juce::Rectangle<int>& getDesignArea() const noexcept { return designArea; }
+    int getContentLeft() const noexcept { return navRail.isVisible() && navRail.getWidth() > 0 ? navRail.getRight() : designArea.getX(); }
     juce::Rectangle<int> getInspectorBounds() const noexcept { return sliceControlBar.isVisible() && sliceControlBar.getWidth() > 0 ? sliceControlBar.getBounds() : juce::Rectangle<int>(); }
 
 private:
