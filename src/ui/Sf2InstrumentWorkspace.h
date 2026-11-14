@@ -121,14 +121,14 @@
 #include "Sf2ChannelFxPanel.h"
 #include "../audio/SfzPlayer.h"
 
-class DysektProcessor;
+class XivaProcessor;
 
 class Sf2InstrumentWorkspace : public juce::Component,
                                 public juce::Timer,
                                 public juce::FileDragAndDropTarget
 {
 public:
-    explicit Sf2InstrumentWorkspace (DysektProcessor& p);
+    explicit Sf2InstrumentWorkspace (XivaProcessor& p);
     ~Sf2InstrumentWorkspace() override;
 
     // ── Core overrides ────────────────────────────────────────────────────────
@@ -241,9 +241,9 @@ private:
     // ── Top bar ────────────────────────────────────────────────────────────
     juce::Rectangle<int> topBarZone, loadedPillZone;
 
-#if DYSEKT_SF2_EXPERIMENTAL_MULTI_GROUP
+#if XIVA_SF2_EXPERIMENTAL_MULTI_GROUP
     // Debug-only runtime toggle for SfzPlayer::setExperimentalMultiGroupEnabled().
-    // Only exists in builds compiled with the DYSEKT_SF2_EXPERIMENTAL_MULTI_GROUP
+    // Only exists in builds compiled with the XIVA_SF2_EXPERIMENTAL_MULTI_GROUP
     // CMake option ON — never appears in a normal/release build. See the
     // long comment at the top of SfzPlayer.cpp before touching this.
     juce::ToggleButton experimentalMultiGroupToggle { "EXP: MULTI-GROUP" };
@@ -370,7 +370,7 @@ private:
     void mouseWheelMove   (const juce::MouseEvent&,
                            const juce::MouseWheelDetails&) override;
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Sf2InstrumentWorkspace)
 };

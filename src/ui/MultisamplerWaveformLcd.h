@@ -3,7 +3,7 @@
 #include "../audio/multisampler/MultisamplerInstrument.h"
 #include "../audio/SampleData.h"
 
-class DysektProcessor;
+class XivaProcessor;
 
 /**  Dedicated right LCD panel for the MULTISAMPLER tab (uiMode == 1).
  *
@@ -34,7 +34,7 @@ class DysektProcessor;
 class MultisamplerWaveformLcd : public juce::Component
 {
 public:
-    explicit MultisamplerWaveformLcd (DysektProcessor& p);
+    explicit MultisamplerWaveformLcd (XivaProcessor& p);
 
     void paint     (juce::Graphics& g) override;
     void resized   () override;
@@ -154,12 +154,12 @@ private:
 
     NodeRole hitTest (juce::Point<float> pos) const;
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
 
     // ── Decoded sample for the selected zone ──────────────────────────────────
     // A SampleZone points at a file on disk, not a pre-decoded buffer — decode
     // it into a real SampleData instance so the existing
-    // DysektProcessor::getWaveformPeakAtIn() peak read works unmodified. Only
+    // XivaProcessor::getWaveformPeakAtIn() peak read works unmodified. Only
     // re-decoded when the shown zone's file path actually changes.
     SampleData  zoneSampleData;
     juce::File  decodedFile;

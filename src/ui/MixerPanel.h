@@ -6,7 +6,7 @@
 #include "../audio/SfzPlayer.h"   // Sf2PresetInfo
 #include "../network/NetworkTrackMeters.h"
 
-class DysektProcessor;
+class XivaProcessor;
 
 /**
  * MixerPanel — horizontal row mixer.
@@ -80,7 +80,7 @@ public:
         so none of them can drift back to a cramped, hard-to-read gap. */
     static constexpr int kValueTextGap = 14;
 
-    explicit MixerPanel (DysektProcessor& p);
+    explicit MixerPanel (XivaProcessor& p);
     ~MixerPanel() override;
 
     /** Fired when the user clicks a row that corresponds to one of the three
@@ -275,7 +275,7 @@ private:
     } drag;
 
     // ── Peak-hold for phosphor meter (UI-side, decays in timerCallback) ──
-    static constexpr int kMaxHoldSlices = 128;  // matches DysektProcessor::kMaxMeterSlices
+    static constexpr int kMaxHoldSlices = 128;  // matches XivaProcessor::kMaxMeterSlices
     // Network Audio rows get their own hold slots above the slice/SF2/SFZ slots so
     // they can never collide with them (slot = kNetHoldBase + track index).
     static constexpr int kNetHoldBase   = kMaxHoldSlices;
@@ -310,7 +310,7 @@ private:
     // ── Text editor for double-click ──────────────────────────────────────
     std::unique_ptr<juce::TextEditor> textEditor;
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MixerPanel)
 };

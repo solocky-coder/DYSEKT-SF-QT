@@ -14,12 +14,12 @@ namespace
 class SampleDecodeJob final : public juce::ThreadPoolJob
 {
 public:
-    using SuccessFn = std::function<void (int, DysektProcessor::LoadKind,
+    using SuccessFn = std::function<void (int, XivaProcessor::LoadKind,
                                           std::unique_ptr<SampleData::DecodedSample>)>;
-    using FailureFn = std::function<void (int, DysektProcessor::LoadKind, const juce::File&)>;
+    using FailureFn = std::function<void (int, XivaProcessor::LoadKind, const juce::File&)>;
 
     SampleDecodeJob (juce::File sourceFile, double targetRate, int loadToken,
-                     DysektProcessor::LoadKind kind,
+                     XivaProcessor::LoadKind kind,
                      SuccessFn onSuccessIn, FailureFn onFailureIn)
         : juce::ThreadPoolJob ("SampleDecodeJob"),
           file (std::move (sourceFile)),
@@ -48,7 +48,7 @@ private:
     juce::File file;
     double sampleRate = 44100.0;
     int token = 0;
-    DysektProcessor::LoadKind loadKind = DysektProcessor::LoadKindReplace;
+    XivaProcessor::LoadKind loadKind = XivaProcessor::LoadKindReplace;
     SuccessFn onSuccess;
     FailureFn onFailure;
 };
@@ -63,12 +63,12 @@ private:
 class SampleTrimJob final : public juce::ThreadPoolJob
 {
 public:
-    using SuccessFn = std::function<void (int, DysektProcessor::LoadKind,
+    using SuccessFn = std::function<void (int, XivaProcessor::LoadKind,
                                           std::unique_ptr<SampleData::DecodedSample>)>;
-    using FailureFn = std::function<void (int, DysektProcessor::LoadKind)>;
+    using FailureFn = std::function<void (int, XivaProcessor::LoadKind)>;
 
     SampleTrimJob (SampleData::SnapshotPtr sourceIn, int trimInIn, int trimOutIn,
-                   int loadToken, DysektProcessor::LoadKind kind,
+                   int loadToken, XivaProcessor::LoadKind kind,
                    SuccessFn onSuccessIn, FailureFn onFailureIn)
         : juce::ThreadPoolJob ("SampleTrimJob"),
           source (std::move (sourceIn)),
@@ -102,7 +102,7 @@ private:
     int trimIn = 0;
     int trimOut = 0;
     int token = 0;
-    DysektProcessor::LoadKind loadKind = DysektProcessor::LoadKindTrim;
+    XivaProcessor::LoadKind loadKind = XivaProcessor::LoadKindTrim;
     SuccessFn onSuccess;
     FailureFn onFailure;
 };
@@ -143,29 +143,29 @@ static Slice sanitiseRestoredSlice (Slice s)
     return s;
 }
 
-static bool isCoalescableCommand (DysektProcessor::CommandType type)
+static bool isCoalescableCommand (XivaProcessor::CommandType type)
 {
-    return type == DysektProcessor::CmdSetSliceParam
-        || type == DysektProcessor::CmdSetSliceBounds;
+    return type == XivaProcessor::CmdSetSliceParam
+        || type == XivaProcessor::CmdSetSliceBounds;
 }
 
-static bool isCriticalCommand (DysektProcessor::CommandType type)
+static bool isCriticalCommand (XivaProcessor::CommandType type)
 {
     switch (type)
     {
-        case DysektProcessor::CmdLoadFile:
-        case DysektProcessor::CmdCreateSlice:
-        case DysektProcessor::CmdDeleteSlice:
-        case DysektProcessor::CmdSplitSlice:
-        case DysektProcessor::CmdTransientChop:
-        case DysektProcessor::CmdRelinkFile:
-        case DysektProcessor::CmdUndo:
-        case DysektProcessor::CmdRedo:
-        case DysektProcessor::CmdPanic:
-        case DysektProcessor::CmdSelectSlice:
-        case DysektProcessor::CmdSetRootNote:
-        case DysektProcessor::CmdToggleLock:      // BUG FIX: Ensure lock toggle is never dropped
-        case DysektProcessor::CmdSetSliceLockAll: // Also add SetSliceLockAll for consistency
+        case XivaProcessor::CmdLoadFile:
+        case XivaProcessor::CmdCreateSlice:
+        case XivaProcessor::CmdDeleteSlice:
+        case XivaProcessor::CmdSplitSlice:
+        case XivaProcessor::CmdTransientChop:
+        case XivaProcessor::CmdRelinkFile:
+        case XivaProcessor::CmdUndo:
+        case XivaProcessor::CmdRedo:
+        case XivaProcessor::CmdPanic:
+        case XivaProcessor::CmdSelectSlice:
+        case XivaProcessor::CmdSetRootNote:
+        case XivaProcessor::CmdToggleLock:      // BUG FIX: Ensure lock toggle is never dropped
+        case XivaProcessor::CmdSetSliceLockAll: // Also add SetSliceLockAll for consistency
             return true;
         default:
             return false;
@@ -173,7 +173,7 @@ static bool isCriticalCommand (DysektProcessor::CommandType type)
 }
 } // namespace
 
-DysektProcessor::DysektProcessor()
+XivaProcessor::XivaProcessor()
     : AudioProcessor (BusesProperties()
                           // ── MIDI input bus ────────────────────────────────────────────────────
                           // NOTE: JUCE does not expose a getNumMidiInputs() API.
@@ -259,7 +259,7 @@ DysektProcessor::DysektProcessor()
     sfzPlayer2.setMidiChannel (2);   // SFZ-PLAYER  → ch 2 (default; user-adjustable, see sfzPlayer2ChannelMask)
 }
 
-DysektProcessor::~DysektProcessor()
+XivaProcessor::~XivaProcessor()
 {
     fileLoadPool.removeAllJobs (true, 5000);
     exchangeCompletedLoadData (nullptr);    // drops the SnapshotPtr; frees itself, no delete needed
@@ -273,7 +273,7 @@ DysektProcessor::~DysektProcessor()
     delete pendingZones3;
 }
 
-bool DysektProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool XivaProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     // Main output must be stereo
     if (layouts.outputBuses.isEmpty())
@@ -300,9 +300,9 @@ bool DysektProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
     return true;
 }
 
-void DysektProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void XivaProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
     sequencer.setAbletonLink (&abletonLink);
     sequencer.setSfzPlayer   (&sfzPlayer);
     sequencer.addMainTrack();
@@ -355,9 +355,9 @@ void DysektProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     }
 }
 
-void DysektProcessor::releaseResources() {}
+void XivaProcessor::releaseResources() {}
 
-SampleData::SnapshotPtr DysektProcessor::exchangeCompletedLoadData (SampleData::SnapshotPtr newValue)
+SampleData::SnapshotPtr XivaProcessor::exchangeCompletedLoadData (SampleData::SnapshotPtr newValue)
 {
 #if INTERSECT_HAS_STD_ATOMIC_SHARED_PTR
     return completedLoadData.exchange (std::move (newValue), std::memory_order_acq_rel);
@@ -367,7 +367,7 @@ SampleData::SnapshotPtr DysektProcessor::exchangeCompletedLoadData (SampleData::
 #endif
 }
 
-SampleData::SnapshotPtr DysektProcessor::exchangeCompletedLoadData2 (SampleData::SnapshotPtr newValue)
+SampleData::SnapshotPtr XivaProcessor::exchangeCompletedLoadData2 (SampleData::SnapshotPtr newValue)
 {
 #if INTERSECT_HAS_STD_ATOMIC_SHARED_PTR
     return completedLoadData2.exchange (std::move (newValue), std::memory_order_acq_rel);
@@ -377,7 +377,7 @@ SampleData::SnapshotPtr DysektProcessor::exchangeCompletedLoadData2 (SampleData:
 #endif
 }
 
-SampleData::SnapshotPtr DysektProcessor::exchangeCompletedLoadData3 (SampleData::SnapshotPtr newValue)
+SampleData::SnapshotPtr XivaProcessor::exchangeCompletedLoadData3 (SampleData::SnapshotPtr newValue)
 {
 #if INTERSECT_HAS_STD_ATOMIC_SHARED_PTR
     return completedLoadData3.exchange (std::move (newValue), std::memory_order_acq_rel);
@@ -387,7 +387,7 @@ SampleData::SnapshotPtr DysektProcessor::exchangeCompletedLoadData3 (SampleData:
 #endif
 }
 
-void DysektProcessor::requestSampleLoad (const juce::File& file, LoadKind kind)
+void XivaProcessor::requestSampleLoad (const juce::File& file, LoadKind kind)
 {
     const int token = nextLoadToken.fetch_add (1, std::memory_order_relaxed) + 1;
     latestLoadToken.store (token, std::memory_order_release);
@@ -447,7 +447,7 @@ void DysektProcessor::requestSampleLoad (const juce::File& file, LoadKind kind)
     fileLoadPool.addJob (new SampleDecodeJob (file, sr, token, kind, onSuccess, onFailure), true);
 }
 
-void DysektProcessor::loadFileAsync (const juce::File& file)
+void XivaProcessor::loadFileAsync (const juce::File& file)
 {
     requestSampleLoad (file, LoadKindReplace);
 }
@@ -463,7 +463,7 @@ void DysektProcessor::loadFileAsync (const juce::File& file)
 //  uses, so processBlock() only ever does a non-allocating pointer swap when
 //  it applies the result -- see the LoadKindTrim handling there.
 // ─────────────────────────────────────────────────────────────────────────────
-void DysektProcessor::applyTrimToCurrentSample (int trimStart, int trimEnd)
+void XivaProcessor::applyTrimToCurrentSample (int trimStart, int trimEnd)
 {
     auto snap = sampleData.getSnapshot();
     if (snap == nullptr)
@@ -518,10 +518,10 @@ void DysektProcessor::applyTrimToCurrentSample (int trimStart, int trimEnd)
                          true);
 }
 
-void DysektProcessor::loadSoundFontAsync (const juce::File& file, SoundFontLoadTarget target,
+void XivaProcessor::loadSoundFontAsync (const juce::File& file, SoundFontLoadTarget target,
                                            int presetBank, int presetProgram)
 {
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     // Delegate to SoundFontLoader which uses sfizz to render all active notes
     // into a single stereo buffer and posts the result back via
     // completedLoadData (Slicer target) or completedLoadData2 (SFZ-PLAYER
@@ -559,12 +559,12 @@ void DysektProcessor::loadSoundFontAsync (const juce::File& file, SoundFontLoadT
 #endif
 }
 
-void DysektProcessor::relinkFileAsync (const juce::File& file)
+void XivaProcessor::relinkFileAsync (const juce::File& file)
 {
     requestSampleLoad (file, LoadKindRelink);
 }
 
-void DysektProcessor::clearSfzPlayer2Sample()
+void XivaProcessor::clearSfzPlayer2Sample()
 {
     // sfzPlayer2.unload() is documented as a UI-thread call (see
     // SfzPlayer.h), same as sfzPlayer2.loadFile() -- every existing load
@@ -587,7 +587,7 @@ void DysektProcessor::clearSfzPlayer2Sample()
     pushCommand (cmd);
 }
 
-void DysektProcessor::clearVoicesBeforeSampleSwap()
+void XivaProcessor::clearVoicesBeforeSampleSwap()
 {
     // Stop lazy chop before killing voices; its preview voice and buffer pointer
     // must be torn down before the sample data is replaced.
@@ -606,7 +606,7 @@ void DysektProcessor::clearVoicesBeforeSampleSwap()
     }
 }
 
-void DysektProcessor::clearVoicesBeforeSampleSwap2()
+void XivaProcessor::clearVoicesBeforeSampleSwap2()
 {
     // SFZ-PLAYER equivalent of clearVoicesBeforeSampleSwap() — no Lazy Chop
     // teardown needed since the SFZ-PLAYER engine never supports manual
@@ -622,7 +622,7 @@ void DysektProcessor::clearVoicesBeforeSampleSwap2()
     }
 }
 
-void DysektProcessor::clampSlicesToSampleBounds()
+void XivaProcessor::clampSlicesToSampleBounds()
 {
     const int maxLen = sampleData.getNumFrames();
     if (maxLen <= 1)
@@ -637,7 +637,7 @@ void DysektProcessor::clampSlicesToSampleBounds()
     }
 }
 
-void DysektProcessor::publishUiSliceSnapshot()
+void XivaProcessor::publishUiSliceSnapshot()
 {
     const int writeIndex = 1 - uiSliceSnapshotIndex.load (std::memory_order_relaxed);
     auto& snap = uiSliceSnapshots[(size_t) writeIndex];
@@ -652,17 +652,17 @@ void DysektProcessor::publishUiSliceSnapshot()
     {
         // Identify the bundled placeholder by its actual on-disk path — the
         // same check already used elsewhere (see PluginEditor's "hasReal"
-        // sample checks: snap->filePath.containsIgnoreCase ("DYSEKT_default.wav")) —
+        // sample checks: snap->filePath.containsIgnoreCase ("XIVA_default.wav")) —
         // rather than by matching the display filename. Filename-equality
         // against a generic name like "Empty.wav" (which is only the
         // BinaryData resource name and never the actual on-disk filename —
-        // loadDefaultSampleIfNeeded() always writes "DYSEKT_default.wav")
+        // loadDefaultSampleIfNeeded() always writes "XIVA_default.wav")
         // is unreliable: any real user sample that happens to be named
         // "Empty.wav", or whose resolved display name comes back empty for
         // any other reason, would be misidentified as the placeholder and
         // hidden by SliceWaveformLcd even though a real sample with real
         // slices is loaded.
-        const bool isPlaceholder = sampleSnap->filePath.containsIgnoreCase ("DYSEKT_default.wav");
+        const bool isPlaceholder = sampleSnap->filePath.containsIgnoreCase ("XIVA_default.wav");
         const juce::String fn = isPlaceholder ? juce::String() : sampleSnap->fileName;
         fn.copyToUTF8 (snap.sampleFileName, sizeof (snap.sampleFileName));
         snap.isDefaultSample = isPlaceholder;
@@ -677,7 +677,7 @@ void DysektProcessor::publishUiSliceSnapshot()
     {
         juce::String fn = sampleData.getFileName();
         fn.copyToUTF8 (snap.sampleFileName, sizeof (snap.sampleFileName));
-        snap.isDefaultSample = sampleData.getFilePath().containsIgnoreCase ("DYSEKT_default.wav");
+        snap.isDefaultSample = sampleData.getFilePath().containsIgnoreCase ("XIVA_default.wav");
     }
     else
     {
@@ -723,7 +723,7 @@ void DysektProcessor::publishUiSliceSnapshot()
     }
 }
 
-void DysektProcessor::publishUiSliceSnapshot2()
+void XivaProcessor::publishUiSliceSnapshot2()
 {
     const int writeIndex = 1 - uiSliceSnapshotIndex2.load (std::memory_order_relaxed);
     auto& snap = uiSliceSnapshots2[(size_t) writeIndex];
@@ -737,7 +737,7 @@ void DysektProcessor::publishUiSliceSnapshot2()
     if (sampleSnap != nullptr)
     {
         // Engine 2 (SFZ-PLAYER) never loads a bundled placeholder sample —
-        // there is no "DYSEKT_default.wav" equivalent for sampleData2 — so
+        // there is no "XIVA_default.wav" equivalent for sampleData2 — so
         // a successfully loaded sample is never the "default" here. Unlike
         // the Slicer's publishUiSliceSnapshot(), this must NOT fall back to
         // "isEmpty() on the resolved name", which would wrongly blank
@@ -776,7 +776,7 @@ void DysektProcessor::publishUiSliceSnapshot2()
     // bind to on this engine.
 }
 
-void DysektProcessor::rebuildChromaticChannelMask()
+void XivaProcessor::rebuildChromaticChannelMask()
 {
     // Build a bitmask of all channels currently assigned to chromatic slices.
     // Bit N (1-based, N in 1..16) is set when at least one slice uses channel N.
@@ -811,7 +811,7 @@ void DysektProcessor::rebuildChromaticChannelMask()
     }
 }
 
-void DysektProcessor::setMidiRouteMode (MidiRouteMode mode)
+void XivaProcessor::setMidiRouteMode (MidiRouteMode mode)
 {
     // Called on the message thread whenever the UI tab changes focus.
     //
@@ -831,7 +831,7 @@ void DysektProcessor::setMidiRouteMode (MidiRouteMode mode)
     // the moment focus leaves its tab.
     midiRouteMode.store (static_cast<int> (mode), std::memory_order_relaxed);
 
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
     // Standalone sequencer only: which track's live MIDI preview is
     // "selected" is a distinct, standalone-only concept from plugin channel
     // routing above — keep that tied to tab focus as before.
@@ -858,7 +858,7 @@ void DysektProcessor::setMidiRouteMode (MidiRouteMode mode)
 #endif
 }
 
-void DysektProcessor::pushCommand (Command cmd)
+void XivaProcessor::pushCommand (Command cmd)
 {
     const bool critical = isCriticalCommand (cmd.type);
     const auto scope = commandFifo.write (1);
@@ -893,7 +893,7 @@ void DysektProcessor::pushCommand (Command cmd)
         droppedCriticalCommandTotal.fetch_add (1, std::memory_order_relaxed);
 }
 
-bool DysektProcessor::enqueueOverflowCommand (Command cmd)
+bool XivaProcessor::enqueueOverflowCommand (Command cmd)
 {
     const int write = overflowWriteIndex.load (std::memory_order_relaxed);
     const int read = overflowReadIndex.load (std::memory_order_acquire);
@@ -906,7 +906,7 @@ bool DysektProcessor::enqueueOverflowCommand (Command cmd)
     return true;
 }
 
-void DysektProcessor::drainOverflowCommands (bool& handledAny)
+void XivaProcessor::drainOverflowCommands (bool& handledAny)
 {
     for (;;)
     {
@@ -921,7 +921,7 @@ void DysektProcessor::drainOverflowCommands (bool& handledAny)
     }
 }
 
-bool DysektProcessor::enqueueCoalescedCommand (const Command& cmd)
+bool XivaProcessor::enqueueCoalescedCommand (const Command& cmd)
 {
     if (! isCoalescableCommand (cmd.type))
         return false;
@@ -954,7 +954,7 @@ bool DysektProcessor::enqueueCoalescedCommand (const Command& cmd)
     return false;
 }
 
-void DysektProcessor::drainCoalescedCommands (bool& handledAny)
+void XivaProcessor::drainCoalescedCommands (bool& handledAny)
 {
     if (pendingSetSliceBounds.exchange (false, std::memory_order_acq_rel))
     {
@@ -989,7 +989,7 @@ void DysektProcessor::drainCoalescedCommands (bool& handledAny)
     }
 }
 
-void DysektProcessor::drainCommands()
+void XivaProcessor::drainCommands()
 {
     bool handledAny = false;
 
@@ -1038,7 +1038,7 @@ void DysektProcessor::drainCommands()
     }
 }
 
-UndoManager::Snapshot DysektProcessor::makeSnapshot()
+UndoManager::Snapshot XivaProcessor::makeSnapshot()
 {
     UndoManager::Snapshot snap;
     for (int i = 0; i < SliceManager::kMaxSlices; ++i)
@@ -1051,12 +1051,12 @@ UndoManager::Snapshot DysektProcessor::makeSnapshot()
     return snap;
 }
 
-void DysektProcessor::captureSnapshot()
+void XivaProcessor::captureSnapshot()
 {
     undoMgr.push (makeSnapshot());
 }
 
-void DysektProcessor::restoreSnapshot (const UndoManager::Snapshot& snap)
+void XivaProcessor::restoreSnapshot (const UndoManager::Snapshot& snap)
 {
     for (int i = 0; i < SliceManager::kMaxSlices; ++i)
         sliceManager.getSlice (i) = snap.slices[(size_t) i];
@@ -1069,7 +1069,7 @@ void DysektProcessor::restoreSnapshot (const UndoManager::Snapshot& snap)
     uiSnapshotDirty.store (true, std::memory_order_release);
 }
 
-void DysektProcessor::handleCommand (const Command& cmd)
+void XivaProcessor::handleCommand (const Command& cmd)
 {
     switch (cmd.type)
     {
@@ -1883,7 +1883,7 @@ void DysektProcessor::handleCommand (const Command& cmd)
 
         case CmdSetRootNote:
         {
-            // DYSEKT-rootnote-wrongengine fix: this previously always wrote
+            // XIVA-rootnote-wrongengine fix: this previously always wrote
             // to sliceManager (the Slicer engine), even when the command
             // originated from the SFZ-PLAYER tab -- SliceControlBar never
             // threaded targetEngine2 through for this command, so root-note
@@ -1942,7 +1942,7 @@ static inline void atomicAddFloat (std::atomic<float>& target, float delta) noex
 //  feature (MultisamplerEditor calls it when the overlay closes).
 // =============================================================================
 
-void DysektProcessor::applyTrimAuditionNote (int note, bool on)
+void XivaProcessor::applyTrimAuditionNote (int note, bool on)
 {
     if (on)
     {
@@ -1988,7 +1988,7 @@ void DysektProcessor::applyTrimAuditionNote (int note, bool on)
     }
 }
 
-void DysektProcessor::resetTrimAudition()
+void XivaProcessor::resetTrimAudition()
 {
     // Message-thread only. Just flips the gate off and clears the preview
     // sample -- see this section's header comment in PluginProcessor.h for
@@ -1999,7 +1999,7 @@ void DysektProcessor::resetTrimAudition()
     trimAuditionSample.clear();
 }
 
-void DysektProcessor::processMidi (const juce::MidiBuffer& midi)
+void XivaProcessor::processMidi (const juce::MidiBuffer& midi)
 {
     // ── MIDI channel routing ──────────────────────────────────────────────────
     // Messages on channels owned by sfPlayerChannelMask are routed exclusively
@@ -2969,7 +2969,7 @@ void DysektProcessor::processMidi (const juce::MidiBuffer& midi)
     }
 }
 
-void DysektProcessor::processMidi2 (const juce::MidiBuffer& midi)
+void XivaProcessor::processMidi2 (const juce::MidiBuffer& midi)
 {
     const uint32_t sfz2Mask = sfzPlayer2ChannelMask.load (std::memory_order_relaxed);
     if (sfz2Mask == 0) return;   // SFZ-PLAYER not enabled — no channels owned
@@ -3017,7 +3017,7 @@ void DysektProcessor::processMidi2 (const juce::MidiBuffer& midi)
             }
 
             const int sliceIdx = rebuildInFlight ? -1 : sliceManager2.midiNoteToSlice (note);
-            // DYSEKT-addzone-nomidi diagnostic: there was previously zero
+            // XIVA-addzone-nomidi diagnostic: there was previously zero
             // runtime visibility into this path at all (the only MIDI debug
             // logging lived in SfzPlayer.cpp's process(), which is dead code
             // for playback -- sliceManager2/voicePool2 do the real work).
@@ -3101,15 +3101,15 @@ void DysektProcessor::processMidi2 (const juce::MidiBuffer& midi)
 
 static inline float sanitiseSample (float x)
 {
-    return dysektSoftLimit (x);
+    return xivaSoftLimit (x);
 }
 
-void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
+void XivaProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                             juce::MidiBuffer& midi)
 {
     // TEMP diagnostic — fires exactly once, completely unconditionally, the
     // very first time processBlock() is called at all. If this line never
-    // appears in dysekt_crash.log, processBlock() itself is not being
+    // appears in xiva_crash.log, processBlock() itself is not being
     // invoked for this plugin instance (bypass/mute at the host level,
     // wrong instance, or the host never started the audio engine) — nothing
     // inside processBlock, including the SF2/SFZ player, can matter until
@@ -3242,7 +3242,7 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 sliceManager.clearAll();
                 const juce::String fname = sampleData.getFileName();
                 const bool isDefault = fname.equalsIgnoreCase ("Empty.wav")
-                                    || fname.equalsIgnoreCase ("DYSEKT_default.wav")
+                                    || fname.equalsIgnoreCase ("XIVA_default.wav")
                                     || fname.isEmpty();
                 // No auto-slice: sample is immediately playable chromatically
                 // via the unsliced path. User adds slices explicitly via ADD SLICE.
@@ -3327,7 +3327,7 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             clearVoicesBeforeSampleSwap2();
             sampleData2.applyDecodedSample (decoded2);
 
-            // See zoneBuilderReloadPending's declaration: capture DYSEKT-only
+            // See zoneBuilderReloadPending's declaration: capture XIVA-only
             // per-slice fields (no SFZ opcode equivalent) before they're
             // wiped, keyed by MIDI note, so a Zone Builder edit doesn't
             // silently discard unrelated SliceLcdDisplay customisation.
@@ -3386,7 +3386,7 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             // a previous one — clearAll() again is harmless/idempotent here).
             sliceManager2.clearAll();
 
-            // ── DYSEKT-addzone-nomidi fix ────────────────────────────────────
+            // ── XIVA-addzone-nomidi fix ────────────────────────────────────
             // SliceManager::createSlice() is a legacy wrapper (written for the
             // Slicer's sequential auto-slicing) that calls rebuildMidiMap()
             // internally as a side effect — and rebuildMidiMap() reassigns
@@ -3500,7 +3500,7 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                     {
                         sliceManager2.getSlice (tailIdx).outputBus = desc.outputBus;
                         // MIX visibility is user-controlled only (the
-                        // dysekt_show_in_mixer opcode) — routing off Main no
+                        // xiva_show_in_mixer opcode) — routing off Main no
                         // longer implicitly pins a slice into the mixer, see
                         // the pass-2 comment below for why this changed.
                         if (desc.showInMixer)
@@ -3528,7 +3528,7 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 sliceManager2.getSlice (pin.sliceIdx).zoneHiKey = pin.zoneHiKey;
                 sliceManager2.getSlice (pin.sliceIdx).zoneRegionIdx = pin.zoneRegionIdx;
 
-                // -1 means the matched <region> had no dysekt_output_bus
+                // -1 means the matched <region> had no xiva_output_bus
                 // opcode (or no region matched at all) — leave Slice's own
                 // default (bus 0/Main) alone in that case, same "unset
                 // means don't overwrite" convention hasZoneColour uses above.
@@ -3579,9 +3579,9 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                     s.releaseTail      = snap.releaseTail;
                     s.reverse          = snap.reverse;
                     // outputBus/showInMixer are deliberately NOT restored
-                    // here — unlike the other DYSEKT-only fields above,
+                    // here — unlike the other XIVA-only fields above,
                     // both now round-trip through their own SFZ opcodes
-                    // (dysekt_output_bus / dysekt_show_in_mixer — see
+                    // (xiva_output_bus / xiva_show_in_mixer — see
                     // SampleZone::outputBus/showInMixer), so the fresh
                     // import a few lines up (PendingZonePin handling)
                     // already applied the CURRENT, correct value. Restoring
@@ -3869,11 +3869,11 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     }
 
-#if ! DYSEKT_STANDALONE
+#if ! XIVA_STANDALONE
     // ── Snoop note messages to update active-note bitmask for keyboard display ──
     // Snoop messages on the SF player's assigned channels only. Plugin build
     // only: there's no selected-track channel-1 retargeting in this build
-    // (see the DYSEKT_STANDALONE branch below), so `midi` is already on its
+    // (see the XIVA_STANDALONE branch below), so `midi` is already on its
     // final channel here and snooping at this point is correct as-is.
     {
         const uint32_t sfMaskSnoop = sfPlayerChannelMask.load (std::memory_order_relaxed) & kSf2AllowedMidiChannelMask;
@@ -3899,7 +3899,7 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 #endif
 
 
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
     // ── Selected-track live MIDI routing ──────────────────────────────────────
     // See docs/selected-track-live-midi-workflow.md. SequencerEngine is the
     // single authoritative source of truth for where a normal channel-1
@@ -4149,7 +4149,7 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     processMidi (midi);
 
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
     // processMidi2() drives the SFZ-PLAYER tab (sliceManager2/voicePool2),
     // which — like sfzPlayer/sfPlayerChannelMask below — listens on its own
     // dedicated channel(s) via sfzPlayer2ChannelMask regardless of which
@@ -4479,7 +4479,7 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 }
             }
 
-           #if DYSEKT_STANDALONE
+           #if XIVA_STANDALONE
             // `midi` has been cleared of live input for a non-slicer-selected
             // sequencer track so it cannot trigger the slicer. Add the
             // (already selected-track-transformed) live input and any
@@ -4950,8 +4950,8 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         // EQ boosts can push the sum past full scale; keep the main bus bounded.
         for (int i = 0; i < ns; ++i)
         {
-            chans[0][i] = dysektSoftLimit (chans[0][i]);
-            if (busR[0]) chans[1][i] = dysektSoftLimit (chans[1][i]);
+            chans[0][i] = xivaSoftLimit (chans[0][i]);
+            if (busR[0]) chans[1][i] = xivaSoftLimit (chans[1][i]);
         }
     }
 
@@ -4997,12 +4997,12 @@ void DysektProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         slicePeak2R[si].store (v, std::memory_order_relaxed);
     }
 }
-juce::AudioProcessorEditor* DysektProcessor::createEditor()
+juce::AudioProcessorEditor* XivaProcessor::createEditor()
 {
-    return new DysektEditor (*this);
+    return new XivaEditor (*this);
 }
 
-void DysektProcessor::getStateInformation (juce::MemoryBlock& destData)
+void XivaProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     juce::MemoryOutputStream stream (destData, false);
 
@@ -5136,7 +5136,7 @@ void DysektProcessor::getStateInformation (juce::MemoryBlock& destData)
         stream.writeInt (lo2);
         stream.writeInt (hi2);
     }
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
     sequencer.writeToStream (stream);
 #endif
 
@@ -5149,7 +5149,7 @@ void DysektProcessor::getStateInformation (juce::MemoryBlock& destData)
     stream.writeString (savedMultisamplerInstrumentJson);
 }
 
-void DysektProcessor::setStateInformation (const void* data, int sizeInBytes)
+void XivaProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     juce::MemoryInputStream stream (data, (size_t) sizeInBytes, false);
 
@@ -5389,7 +5389,7 @@ void DysektProcessor::setStateInformation (const void* data, int sizeInBytes)
     }
 
     // Sequencer state (graceful — older saves won't have this block)
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
     if (! stream.isExhausted())
         sequencer.readFromStream (stream);
 #endif
@@ -5414,10 +5414,10 @@ void DysektProcessor::setStateInformation (const void* data, int sizeInBytes)
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return static_cast<juce::AudioProcessor*> (new DysektProcessor());
+    return static_cast<juce::AudioProcessor*> (new XivaProcessor());
 }
 
-void DysektProcessor::loadDefaultSampleIfNeeded()
+void XivaProcessor::loadDefaultSampleIfNeeded()
 {
     if (defaultSampleScheduled)
         return;
@@ -5427,7 +5427,7 @@ void DysektProcessor::loadDefaultSampleIfNeeded()
     // Write BinaryData::Empty_wav to a temp file and load it.
     // This ensures the plugin opens with a sample already loaded.
     auto tempFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                        .getChildFile ("DYSEKT_default.wav");
+                        .getChildFile ("XIVA_default.wav");
 
     if (! tempFile.existsAsFile())
     {

@@ -2,13 +2,13 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 
-class DysektProcessor;
+class XivaProcessor;
 class WaveformView;
 
 class ActionPanel : public juce::Component
 {
 public:
-    ActionPanel (DysektProcessor& p, WaveformView& wv);
+    ActionPanel (XivaProcessor& p, WaveformView& wv);
     ~ActionPanel() override;
     void resized() override;
     void paint (juce::Graphics& g) override;
@@ -20,14 +20,14 @@ public:
     /// Invoked when the user clicks the SEQ button.
     std::function<void()> onSeqToggle;
 
-    // Callbacks wired up by DysektEditor
+    // Callbacks wired up by XivaEditor
     void setBrowserActive    (bool v) { browserActive    = v; repaint(); }
     void setWaveActive       (bool v) { waveActive       = v; repaint(); }
     void setChromaticActive  (bool v) { chromaticActive  = v; repaint(); }
     void setTrimActive       (bool v);   // disables/re-enables slice buttons
 
 private:
-    DysektProcessor& processor;
+    XivaProcessor& processor;
     WaveformView&    waveformView;
 
     bool browserActive    = false;

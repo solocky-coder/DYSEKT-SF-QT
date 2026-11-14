@@ -1,6 +1,6 @@
 #include "WaveformView.h"
 #include "UIHelpers.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 #include "../PluginProcessor.h"
 #include "../audio/AudioAnalysis.h"
 
@@ -49,7 +49,7 @@ void WaveformView::getTrimBounds(int& outStart, int& outEnd) const
  outEnd = trimOutPoint;
 }
 
-WaveformView::WaveformView (DysektProcessor& p) : processor (p)
+WaveformView::WaveformView (XivaProcessor& p) : processor (p)
 {
  // ── MIDI Slice button ─────────────────────────────────────────────────────
  midiSliceBtn.setButtonText (juce::CharPointer_UTF8 ("\xe2\x97\x8f MIDI SLICE \xe2\x80\x94 Click to finish"));
@@ -61,8 +61,8 @@ WaveformView::WaveformView (DysektProcessor& p) : processor (p)
 
  midiSliceBtn.onClick = [this]
  {
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdLazyChopStop;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdLazyChopStop;
  processor.pushCommand (cmd);
  setMidiSliceActive (false);
  };
@@ -210,7 +210,7 @@ void WaveformView::paint (juce::Graphics& g)
  } else {
  paintViewStateActive = false;
  g.setColour (getTheme().foreground.withAlpha (0.25f));
- g.setFont (DysektLookAndFeel::makeFont (22.0f));
+ g.setFont (XivaLookAndFeel::makeFont (22.0f));
  g.drawText ("DROP AUDIO FILE", getLocalBounds(), juce::Justification::centred);
  paintMidiSliceOverlay (g);
  }
@@ -846,7 +846,7 @@ void WaveformView::drawSlices (juce::Graphics& g)
  {
  // Name: centred in slice, font size scales with available width
  const float nameFontH = juce::jlimit (9.0f, 13.0f, (float)sw * 0.18f);
- g.setFont (DysektLookAndFeel::makeFont (nameFontH, true));
+ g.setFont (XivaLookAndFeel::makeFont (nameFontH, true));
  g.drawText (s.name.toUpperCase(), x1 + 2, kTopPad + 1, sw - 4, 14,
  juce::Justification::centred, true);
  }
@@ -854,7 +854,7 @@ void WaveformView::drawSlices (juce::Graphics& g)
  {
  // Number: just to the right of the marker arrow (10px triangle),
  // so it does not overlap the marker head.
- g.setFont (DysektLookAndFeel::makeFont (10.0f, true));
+ g.setFont (XivaLookAndFeel::makeFont (10.0f, true));
  g.drawText (juce::String (i + 1), mx + 13, 3, 20, 12, juce::Justification::left);
  }
  }
@@ -1104,7 +1104,7 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
  }
 
  auto* topLvl = getTopLevelComponent();
- float ms = DysektLookAndFeel::getMenuScale();
+ float ms = XivaLookAndFeel::getMenuScale();
  const auto screenPt = e.getScreenPosition();
  menu.showMenuAsync (
  juce::PopupMenu::Options()
@@ -1116,16 +1116,16 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
  // ── MIDI Slice toggle ──────────────────────────────────────────
  if (result == 50)
  {
- DysektProcessor::Command cmd;
+ XivaProcessor::Command cmd;
  if (midiSliceOverlayActive)
  {
- cmd.type = DysektProcessor::CmdLazyChopStop;
+ cmd.type = XivaProcessor::CmdLazyChopStop;
  processor.pushCommand (cmd);
  setMidiSliceActive (false);
  }
  else
  {
- cmd.type = DysektProcessor::CmdLazyChopStart;
+ cmd.type = XivaProcessor::CmdLazyChopStart;
  processor.pushCommand (cmd);
  processor.midiSelectsSlice.store (true);
  setMidiSliceActive (true);
@@ -1138,8 +1138,8 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
  {
  const int counts[] = { 4, 8, 16, 32 };
  const int n = counts[result - 60];
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdEqualChop;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdEqualChop;
  cmd.intParam1 = n;
  processor.pushCommand (cmd);
  return;
@@ -1162,8 +1162,8 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
 
  auto toggleLock = [&] (uint32_t bit)
  {
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdToggleLock;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdToggleLock;
  cmd.intParam1 = targetSlice; // slice to lock — explicit, not racy selectedSlice
  cmd.intParam2 = (int) bit;
  processor.pushCommand (cmd);
@@ -1171,15 +1171,15 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
 
  if (result == 1)
  {
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdDeleteSlice;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdDeleteSlice;
  cmd.intParam1 = targetSlice;
  processor.pushCommand (cmd);
  }
  else if (result == 2)
  {
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdSetSliceLockAll;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdSetSliceLockAll;
  cmd.intParam1 = targetSlice;
  cmd.floatParam1 = allLocked ? 0.f : 1.f;
  processor.pushCommand (cmd);
@@ -1200,8 +1200,8 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
  0xFF00BFFF, 0xFF00FFD0, 0xFFA8FF3E, 0xFFFFD700,
  0xFFFF7F50, 0xFFFF00FF, 0xFFE8E8E8, 0xFF888888,
  };
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdSetSliceColour;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdSetSliceColour;
  cmd.intParam1 = targetSlice;
  cmd.intParam2 = (int) kPalARGB[result - 20];
  processor.pushCommand (cmd);
@@ -1247,15 +1247,15 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
  const auto& s = ui.slices[(size_t) nearestSlice];
  const int selEnd = processor.sliceManager.getEndForSlice (nearestSlice, ui.sampleNumFrames);
 
- DysektProcessor::Command gestureCmd;
- gestureCmd.type = DysektProcessor::CmdBeginGesture;
+ XivaProcessor::Command gestureCmd;
+ gestureCmd.type = XivaProcessor::CmdBeginGesture;
  processor.pushCommand (gestureCmd);
 
  // Auto-select the dragged slice so the LCD and marker slider track it in real time
  if (nearestSlice != sel)
  {
- DysektProcessor::Command selCmd;
- selCmd.type = DysektProcessor::CmdSelectSlice;
+ XivaProcessor::Command selCmd;
+ selCmd.type = XivaProcessor::CmdSelectSlice;
  selCmd.intParam1 = nearestSlice;
  processor.pushCommand (selCmd);
  }
@@ -1290,8 +1290,8 @@ void WaveformView::mouseDown (const juce::MouseEvent& e)
  if (sl.active && samplePos >= sl.startSample
  && samplePos < processor.sliceManager.getEndForSlice (i, ui.sampleNumFrames))
  {
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdSelectSlice;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdSelectSlice;
  cmd.intParam1 = i;
  processor.pushCommand (cmd);
  break;
@@ -1307,8 +1307,8 @@ void WaveformView::mouseDoubleClick (const juce::MouseEvent& e)
  if (sampleSnap == nullptr) return;
  int rawPos = juce::jlimit (0, sampleSnap->buffer.getNumSamples(), pixelToSample (e.x));
  int samplePos = AudioAnalysis::findNearestZeroCrossing (sampleSnap->buffer, rawPos);
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdCreateSlice;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdCreateSlice;
  cmd.intParam1 = samplePos;
  cmd.intParam2 = sampleSnap->buffer.getNumSamples();
  processor.pushCommand (cmd);
@@ -1375,16 +1375,16 @@ void WaveformView::mouseUp (const juce::MouseEvent&)
 
  if (crossedPrev)
  {
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdDeleteSlice;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdDeleteSlice;
  cmd.intParam1 = dragSliceIdx;
  processor.pushCommand (cmd);
  // No CmdSetSliceBounds needed — the slice is gone.
  }
  else
  {
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdSetSliceBounds;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdSetSliceBounds;
  cmd.intParam1 = dragSliceIdx;
  cmd.intParam2 = dragPreviewStart;
  cmd.positions[0] = dragPreviewEnd;
@@ -1393,8 +1393,8 @@ void WaveformView::mouseUp (const juce::MouseEvent&)
 
  if (linkedSliceIdx >= 0)
  {
- DysektProcessor::Command lCmd;
- lCmd.type = DysektProcessor::CmdSetSliceBounds;
+ XivaProcessor::Command lCmd;
+ lCmd.type = XivaProcessor::CmdSetSliceBounds;
  lCmd.intParam1 = linkedSliceIdx;
  lCmd.intParam2 = linkedPreviewStart;
  lCmd.positions[0] = linkedPreviewEnd;

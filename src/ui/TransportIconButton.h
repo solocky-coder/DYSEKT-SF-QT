@@ -45,7 +45,7 @@ public:
 private:
     void paintButton (juce::Graphics& g, bool isMouseOverButton, bool isButtonDown) override
     {
-        using namespace dysekt::bench;
+        using namespace xiva::bench;
 
         const auto b = getLocalBounds().toFloat();
         const bool on = getToggleState();

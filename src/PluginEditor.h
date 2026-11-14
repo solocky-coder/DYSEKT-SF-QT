@@ -39,7 +39,7 @@
 #include "ui/SfzPlayerDropdownPanel.h"
 #include "ui/GlobalEqPanel.h"
 #include "ui/multisampler/MultisamplerEditor.h"
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
 #include "ui/PianoRollPanel.h"
 #include "ui/ArrangeView.h"
 #include "ui/SlotWindow.h"
@@ -48,13 +48,13 @@
 // ── Layout constants ──────────────────────────────────────────────────────────
 #include "ui/PluginEditorConstants.h"
 
-class DysektEditor : public juce::AudioProcessorEditor,
+class XivaEditor : public juce::AudioProcessorEditor,
                      public juce::FileDragAndDropTarget,
                      private juce::Timer
 {
 public:
-    explicit DysektEditor (DysektProcessor&);
-    ~DysektEditor() override;
+    explicit XivaEditor (XivaProcessor&);
+    ~XivaEditor() override;
 
     void paint              (juce::Graphics&) override;
     void paintOverChildren  (juce::Graphics&) override;
@@ -69,7 +69,7 @@ public:
     juce::StringArray getAvailableThemes();
     void applyTheme (const juce::String& themeName);
 
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
     /// Share the standalone app's File / Audio-MIDI / Help menu bar with
     /// every separate editor window, while the MainWindow owns the model.
     void setWindowMenuBar (juce::MenuBarModel* model, int height)
@@ -120,7 +120,7 @@ private:
     void saveUserSettings (const juce::String& themeName);
     void loadUserSettings();
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
     float    lastZoom              = -1.0f;
     float    lastScroll            = -1.0f;
     int      lastMidiFollowSlice   = -1;
@@ -145,7 +145,7 @@ private:
     SlotContent activeSlot   = SlotContent::None;
     bool initBrowserOpen     = false;  // true until the first real sample is loaded
 
-#if JUCE_WINDOWS && ! DYSEKT_STANDALONE
+#if JUCE_WINDOWS && ! XIVA_STANDALONE
     // State for the host editor-window resize desync watchdog — see
     // timerCallback() in PluginEditor.cpp for the full explanation.
     int peerMismatchTicks = 0;
@@ -248,7 +248,7 @@ private:
     // shown only while the Theme Editor's PICK button is active. Lets the
     // user click any widget in the *live* plugin UI to select the matching
     // row in the Theme Editor's list, instead of only the small preview
-    // strip. Widgets opt in by tagging themselves with a "dysektThemeKey"
+    // strip. Widgets opt in by tagging themselves with a "xivaThemeKey"
     // component property (see components tagged in the constructor below).
     // In standalone builds, slotWindow gets its own independent overlay
     // (see SlotWindowContent) since it's a genuinely separate OS window —
@@ -257,12 +257,12 @@ private:
 
     /// Resolves the theme key (e.g. "waveformBg", "slice7") represented by
     /// whatever's under the given point, walking up from the hit-tested
-    /// component to find one tagged with a "dysektThemeKey" property.
+    /// component to find one tagged with a "xivaThemeKey" property.
     /// PadGridView is special-cased so a click resolves to the specific
     /// slice pad under the cursor rather than the whole grid.
     juce::String resolveThemeKeyAt (juce::Component* hit, juce::Point<int> posInEditor);
 
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
     /// Mirrors the PICK-mode wiring above, but for slotWindow — a genuinely
     /// separate OS-level window (Mixer/EQ/Arranger in standalone builds)
     /// that the main editor's pickOverlay can never see clicks in. Installs
@@ -271,7 +271,7 @@ private:
     void setSlotWindowPickModeActive (bool active);
 #endif
 
-    DysektLookAndFeel lnf;
+    XivaLookAndFeel lnf;
     BenchLookAndFeel  benchLnf;   // swapped in via setLookAndFeel() while a flat (Bench) theme is active
 
     TopBar          topBar { processor, processor.sequencer };   // Bench layout only; declared first so it sits behind logo/header/transport
@@ -301,7 +301,7 @@ private:
     SfzPlayerDropdownPanel sfzPlayerDropdown;
     ShortcutsPanel   shortcutsPanel { processor };
     GlobalEqPanel    eqPanel;
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
     ArrangeView      arrangeView    { processor.sequencer, &processor.abletonLink };
     SlotWindow       slotWindow     { mixerPanel, eqPanel, arrangeView, lnf };
     PianoRollWindow  pianoRollPanel { processor.sequencer, lnf, &processor.abletonLink };
@@ -315,5 +315,5 @@ private:
     void toggleThemeEditor();
     void toggleSeqPanel();
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DysektEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (XivaEditor)
 };

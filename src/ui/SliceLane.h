@@ -2,13 +2,13 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../audio/SliceManager.h"
 
-class DysektProcessor;
+class XivaProcessor;
 class WaveformView;
 
 class SliceLane : public juce::Component
 {
 public:
-    explicit SliceLane (DysektProcessor& p);
+    explicit SliceLane (XivaProcessor& p);
     void setWaveformView (WaveformView* view) { waveformView = view; }
     void paint (juce::Graphics& g) override;
     void mouseDown (const juce::MouseEvent& e) override;
@@ -18,7 +18,7 @@ public:
     void invalidateLabelCache() noexcept { labelCacheDirty = true; }
 
 private:
-    DysektProcessor& processor;
+    XivaProcessor& processor;
     WaveformView* waveformView = nullptr;
 
     // ── Label position cache (Bug #3: prevents per-frame jitter / flicker) ───

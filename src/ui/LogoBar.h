@@ -1,13 +1,13 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 
-class DysektProcessor;
+class XivaProcessor;
 
 class LogoBar : public juce::Component
 {
 public:
-    explicit LogoBar (DysektProcessor& p);
+    explicit LogoBar (XivaProcessor& p);
     void paint (juce::Graphics& g) override;
 private:
-    DysektProcessor& processor;
+    XivaProcessor& processor;
 };

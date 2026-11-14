@@ -3,7 +3,7 @@
 #include "../sequencer/SequencerEngine.h"
 #include "../bench/BenchColours.h"
 #include "TransportIconButton.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 #include "ClickMenus.h"
 
 //==============================================================================
@@ -22,7 +22,7 @@ class MiniTransportBar final : public juce::Component,
 public:
     explicit MiniTransportBar (SequencerEngine& seq) : engine (seq)
     {
-        namespace M = dysekt::bench;
+        namespace M = xiva::bench;
 
         stopButton  .configure (TransportIcons::Kind::Stop,   M::Accent::Orange,    "Stop");
         playButton  .configure (TransportIcons::Kind::Play,   M::Transport::Play,   "Play");

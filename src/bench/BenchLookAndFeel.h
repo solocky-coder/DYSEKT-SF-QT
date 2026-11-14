@@ -1,30 +1,30 @@
 #pragma once
-#include "../ui/DysektLookAndFeel.h"
+#include "../ui/XivaLookAndFeel.h"
 
-// Windows Metro / Fluent LookAndFeel — DYSEKT-SF Metro UI Developer
+// Windows Metro / Fluent LookAndFeel — XIVA Metro UI Developer
 // Specification (Technical) v2, LOOKANDFEEL OVERRIDES section.
 //
-// Subclasses DysektLookAndFeel rather than juce::LookAndFeel_V4 directly so
+// Subclasses XivaLookAndFeel rather than juce::LookAndFeel_V4 directly so
 // every method NOT overridden here (drawToggleButton, drawTickBox, drawLabel,
 // tooltips, alert boxes, the DocumentWindow title bar, getTypefaceForFont,
-// makeFont/makeMonoFont, etc.) still gets DysektLookAndFeel's existing,
+// makeFont/makeMonoFont, etc.) still gets XivaLookAndFeel's existing,
 // already-correct behaviour for free — Metro only needs to differ where the
 // spec actually asks for a different look.
 //
-// This is applied via DysektEditor::setLookAndFeel() only while the active
-// theme is "metro" (see PluginEditor.cpp DysektEditor::applyTheme()); at all
-// other times the base DysektLookAndFeel instance is active, unchanged.
+// This is applied via XivaEditor::setLookAndFeel() only while the active
+// theme is "metro" (see PluginEditor.cpp XivaEditor::applyTheme()); at all
+// other times the base XivaLookAndFeel instance is active, unchanged.
 //
-// Note: most of DYSEKT-SF's actual on-screen surfaces (waveform, pads, mixer,
+// Note: most of XIVA's actual on-screen surfaces (waveform, pads, mixer,
 // browser, LCDs, knob strips) are hand-painted directly in each component's
 // paint(), not routed through LookAndFeel virtual calls at all — those are
 // themed via getTheme().isFlat() checks inside the components
 // themselves (WaveformView.cpp, PadGridView.cpp, MixerPanel.cpp, etc.), and
 // are unaffected by which LookAndFeel object is active. This class overrides
 // TextButton, Slider (linear + rotary), PopupMenu, and TextEditor; ComboBox
-// is inherited unchanged from DysektLookAndFeel since the two are now
-// pixel-identical (flat, square corners) — see DysektLookAndFeel::drawComboBox.
-class BenchLookAndFeel : public DysektLookAndFeel
+// is inherited unchanged from XivaLookAndFeel since the two are now
+// pixel-identical (flat, square corners) — see XivaLookAndFeel::drawComboBox.
+class BenchLookAndFeel : public XivaLookAndFeel
 {
 public:
     BenchLookAndFeel() = default;

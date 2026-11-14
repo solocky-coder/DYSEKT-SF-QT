@@ -1,7 +1,7 @@
 #include "MidiLearnDialog.h"
 #include "../PluginProcessor.h"
 #include "../PluginEditor.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 
 // ── Parameter name table ──────────────────────────────────────────────────────
 static const char* const gSlotParamNames[kMidiLearnNumSlots] = {
@@ -116,7 +116,7 @@ MidiLearnDialog::MappingRowComponent::MappingRowComponent()
 {
     const auto& th = getTheme();
 
-    paramLabel.setFont (DysektLookAndFeel::makeFont (12.0f));
+    paramLabel.setFont (XivaLookAndFeel::makeFont (12.0f));
     paramLabel.setColour (juce::Label::textColourId, th.foreground);
     paramLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (paramLabel);
@@ -297,7 +297,7 @@ void MidiLearnDialog::MappingRowComponent::resized()
 // ── Constructor ───────────────────────────────────────────────────────────────
 
 MidiLearnDialog::MidiLearnDialog (MidiLearnManager& ml,
-                                   DysektProcessor&  proc,
+                                   XivaProcessor&  proc,
                                    std::function<void()> onClose)
     : midiLearn (ml), processor (proc), onCloseCallback (onClose)
 {
@@ -337,7 +337,7 @@ void MidiLearnDialog::paint (juce::Graphics& g)
     g.setColour (th.accent.withAlpha (0.25f));
     g.drawHorizontalLine (36, 1.f, (float)(w - 1));
     g.setColour (th.foreground);
-    g.setFont (DysektLookAndFeel::makeFont (15.0f, true));
+    g.setFont (XivaLookAndFeel::makeFont (15.0f, true));
     g.drawText ("MIDI Learn Assignments", 0, 0, w, 36, juce::Justification::centred);
 
     // Column headers
@@ -345,7 +345,7 @@ void MidiLearnDialog::paint (juce::Graphics& g)
     g.setColour (th.darkBar);
     g.fillRect (10, hdrY, w - 20, hdrH);
     g.setColour (th.foreground.withAlpha (0.55f));
-    g.setFont (DysektLookAndFeel::makeFont (10.0f, true));
+    g.setFont (XivaLookAndFeel::makeFont (10.0f, true));
     g.drawText ("PARAMETER",    14, hdrY, 136, hdrH, juce::Justification::centredLeft);
     // x positions match the row controls (list x 10 + row x offsets in MappingRowComponent::resized()).
     g.drawText ("CHANNEL",     154, hdrY,  62, hdrH, juce::Justification::centredLeft);

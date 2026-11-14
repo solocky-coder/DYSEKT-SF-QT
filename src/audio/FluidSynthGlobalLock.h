@@ -32,7 +32,7 @@
 //  possible and avoid adding contention to the actual render path.
 // =============================================================================
 
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
 
 #include <mutex>
 
@@ -54,4 +54,4 @@ inline std::mutex& fluidSynthGlobalLifecycleLock()
 #define FLUIDSYNTH_LIFECYCLE_LOCK() \
     std::lock_guard<std::mutex> fluidSynthLifecycleLockGuard_ (fluidSynthGlobalLifecycleLock())
 
-#endif // DYSEKT_HAS_FLUIDSYNTH
+#endif // XIVA_HAS_FLUIDSYNTH

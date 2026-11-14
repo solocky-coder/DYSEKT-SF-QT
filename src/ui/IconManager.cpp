@@ -1,6 +1,6 @@
 #include "IconManager.h"
 #include "BinaryData.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 #include "../bench/BenchIcons.h"
 
 namespace IconManager

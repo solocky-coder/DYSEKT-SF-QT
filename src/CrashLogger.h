@@ -32,7 +32,7 @@
 /**
  *  CrashLogger  v1
  *  ===============
- *  Attach one instance to DysektProcessor to detect and log crashes on exit.
+ *  Attach one instance to XivaProcessor to detect and log crashes on exit.
  *
  *  Mechanism 1 — Sentinel file
  *  ----------------------------
@@ -52,9 +52,9 @@
  *
  *  Log location
  *  ------------
- *  Windows : %APPDATA%\DunSoft\DYSEKT-SF\dysekt_crash.log
- *  macOS   : ~/Library/Logs/DunSoft/XIVA/dysekt_crash.log
- *  Linux   : ~/.config/DunSoft/XIVA/dysekt_crash.log
+ *  Windows : %APPDATA%\DunSoft\XIVA\xiva_crash.log
+ *  macOS   : ~/Library/Logs/DunSoft/XIVA/xiva_crash.log
+ *  Linux   : ~/.config/DunSoft/XIVA/xiva_crash.log
  *
  *  Thread safety
  *  -------------
@@ -65,7 +65,7 @@
  *
  *  Usage
  *  -----
- *  Add a member to DysektProcessor:
+ *  Add a member to XivaProcessor:
  *
  *      CrashLogger crashLogger;    // declare before other members
  *
@@ -82,7 +82,7 @@ public:
         const auto logDir = getLogDirectory();
         logDir.createDirectory();
 
-        logFile    = logDir.getChildFile ("dysekt_crash.log");
+        logFile    = logDir.getChildFile ("xiva_crash.log");
         lockFile   = logDir.getChildFile ("session.lock");
         dumpDir    = logDir;   // minidumps written to same folder
 
@@ -98,7 +98,7 @@ public:
             logger->logMessage ("");
             logger->logMessage ("!! PREVIOUS SESSION CRASHED OR WAS FORCE-KILLED !!");
             logger->logMessage ("   The session.lock sentinel was not removed, which means");
-            logger->logMessage ("   DysektProcessor::~DysektProcessor() did not run cleanly.");
+            logger->logMessage ("   XivaProcessor::~XivaProcessor() did not run cleanly.");
             logger->logMessage ("");
         }
 
@@ -111,7 +111,7 @@ public:
         s_dumpDirPath = dumpDir.getFullPathName();
         installHandlers();
 
-        log ("DysektProcessor constructed — session started");
+        log ("XivaProcessor constructed — session started");
         // Version marker for the zone-builder diagnostics added to
         // SoundFontLoader.cpp (discoverActiveNotes/finishAndPost logging for
         // the SfzPlayer2 target, full-0-127 empty-discovery fallback). If a
@@ -123,7 +123,7 @@ public:
 
     ~CrashLogger()
     {
-        log ("DysektProcessor destructed — session ended cleanly");
+        log ("XivaProcessor destructed — session ended cleanly");
         lockFile.deleteFile();
         // Leave the log file; only the sentinel is removed.
     }
@@ -226,7 +226,7 @@ private:
         crashWrite ("\n!! CRASH — unhandled exception !!\n");
 
         // Write a minidump alongside the log
-        juce::String dumpPath = s_dumpDirPath + "\\dysekt_crash.dmp";
+        juce::String dumpPath = s_dumpDirPath + "\\xiva_crash.dmp";
         HANDLE hDump = CreateFileW (dumpPath.toWideCharPointer(),
                                     GENERIC_WRITE, 0, nullptr,
                                     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);

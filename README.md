@@ -1,6 +1,6 @@
 # XiVA
 
-Slicer, multisampler and SoundFont instrument (formerly DYSEKT-SF).
+Slicer, multisampler and SoundFont instrument (formerly XIVA).
 
 <img width="1650" height="1275" alt="Image" src="https://github.com/user-attachments/assets/e1f3b6ae-1dfa-465d-b2c9-d5a0f4472fde" />
 <img width="1650" height="1275" alt="Image" src="https://github.com/user-attachments/assets/e76e47a7-67bc-4a10-a849-9fb87793f6a4" />

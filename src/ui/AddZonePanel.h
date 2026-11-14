@@ -31,7 +31,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_gui_extra/juce_gui_extra.h>
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 
 class AddZonePanel : public juce::Component
 {
@@ -74,12 +74,12 @@ public:
 
         // ── Title bar ────────────────────────────────────────────────────
         titleLabel.setText ("ADD ZONE", juce::dontSendNotification);
-        titleLabel.setFont (DysektLookAndFeel::makeFont (17.0f, true));
+        titleLabel.setFont (XivaLookAndFeel::makeFont (17.0f, true));
         titleLabel.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (titleLabel);
 
         subtitleLabel.setText (sampleFile.getFileName(), juce::dontSendNotification);
-        subtitleLabel.setFont (DysektLookAndFeel::makeFont (11.5f));
+        subtitleLabel.setFont (XivaLookAndFeel::makeFont (11.5f));
         subtitleLabel.setColour (juce::Label::textColourId, T.foreground.withAlpha (0.6f));
         subtitleLabel.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (subtitleLabel);
@@ -313,21 +313,21 @@ public:
         {
             const auto& c = rows[i];
 
-            g.setFont (DysektLookAndFeel::makeFont (13.5f, true));
+            g.setFont (XivaLookAndFeel::makeFont (13.5f, true));
             g.setColour (T.foreground.withAlpha (0.85f));
             g.drawText (labels[i],
                         c.labelX, c.y,
                         kLabelW, kRowH,
                         juce::Justification::centredLeft, false);
 
-            g.setFont (DysektLookAndFeel::makeFont (19.0f, true));
+            g.setFont (XivaLookAndFeel::makeFont (19.0f, true));
             g.setColour (T.foreground);
             g.drawText (noteName (vals[i]),
                         c.readoutX, c.y,
                         kReadoutW, kRowH,
                         juce::Justification::centred, false);
 
-            g.setFont (DysektLookAndFeel::makeFont (11.0f));
+            g.setFont (XivaLookAndFeel::makeFont (11.0f));
             g.setColour (T.foreground.withAlpha (0.55f));
             g.drawText ("(" + juce::String (vals[i]) + ")",
                         c.subX, c.y,
@@ -336,7 +336,7 @@ public:
         }
 
         // Hint line
-        g.setFont (DysektLookAndFeel::makeFont (11.5f));
+        g.setFont (XivaLookAndFeel::makeFont (11.5f));
         g.setColour (T.foreground.withAlpha (0.55f));
         g.drawText (getHintText(), hintBounds, juce::Justification::centred, false);
     }
@@ -561,7 +561,7 @@ private:
     static juce::File getPositionFile()
     {
         // Same settings dir PluginEditor.cpp's file-local getSettingsDir()
-        // resolves to (userApplicationDataDirectory/DYSEKT-SF) — sits
+        // resolves to (userApplicationDataDirectory/XIVA) — sits
         // alongside theme_editor_position.xml there.
         return XivaPaths::appDataDir()
             .getChildFile ("add_zone_panel_position.xml");

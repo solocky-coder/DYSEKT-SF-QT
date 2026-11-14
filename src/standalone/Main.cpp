@@ -1,12 +1,12 @@
 //==============================================================================
-//  DYSEKT-SF Standalone — Main.cpp
+//  XIVA Standalone — Main.cpp
 //
-//  JUCE application entry point.  Only compiled into the DYSEKT-SF_Standalone
-//  target (guarded by DYSEKT_STANDALONE define in CMakeLists.txt).
+//  JUCE application entry point.  Only compiled into the XIVA_Standalone
+//  target (guarded by XIVA_STANDALONE define in CMakeLists.txt).
 //
 //  Responsibilities:
 //    - Create the AudioDeviceManager
-//    - Instantiate DysektProcessor and DysektEditor
+//    - Instantiate XivaProcessor and XivaEditor
 //    - Create and show MainWindow
 //    - Handle system quit / re-open on macOS
 //==============================================================================
@@ -18,10 +18,10 @@
 #include "network/AppleUsbShareLauncher.h"
 
 //==============================================================================
-class DysektApplication : public juce::JUCEApplication
+class XivaApplication : public juce::JUCEApplication
 {
 public:
-    DysektApplication() = default;
+    XivaApplication() = default;
 
     const juce::String getApplicationName()    override { return "XIVA"; }
     const juce::String getApplicationVersion() override { return "1.0.0";  }
@@ -32,7 +32,7 @@ public:
     {
 #if JUCE_WINDOWS
         // One-time elevated bootstrap for Apple USB Direct Network's Task
-        // Scheduler registration. DYSEKT relaunches itself with just this
+        // Scheduler registration. XIVA relaunches itself with just this
         // flag via ShellExecuteExW("runas", ...) when it needs to register
         // the iPhoneUsbShare task (see relaunchSelfElevatedToRegister() in
         // AppleUsbShareLauncher.cpp for why that step needs to be elevated).
@@ -101,4 +101,4 @@ private:
 };
 
 //==============================================================================
-START_JUCE_APPLICATION (DysektApplication)
+START_JUCE_APPLICATION (XivaApplication)

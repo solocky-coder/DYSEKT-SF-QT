@@ -1,7 +1,7 @@
 #pragma once
 
 #include <juce_graphics/juce_graphics.h>
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 
 // ── Fixed black STN-LCD palette ──────────────────────────────────────────────
 // This panel simulates a physical black-tinted STN LCD readout (classic Roland

@@ -7,13 +7,13 @@
 #include "../sequencer/AbletonLink.h"
 #include "../bench/BenchColours.h"
 #include "../bench/BenchTypography.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 #include "UIHelpers.h"
 #include "ContextMenuButton.h"
 #include "TransportIconButton.h"
 #include "ClickMenus.h"
 
-using namespace dysekt::bench;   // Base/Text/Accent/Transport — same chrome
+using namespace xiva::bench;   // Base/Text/Accent/Transport — same chrome
                                   // palette FloatingTransportBar.cpp uses,
                                   // deliberately independent of whichever
                                   // main-window theme is active. See this
@@ -30,7 +30,7 @@ using namespace dysekt::bench;   // Base/Text/Accent/Transport — same chrome
 //  same editable/wheel-scrollable L/R cycle locators, same BPM/GRID/LINK
 //  trio) rather than the previous unrelated BACK/PLAY/STOP/REC/LOOP
 //  text-button + plain-text BPM design. Colours come from BenchColours directly rather than
-//  DysektLookAndFeel's theme, for the same reason FloatingTransportBar.cpp
+//  XivaLookAndFeel's theme, for the same reason FloatingTransportBar.cpp
 //  does that (see its own top-of-file comment) — this row and its floating
 //  twin now share one chrome palette, so docking/undocking never changes
 //  how the transport looks, only where it lives.
@@ -102,7 +102,7 @@ public:
         // ── Musical position — amber, zero-padded bar.beat.tick, same
         // format as FloatingTransportBar::formatMusicalPosition() ────────
         posLabel.setJustificationType (juce::Justification::centred);
-        posLabel.setFont (DysektLookAndFeel::makeMonoFont (14.0f, true));
+        posLabel.setFont (XivaLookAndFeel::makeMonoFont (14.0f, true));
         posLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
         posLabel.setColour (juce::Label::textColourId, Accent::Orange);
         posLabel.setTooltip ("Playhead position — scroll over a segment to nudge it");
@@ -119,7 +119,7 @@ public:
         {
             field->setEditable (true, true, false);
             field->setJustificationType (juce::Justification::centred);
-            field->setFont (DysektLookAndFeel::makeMonoFont (11.0f));
+            field->setFont (XivaLookAndFeel::makeMonoFont (11.0f));
             field->setColour (juce::Label::backgroundColourId, Base::Surface);
             field->setColour (juce::Label::textColourId, Text::Primary);
             field->setTooltip ("Cycle locator — click to type bars.beats.ticks, "
@@ -131,7 +131,7 @@ public:
         rightLocatorLabel.onSegmentScroll = [this] (int segment, int direction) { adjustRightLocator (segment, direction); };
 
         // ── BPM ──────────────────────────────────────────────────────────
-        bpmLabel.setFont (DysektLookAndFeel::makeMonoFont (13.f, true));
+        bpmLabel.setFont (XivaLookAndFeel::makeMonoFont (13.f, true));
         bpmLabel.setJustificationType (juce::Justification::centred);
         bpmLabel.setEditable (true, true, false);
         bpmLabel.setColour (juce::Label::backgroundColourId, Base::Surface);
@@ -393,7 +393,7 @@ private:
         b.setColour (juce::TextButton::buttonColourId, Base::Elevated);
         b.setColour (juce::TextButton::textColourOffId, Text::Secondary);
         b.setColour (juce::TextButton::textColourOnId, Base::White);
-        // Without this, DysektLookAndFeel::drawButtonBackground's default
+        // Without this, XivaLookAndFeel::drawButtonBackground's default
         // fill path ignores buttonColourId entirely and always paints
         // theme.button/theme.accent instead — see this class's header
         // comment. Same fix TrackInspector's track-colour swatches needed.

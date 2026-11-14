@@ -1,9 +1,9 @@
 #include "LogoBar.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 #include "../PluginProcessor.h"
 #include <BinaryData.h>
 
-LogoBar::LogoBar (DysektProcessor& p) : processor (p) {}
+LogoBar::LogoBar (XivaProcessor& p) : processor (p) {}
 
 void LogoBar::paint (juce::Graphics& g)
 {
@@ -32,8 +32,8 @@ void LogoBar::paint (juce::Graphics& g)
     };
 
     const auto& themeName = getTheme().name;
-    const void* imgData = BinaryData::XIVA_logo_dysekt_png;   // fallback for custom themes
-    int         imgSize = BinaryData::XIVA_logo_dysekt_pngSize;
+    const void* imgData = BinaryData::XIVA_logo_xiva_png;   // fallback for custom themes
+    int         imgSize = BinaryData::XIVA_logo_xiva_pngSize;
 
     for (const auto& lp : logos)
     {

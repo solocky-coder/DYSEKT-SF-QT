@@ -3,7 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <memory>
 
-class DysektProcessor;
+class XivaProcessor;
 
 /**
  * GlobalEqPanel — interactive 5-band parametric EQ with Bode-style magnitude curve
@@ -34,7 +34,7 @@ class DysektProcessor;
  *     gain, and Q where applicable), mirroring the reference's BAND 0N cards.
  *
  * Spectrum analyser:
- *   Reads post-EQ FFT magnitude data from DysektProcessor::spectrumAnalyser.
+ *   Reads post-EQ FFT magnitude data from XivaProcessor::spectrumAnalyser.
  *   Repaints at 30 Hz via juce::Timer.  The spectrum fill is drawn behind the
  *   EQ curve so the curve always reads clearly on top.
  */
@@ -42,7 +42,7 @@ class GlobalEqPanel : public juce::Component,
                       private juce::Timer
 {
 public:
-    explicit GlobalEqPanel (DysektProcessor& p);
+    explicit GlobalEqPanel (XivaProcessor& p);
     ~GlobalEqPanel() override;
 
     void paint            (juce::Graphics&) override;
@@ -110,7 +110,7 @@ private:
     void timerCallback() override;
 
     // ── State ─────────────────────────────────────────────────────────────────
-    DysektProcessor& processor;
+    XivaProcessor& processor;
 
     std::array<Node, kNumBands> nodes;
     int   dragBand      = NoBand;

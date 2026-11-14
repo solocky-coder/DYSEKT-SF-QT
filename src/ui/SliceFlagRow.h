@@ -1,7 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../PluginProcessor.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 
 //==============================================================================
 //  SliceFlagRow
@@ -15,7 +15,7 @@ class SliceFlagRow final : public juce::Component,
                            private juce::Timer
 {
 public:
-    explicit SliceFlagRow (DysektProcessor& p) : processor (p) { startTimerHz (10); }
+    explicit SliceFlagRow (XivaProcessor& p) : processor (p) { startTimerHz (10); }
     ~SliceFlagRow() override { stopTimer(); }
 
     void paint (juce::Graphics& g) override
@@ -34,7 +34,7 @@ public:
             { "TAIL", s.releaseTail },
         };
 
-        g.setFont (DysektLookAndFeel::makeFont (10.5f * sf, true));
+        g.setFont (XivaLookAndFeel::makeFont (10.5f * sf, true));
         for (int i = 0; i < kNum; ++i)
         {
             const auto r = pillRect (i).toFloat();
@@ -53,7 +53,7 @@ public:
 
 private:
     static constexpr int kNum = 6;
-    using F = DysektProcessor;
+    using F = XivaProcessor;
 
     juce::Rectangle<int> pillRect (int i) const
     {
@@ -79,7 +79,7 @@ private:
 
     void send (int field, float value)
     {
-        DysektProcessor::Command cmd;
+        XivaProcessor::Command cmd;
         cmd.type        = F::CmdSetSliceParam;
         cmd.intParam1   = field;
         cmd.floatParam1 = value;
@@ -115,6 +115,6 @@ private:
 
     void timerCallback() override { if (isShowing()) repaint(); }
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SliceFlagRow)
 };

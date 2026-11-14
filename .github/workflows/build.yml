@@ -163,7 +163,7 @@ jobs:
         run: |
           cmake -B build -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_BUILD_TYPE=${{ matrix.build_config }} `
-            -DDYSEKT_SF2_EXPERIMENTAL_MULTI_GROUP=${{ matrix.multi_group_toggle }} `
+            -DXIVA_SF2_EXPERIMENTAL_MULTI_GROUP=${{ matrix.multi_group_toggle }} `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             -DJUCE_BUILD_EXTRAS=OFF `
@@ -173,11 +173,11 @@ jobs:
       # hosted runner's memory limit when MSBuild and MSVC compile in parallel.
       - name: Build Standalone
         shell: pwsh
-        run: cmake --build build --config ${{ matrix.build_config }} --target DysektStandalone --parallel 1 -- /m:1 /bl:build\standalone.binlog /v:diag
+        run: cmake --build build --config ${{ matrix.build_config }} --target XivaStandalone --parallel 1 -- /m:1 /bl:build\standalone.binlog /v:diag
 
       - name: Build VST3
         shell: pwsh
-        run: cmake --build build --config ${{ matrix.build_config }} --target Dysekt_VST3 --parallel 1 -- /m:1 /bl:build\vst3.binlog /v:diag
+        run: cmake --build build --config ${{ matrix.build_config }} --target Xiva_VST3 --parallel 1 -- /m:1 /bl:build\vst3.binlog /v:diag
 
       # Always retain MSBuild diagnostics, including when either build fails.
       - name: Upload build diagnostics
@@ -194,10 +194,10 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts/Standalone | Out-Null
           New-Item -ItemType Directory -Force -Path artifacts/VST3 | Out-Null
 
-          # JUCE writes the standalone to DysektStandalone_artefacts/<config>/
+          # JUCE writes the standalone to XivaStandalone_artefacts/<config>/
           # using PRODUCT_NAME (XIVA), not the CMake target name.
           $standaloneExes = @(Get-ChildItem -Recurse -File -Filter "XIVA.exe" build/ |
-            Where-Object { $_.FullName -match "DysektStandalone_artefacts" })
+            Where-Object { $_.FullName -match "XivaStandalone_artefacts" })
           if ($standaloneExes.Count -ne 1) {
             Write-Error "Expected exactly one standalone executable; found $($standaloneExes.Count)."
             $standaloneExes | ForEach-Object { Write-Host "  $($_.FullName)" }
@@ -208,7 +208,7 @@ jobs:
           # VST3 bundle (JUCE outputs a .vst3 folder, not a file).
           # NOTE: matched by extension, not a hardcoded product name — the
           # actual product name is "XIVA" (see PluginEditor.cpp /
-          # SfzPlayer.cpp), not "DYSEKT". A literal "DYSEKT.vst3" filter here
+          # SfzPlayer.cpp), not "XIVA". A literal "XIVA.vst3" filter here
           # previously matched nothing, so this step silently copied zero
           # files while the PDB loop above (which matches *.pdb generically)
           # still populated the folder — masking the miss entirely, since

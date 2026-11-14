@@ -14,11 +14,11 @@
 // that was tried and reverted last time. Leave this at 0 for normal builds.
 // Flip to 1 ONLY in a debug/ASan build for a supervised test run — do not
 // ship a release with this on until it's confirmed not to crash.
-#ifndef DYSEKT_SF2_EXPERIMENTAL_MULTI_GROUP
-  #define DYSEKT_SF2_EXPERIMENTAL_MULTI_GROUP 0
+#ifndef XIVA_SF2_EXPERIMENTAL_MULTI_GROUP
+  #define XIVA_SF2_EXPERIMENTAL_MULTI_GROUP 0
 #endif
 
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
   // Include sfizz C API via path relative to the project root.
   // This avoids relying on target_include_directories propagation.
   #include "../../sfizz/src/sfizz.h"
@@ -26,14 +26,14 @@
 
 // ── TEMPORARY diagnostic logging for the "SF2-PLAYER produces no audio"
 // investigation. Self-contained (SfzPlayer has no back-reference to
-// DysektProcessor, so it can't use processor.crashLogger) — writes to its
-// own file in the same log folder as dysekt_crash.log. Only called on
+// XivaProcessor, so it can't use processor.crashLogger) — writes to its
+// own file in the same log folder as xiva_crash.log. Only called on
 // note-on (rare), never per-block, so it won't glitch playback. Remove once
 // the root cause is confirmed and fixed.
 // Diagnostic log for the SF2/SFZ player. It opens a file, takes a lock and builds strings, so it
 // must never run on the audio thread in a normal build: the SF2_DBG(...) calls compile to nothing
-// (arguments are not even evaluated) unless DYSEKT_SF2_DEBUG_LOG is defined.
-#if DYSEKT_SF2_DEBUG_LOG
+// (arguments are not even evaluated) unless XIVA_SF2_DEBUG_LOG is defined.
+#if XIVA_SF2_DEBUG_LOG
  #define SF2_DBG(...) sf2DebugLogImpl (__VA_ARGS__)
 #else
  #define SF2_DBG(...) do {} while (0)
@@ -76,7 +76,7 @@ SfzPlayer::SfzPlayer()
     for (int i = 0; i < kNumSf2Tweaks; ++i)
         sf2Tweak[i].store (getSf2TweakDefaultNorm (i), std::memory_order_relaxed);
 
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     // Prevent FluidSynth from spawning its own audio driver thread.
     // We only use it as an offline render engine inside processBlock.
     const char* drv[] { nullptr };
@@ -92,7 +92,7 @@ SfzPlayer::~SfzPlayer()
     // Drain any pending preset list.
     delete freshPresets.exchange (nullptr, std::memory_order_acq_rel);
 
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth != nullptr || settings != nullptr)
     {
         FLUIDSYNTH_LIFECYCLE_LOCK();
@@ -101,7 +101,7 @@ SfzPlayer::~SfzPlayer()
     }
 #endif
 
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     if (sfizzSynth != nullptr) { sfizz_free (sfizzSynth); sfizzSynth = nullptr; }
 #endif
 }
@@ -207,7 +207,7 @@ void SfzPlayer::setJuceAdsr (float attackSec, float decaySec,
 
 void SfzPlayer::setZoneVolume (int regionIndex, float volDb) noexcept
 {
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     if (sfizzSynth == nullptr || !isSfzFile) return;
     const int numRegions = sfizz_get_num_regions (sfizzSynth);
     if (regionIndex < 0 || regionIndex >= numRegions) return;
@@ -224,7 +224,7 @@ void SfzPlayer::setZoneVolume (int regionIndex, float volDb) noexcept
 
 void SfzPlayer::setZonePan (int regionIndex, float pan) noexcept
 {
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     if (sfizzSynth == nullptr || !isSfzFile) return;
     const int numRegions = sfizz_get_num_regions (sfizzSynth);
     if (regionIndex < 0 || regionIndex >= numRegions) return;
@@ -242,7 +242,7 @@ void SfzPlayer::setZonePan (int regionIndex, float pan) noexcept
 
 void SfzPlayer::setZoneTune (int regionIndex, float cents) noexcept
 {
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     if (sfizzSynth == nullptr || !isSfzFile) return;
     const int numRegions = sfizz_get_num_regions (sfizzSynth);
     if (regionIndex < 0 || regionIndex >= numRegions) return;
@@ -259,7 +259,7 @@ void SfzPlayer::setZoneTune (int regionIndex, float cents) noexcept
 
 void SfzPlayer::sendAdsrToSfizz()
 {
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     if (sfizzSynth == nullptr) return;
     const int numRegions = sfizz_get_num_regions (sfizzSynth);
     if (numRegions <= 0) return;
@@ -291,7 +291,7 @@ void SfzPlayer::sendAdsrToSfizz()
 void SfzPlayer::setPan (float p)
 {
     pan.store (juce::jlimit (-1.0f, 1.0f, p), std::memory_order_relaxed);
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth != nullptr && !isSfzFile)
     {
         // CC10 pan: 0 = hard L, 64 = centre, 127 = hard R
@@ -303,7 +303,7 @@ void SfzPlayer::setPan (float p)
             fluid_synth_cc (synth, ch, 10, cc10);
     }
 #endif
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     if (sfizzSynth != nullptr && isSfzFile)
     {
         const int cc10 = juce::jlimit (0, 127,
@@ -316,7 +316,7 @@ void SfzPlayer::setPan (float p)
 void SfzPlayer::setFineTune (float cents)
 {
     fineTune.store (juce::jlimit (-100.0f, 100.0f, cents), std::memory_order_relaxed);
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth != nullptr && !isSfzFile)
         // Channels 0/1 (MIDI ch 1/2) are reserved for the Slicer/SFZ-Player —
         // never write generator data there, even though no note ever routes to them.
@@ -335,7 +335,7 @@ void SfzPlayer::setReverb (float level)
 
 void SfzPlayer::applyFluidReverb()
 {
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth != nullptr && ! isSfzFile)
         fluid_synth_set_reverb (synth,
             (double) reverbSize .load (std::memory_order_relaxed) * 0.01,   // room size 0..1
@@ -353,7 +353,7 @@ void SfzPlayer::setChorus (float level)
 
 void SfzPlayer::applyFluidChorus()
 {
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth != nullptr && !isSfzFile)
         fluid_synth_set_chorus (synth,
             3,                                                                  // voice count (1–99)
@@ -439,7 +439,7 @@ juce::String SfzPlayer::getSf2TweakText (int id) const
 // i.e. the SoundFont plays exactly as authored.
 void SfzPlayer::applyFluidLfoFromUi()
 {
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth == nullptr) return;
 
     const float pitch = sf2TweakValue (TweakLfoPitch,  sf2Tweak[TweakLfoPitch] .load (std::memory_order_relaxed));
@@ -745,7 +745,7 @@ void SfzPlayer::clearSolo() noexcept
 
 void SfzPlayer::applyDirtyStrips()
 {
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth == nullptr) return;
     if (! anyStripDirty.load (std::memory_order_acquire)) return;
     anyStripDirty.store (false, std::memory_order_relaxed);
@@ -892,13 +892,13 @@ void SfzPlayer::prepare (double sampleRate, int maxBlockSize)
         driveSm   .reset (sampleRate, 0.03);  driveSm   .setCurrentAndTargetValue (0.0f);
     }
 
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     // Keep the existing synth in sync with the new sample rate.
     if (synth != nullptr)
         fluid_synth_set_sample_rate (synth, (float) sampleRate);
 #endif
 
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     if (sfizzSynth != nullptr)
     {
         sfizz_set_sample_rate       (sfizzSynth, (float) sampleRate);
@@ -973,7 +973,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
         if ((int) buf.size() < numSamples)
             buf.assign ((size_t) numSamples, 0.0f);
 
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     if (isSfzFile && sfizzSynth != nullptr)
     {
         // ── Flush pending ADSR changes via sfizz OSC messages ────────────────
@@ -1143,7 +1143,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
     }
 #endif
 
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth == nullptr)
     {
         static bool loggedNullSynthOnce = false;
@@ -1221,7 +1221,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
         if (span <= 0)
             return;
 
-#if DYSEKT_SF2_EXPERIMENTAL_MULTI_GROUP
+#if XIVA_SF2_EXPERIMENTAL_MULTI_GROUP
         // EXPERIMENTAL — matches the audio-groups=16 load-time setting
         // above. All 32 group buffers now get real, distinct per-channel
         // audio (assuming FluidSynth's default channel%groups mapping),
@@ -1591,7 +1591,7 @@ std::vector<SfzLayer> SfzPlayer::scanLayers (const juce::File& sfzFile, int* dro
 // ─────────────────────────────────────────────────────────────────────────────
 void SfzPlayer::applyFluidAdsrFromUi()
 {
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth == nullptr) return;
 
     const float atkTc = secondsToTimecents (juceAdsrAttack .load (std::memory_order_relaxed));
@@ -1625,7 +1625,7 @@ void SfzPlayer::applyFluidAdsrFromUi()
 // ─────────────────────────────────────────────────────────────────────────────
 void SfzPlayer::applyFluidFilterFromUi()
 {
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth == nullptr) return;
 
     const float cutoffCents = hzToAbsoluteCents (sf2FilterCutoffHz.load (std::memory_order_relaxed));
@@ -1674,7 +1674,7 @@ void SfzPlayer::applyPendingLoad()
     activeFile = juce::File();
     isSfzFile  = false;
 
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth != nullptr || settings != nullptr)
     {
         FLUIDSYNTH_LIFECYCLE_LOCK();
@@ -1691,7 +1691,7 @@ void SfzPlayer::applyPendingLoad()
     sfontId = -1;
 #endif
 
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     if (sfizzSynth != nullptr)
     {
         sfizz_all_sound_off (sfizzSynth);
@@ -1713,7 +1713,7 @@ void SfzPlayer::applyPendingLoad()
     const auto ext = owner->file.getFileExtension().toLowerCase();
 
     // ── SFZ path (sfizz) ─────────────────────────────────────────────────────
-#if DYSEKT_HAS_SFIZZ
+#if XIVA_HAS_SFIZZ
     if (ext == ".sfz")
     {
         isSfzFile  = true;
@@ -1745,7 +1745,7 @@ void SfzPlayer::applyPendingLoad()
 #endif
 
     // ── SF2 path (FluidSynth) ─────────────────────────────────────────────────
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     {
         FLUIDSYNTH_LIFECYCLE_LOCK();
 
@@ -1755,7 +1755,7 @@ void SfzPlayer::applyPendingLoad()
         fluid_settings_setint (settings, "synth.verbose", 0);
 #endif
 
-#if DYSEKT_SF2_EXPERIMENTAL_MULTI_GROUP
+#if XIVA_SF2_EXPERIMENTAL_MULTI_GROUP
         // EXPERIMENTAL — reverb/chorus held OFF deliberately, isolating
         // audio-groups as the only variable that changed vs. the known-good
         // nout=2 path below. If this crashes, the groups+effects interaction
@@ -1815,7 +1815,7 @@ void SfzPlayer::applyPendingLoad()
         // UPDATE (this pass): the audio-channels bump was never actually
         // needed for output routing — audio-channels affects MIDI-channel-
         // to-preset-bank handling, not which group a channel's audio lands
-        // in. The DYSEKT_SF2_EXPERIMENTAL_MULTI_GROUP path above only
+        // in. The XIVA_SF2_EXPERIMENTAL_MULTI_GROUP path above only
         // touches audio-groups, and holds reverb/chorus off, to test
         // whether the groups+active-effects combination (not the threading
         // race this comment originally suspected) was the actual trigger.
@@ -1905,7 +1905,7 @@ void SfzPlayer::applyPendingChannelChanges()
 {
     anyChannelDirty.store (false, std::memory_order_relaxed);
 
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth == nullptr || sfontId == FLUID_FAILED)
         return;
 
@@ -1938,7 +1938,7 @@ void SfzPlayer::applyProgramChange()
 {
     programChangePending.store (false, std::memory_order_release);
 
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth == nullptr || sfontId == FLUID_FAILED)
         return;
 
@@ -1954,7 +1954,7 @@ void SfzPlayer::applyProgramChange()
 
 void SfzPlayer::postPresetList()
 {
-#if DYSEKT_HAS_FLUIDSYNTH
+#if XIVA_HAS_FLUIDSYNTH
     if (synth == nullptr || sfontId == FLUID_FAILED)
         return;
 

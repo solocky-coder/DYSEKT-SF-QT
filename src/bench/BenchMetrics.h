@@ -1,5 +1,5 @@
 /*
-    DYSEKT 2
+    XIVA 2
     Metro UI
 
     BenchMetrics.h
@@ -8,7 +8,7 @@
 */
 #pragma once
 
-namespace dysekt::bench
+namespace xiva::bench
 {
 /**
     The single source of truth for Metro UI geometry.
@@ -61,4 +61,4 @@ struct BenchMetrics final
     static constexpr float focusRingThickness  = 1.0f;
 };
 
-} // namespace dysekt::bench
+} // namespace xiva::bench

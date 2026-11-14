@@ -1,5 +1,5 @@
 /*
-    DYSEKT 2
+    XIVA 2
     Metro UI
 
     BenchTypography.h
@@ -10,7 +10,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace dysekt::bench
+namespace xiva::bench
 {
 /**
     The complete Metro type scale.
@@ -77,4 +77,4 @@ private:
     }
 };
 
-} // namespace dysekt::bench
+} // namespace xiva::bench

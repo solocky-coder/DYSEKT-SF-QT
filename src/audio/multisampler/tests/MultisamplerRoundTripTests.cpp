@@ -166,7 +166,7 @@ private:
         // filenames + default_path convention, and confirm the importer
         // finds them there instead of reporting them missing.
         auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                        .getNonexistentChildFile ("dysekt_default_path_test", "", false);
+                        .getNonexistentChildFile ("xiva_default_path_test", "", false);
         root.createDirectory();
         auto samplesDir = root.getChildFile ("Kit Samples");
         samplesDir.createDirectory();
@@ -599,21 +599,21 @@ private:
             expect (r.success && r.instrument.drumKit);
         }
 
-        beginTest ("drumKit flag survives SFZ export -> import via dysekt_drum_kit, and leaks nowhere else");
+        beginTest ("drumKit flag survives SFZ export -> import via xiva_drum_kit, and leaks nowhere else");
         {
             MultisamplerInstrument inst;
             inst.addZone (padZone (36, 36, 36));
             inst.drumKit = true;
             const auto text = SfzExporter::render (inst, juce::File());
-            expect (text.contains ("dysekt_drum_kit=1"));
+            expect (text.contains ("xiva_drum_kit=1"));
             const auto r = SfzImporter::importText (text, juce::File::getSpecialLocation (juce::File::tempDirectory));
             expect (r.success && r.instrument.drumKit);
             for (const auto& z : r.instrument.zones)
                 for (const auto& kv : z.extraOpcodes)
-                    expect (! kv.first.contains ("dysekt_drum_kit"));
+                    expect (! kv.first.contains ("xiva_drum_kit"));
 
             inst.drumKit = false;
-            expect (! SfzExporter::render (inst, juce::File()).contains ("dysekt_drum_kit"));
+            expect (! SfzExporter::render (inst, juce::File()).contains ("xiva_drum_kit"));
         }
     }
 };

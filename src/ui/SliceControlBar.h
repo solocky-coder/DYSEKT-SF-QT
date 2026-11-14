@@ -3,13 +3,13 @@
 #include "../MidiLearnManager.h"
 #include "SliceFlagRow.h"
 
-class DysektProcessor;
+class XivaProcessor;
 
 class SliceControlBar : public juce::Component,
                         private juce::Timer
 {
 public:
-    explicit SliceControlBar (DysektProcessor& p);
+    explicit SliceControlBar (XivaProcessor& p);
     void paint (juce::Graphics& g) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
@@ -209,7 +209,7 @@ private:
     int psCellH  { 32 };   // 32 * paintSf
     int psKnobR  { kKnobR };// kKnobR * paintSf       // set at start of paint() — scales to component height
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
     SliceFlagRow flagRow { processor };   // Bench inspector only: REV / LOOP / 1SH / MONO / STR / TAIL pills
 
     // Drag state

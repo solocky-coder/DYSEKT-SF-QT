@@ -1,6 +1,6 @@
 #include "SliceControlBar.h"
 
-// Synthetic field ID for the GLIDE cell — not in DysektProcessor::SliceParamField enum
+// Synthetic field ID for the GLIDE cell — not in XivaProcessor::SliceParamField enum
 // because it maps directly to VoicePool::legatoGlideMs (global, not per-slice).
 static constexpr int kFieldGlide    = 9998;
 static constexpr int kFieldRootNote = 9999;
@@ -8,7 +8,7 @@ static constexpr int kFieldRootNote = 9999;
 #include "UIHelpers.h"
 #include "ZoneEnvelopeRanges.h"
 #include "EnvelopeDisplay.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 #include "IconManager.h"
 #include "../PluginProcessor.h"
 #include "../MidiLearnManager.h"
@@ -32,7 +32,7 @@ static const juce::Colour kAdsrHold    { 0xFFFF00FF }; // Hot Magenta
 
 static juce::Colour adsrTintForField (int fieldId)
 {
- using F = DysektProcessor;
+ using F = XivaProcessor;
  if (fieldId == F::FieldAttack) return kAdsrAttack;
  if (fieldId == F::FieldDecay) return kAdsrDecay;
  if (fieldId == F::FieldSustain) return kAdsrSustain;
@@ -60,7 +60,7 @@ constexpr float kKnobStart = juce::MathConstants<float>::pi * 1.25f;
 constexpr float kKnobEnd = juce::MathConstants<float>::pi * 2.75f;
 }
 
-SliceControlBar::SliceControlBar (DysektProcessor& p) : processor (p)
+SliceControlBar::SliceControlBar (XivaProcessor& p) : processor (p)
 {
     addChildComponent (flagRow);
     startTimerHz (30); // always running so CC-driven marker repaints in real time
@@ -85,7 +85,7 @@ juce::String SliceControlBar::themeKeyAt (juce::Point<int> p) const
 
         // ADSR/Hold knobs keep a fixed, non-theme identity colour by design
         // (see adsrTintForField) — they have no theme colour to pick.
-        using F = DysektProcessor;
+        using F = XivaProcessor;
         if (c.fieldId == F::FieldAttack || c.fieldId == F::FieldDecay
             || c.fieldId == F::FieldSustain || c.fieldId == F::FieldRelease
             || c.fieldId == F::FieldHold)
@@ -216,12 +216,12 @@ void SliceControlBar::drawParamCell (juce::Graphics& g, int x, int y,
  // Label+value block is 24px tall (11 + 13) inside a 28px cell, giving an
  // even 2px margin top and bottom instead of running flush to the row
  // divider below.
- g.setFont (DysektLookAndFeel::makeFont (12.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeFont (12.0f * paintSf));
  g.setColour (locked ? getTheme().lockActive.withAlpha (0.8f)
  : getTheme().foreground.withAlpha (0.45f));
  g.drawText (label, x + textX, y + juce::roundToInt (2.0f * paintSf), textW, juce::roundToInt (11.0f * paintSf), juce::Justification::centredLeft);
 
- g.setFont (DysektLookAndFeel::makeMonoFont (13.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeMonoFont (13.0f * paintSf));
  g.setColour (locked ? getTheme().foreground
  : getTheme().foreground.withAlpha (0.4f));
  g.drawText (value, x + textX, y + juce::roundToInt (13.0f * paintSf), textW, juce::roundToInt (13.0f * paintSf), juce::Justification::centredLeft);
@@ -235,7 +235,7 @@ void SliceControlBar::drawParamCell (juce::Graphics& g, int x, int y,
 // drawKnob — small rotary arc
 // Already flat: thin arc track, single accent fill arc, plain indicator line,
 // no gradient, no rounded rect, no glow — matches Metro's rotary-slider style
-// (see DysektLookAndFeel::drawRotarySlider) as-is. No change needed here.
+// (see XivaLookAndFeel::drawRotarySlider) as-is. No change needed here.
 // =============================================================================
 void SliceControlBar::drawKnob (juce::Graphics& g,
  int cx, int cy, int r,
@@ -302,7 +302,7 @@ void SliceControlBar::drawKnob (juce::Graphics& g,
 // =============================================================================
 float SliceControlBar::toNorm (int fieldId, float v) const
 {
- using F = DysektProcessor;
+ using F = XivaProcessor;
  switch (fieldId)
  {
  case F::FieldBpm: return juce::jlimit (0.f, 1.f, (v - 20.f) / (999.f - 20.f));
@@ -382,7 +382,7 @@ void SliceControlBar::drawKnobCell (juce::Graphics& g, int x, int y,
  if (mapped && !armed
      && fieldId >= 0 && fieldId < kMidiLearnNumSlots
      && !processor.midiLearn.isEndless (fieldId)
-     && sel >= 0 && sel < DysektProcessor::kMaxCCSlices
+     && sel >= 0 && sel < XivaProcessor::kMaxCCSlices
      && !processor.ccPickedUp[(size_t) sel][(size_t) fieldId])
  {
      const float ccNorm  = processor.ccSmoothers[(size_t) sel][(size_t) fieldId].getCurrentValue();
@@ -409,7 +409,7 @@ void SliceControlBar::drawKnobCell (juce::Graphics& g, int x, int y,
 
  if (armed || mapped)
  {
- g.setFont (DysektLookAndFeel::makeFont (8.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeFont (8.0f * paintSf));
  g.setColour (getTheme().accent.withAlpha (armed ? 1.0f : 0.65f));
  g.drawText (armed ? "ARM" : processor.midiLearn.getLabelText (fieldId),
  x, y + cellH - juce::roundToInt (10.0f * paintSf), psKnobR * 2 + juce::roundToInt (6.0f * paintSf), juce::roundToInt (10.0f * paintSf),
@@ -426,7 +426,7 @@ void SliceControlBar::drawKnobCell (juce::Graphics& g, int x, int y,
  // Label+value block is 24px tall (11 + 13) inside a 28px cell, giving an
  // even 2px margin top and bottom instead of running flush to the row
  // divider below.
- g.setFont (DysektLookAndFeel::makeFont (10.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeFont (10.0f * paintSf));
  // ADSR label always uses the fixed ADSR colour — even when locked.
  // Non-ADSR locked params use lockActive; everything else uses foreground.
  g.setColour (locked && ! hasAdsr ? getTheme().lockActive.withAlpha (0.8f)
@@ -438,7 +438,7 @@ void SliceControlBar::drawKnobCell (juce::Graphics& g, int x, int y,
  else
      g.drawText (label, textX, y + juce::roundToInt (2.0f * paintSf), textW, juce::roundToInt (11.0f * paintSf), juce::Justification::centredLeft);
 
- g.setFont (DysektLookAndFeel::makeMonoFont (11.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeMonoFont (11.0f * paintSf));
  g.setColour (locked ? getTheme().foreground
  : getTheme().foreground.withAlpha (hasAdsr ? 0.80f : 0.38f));
  if (inspectorMode)
@@ -515,8 +515,8 @@ void SliceControlBar::drawPanSliderCell (juce::Graphics& g, int x, int y,
  const auto& theme = getTheme();
  const auto ac = theme.accent;
 
- const bool armed = (processor.midiLearn.getArmedSlot() == DysektProcessor::FieldPan);
- const bool mapped = processor.midiLearn.isMapped (DysektProcessor::FieldPan);
+ const bool armed = (processor.midiLearn.getArmedSlot() == XivaProcessor::FieldPan);
+ const bool mapped = processor.midiLearn.isMapped (XivaProcessor::FieldPan);
 
  if (armed)
  {
@@ -531,7 +531,7 @@ void SliceControlBar::drawPanSliderCell (juce::Graphics& g, int x, int y,
  }
 
  // ── Label ──────────────────────────────────────────────────────────────
- g.setFont (DysektLookAndFeel::makeFont (10.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeFont (10.0f * paintSf));
  g.setColour (locked ? theme.lockActive.withAlpha (0.8f)
  : theme.foreground.withAlpha (0.42f));
  g.drawText ("PAN", x, y + juce::roundToInt (2.0f * paintSf), cellW, juce::roundToInt (12.0f * paintSf), juce::Justification::centredLeft);
@@ -539,9 +539,9 @@ void SliceControlBar::drawPanSliderCell (juce::Graphics& g, int x, int y,
  // MIDI-learn label
  if (armed || mapped)
  {
- g.setFont (DysektLookAndFeel::makeFont (8.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeFont (8.0f * paintSf));
  g.setColour (ac.withAlpha (armed ? 1.0f : 0.65f));
- g.drawText (armed ? "ARM" : processor.midiLearn.getLabelText (DysektProcessor::FieldPan),
+ g.drawText (armed ? "ARM" : processor.midiLearn.getLabelText (XivaProcessor::FieldPan),
  x, y + cellH - 10, cellW, 10, juce::Justification::centredLeft);
  }
 
@@ -556,7 +556,7 @@ void SliceControlBar::drawPanSliderCell (juce::Graphics& g, int x, int y,
  juce::String panStr = (pct == 0) ? "C"
  : (pct < 0) ? ("L" + juce::String (-pct))
  : ("R" + juce::String ( pct));
- g.setFont (DysektLookAndFeel::makeMonoFont (10.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeMonoFont (10.0f * paintSf));
  g.setColour (locked ? theme.foreground : theme.foreground.withAlpha (0.75f));
  g.drawText (panStr, trackX, trackY - juce::roundToInt (11.0f * paintSf), trackW, juce::roundToInt (10.0f * paintSf), juce::Justification::centred);
 
@@ -594,7 +594,7 @@ void SliceControlBar::drawPanSliderCell (juce::Graphics& g, int x, int y,
  outWidth = cellW;
  ParamCell c{};
  c.x = x; c.y = y; c.w = cellW; c.h = cellH;
- c.lockBit = 0; c.fieldId = DysektProcessor::FieldPan;
+ c.lockBit = 0; c.fieldId = XivaProcessor::FieldPan;
  c.minVal = -1.f; c.maxVal = 1.f; c.step = 0.01f;
  c.isKnob = true; c.isMidiLearnable = true;
  c.knobNorm = norm;
@@ -615,7 +615,7 @@ void SliceControlBar::drawMarkerSliderCell (juce::Graphics& g, int x, int y,
     const int cellH = psCellH - juce::roundToInt (2.0f * paintSf);
     const auto& T = getTheme();
     auto cell = juce::Rectangle<int> (x, y, cellW, cellH);
-    const bool armed = (processor.midiLearn.getArmedSlot() == DysektProcessor::FieldSliceStart);
+    const bool armed = (processor.midiLearn.getArmedSlot() == XivaProcessor::FieldSliceStart);
 
     // Background + border — pulses when MIDI learn is armed.
     // Flat, square corners (was a 3.0f radius regardless of theme).
@@ -643,13 +643,13 @@ void SliceControlBar::drawMarkerSliderCell (juce::Graphics& g, int x, int y,
     const float ghostNorm   = processor.markerCcGhostNorm.load   (std::memory_order_relaxed);
     const float fineWinLo   = processor.markerFineWindowLo.load  (std::memory_order_relaxed);
     const float fineWinHi   = processor.markerFineWindowHi.load  (std::memory_order_relaxed);
-    const bool mapped       = processor.midiLearn.isMapped  (DysektProcessor::FieldSliceStart);
-    const bool endless      = processor.midiLearn.isEndless (DysektProcessor::FieldSliceStart);
+    const bool mapped       = processor.midiLearn.isMapped  (XivaProcessor::FieldSliceStart);
+    const bool endless      = processor.midiLearn.isEndless (XivaProcessor::FieldSliceStart);
     const bool sfzMode      = isSfzPlayer2Mode();
     const int sel           = (sfzMode ? processor.getUiSliceSnapshot2() : processor.getUiSliceSnapshot()).selectedSlice;
     const bool prePickup    = mapped && !endless
-        && sel >= 0 && sel < DysektProcessor::kMaxCCSlices
-        && !processor.ccPickedUp[(size_t) sel][(size_t) DysektProcessor::FieldSliceStart];
+        && sel >= 0 && sel < XivaProcessor::kMaxCCSlices
+        && !processor.ccPickedUp[(size_t) sel][(size_t) XivaProcessor::FieldSliceStart];
     const bool fineActive   = mapped && !endless && !prePickup
         && fineWinLo >= 0.0f && fineWinHi > fineWinLo;
 
@@ -775,7 +775,7 @@ void SliceControlBar::drawMarkerSliderCell (juce::Graphics& g, int x, int y,
         // which is the same rounded/glossy language the rest of the file dropped.
         g.setColour (fineOn ? T.accent.withAlpha (0.85f) : T.foreground.withAlpha (0.18f));
         g.fillRect (markerFineModeToggleArea.toFloat());
-        g.setFont (DysektLookAndFeel::makeFont (7.5f * paintSf));
+        g.setFont (XivaLookAndFeel::makeFont (7.5f * paintSf));
         g.setColour (fineOn ? T.darkBar : T.foreground.withAlpha (0.45f));
         g.drawText ("FINE", markerFineModeToggleArea, juce::Justification::centred, false);
     }
@@ -786,7 +786,7 @@ void SliceControlBar::drawMarkerSliderCell (juce::Graphics& g, int x, int y,
 
     // Label — top half
     const int midY = cell.getY() + cell.getHeight() / 2;
-    g.setFont (DysektLookAndFeel::makeFont (8.0f * paintSf));
+    g.setFont (XivaLookAndFeel::makeFont (8.0f * paintSf));
     g.setColour (T.accent.withAlpha (0.65f));
     // Shrink label area if fine badge is shown
     const int labelW = showFineBadge ? (cell.getWidth() - juce::roundToInt (26.0f * paintSf)) : cell.getWidth();
@@ -796,7 +796,7 @@ void SliceControlBar::drawMarkerSliderCell (juce::Graphics& g, int x, int y,
                 juce::Justification::centred, false);
 
     // Value — bottom half
-    g.setFont (DysektLookAndFeel::makeMonoFont (10.0f * paintSf));
+    g.setFont (XivaLookAndFeel::makeMonoFont (10.0f * paintSf));
     g.setColour (T.foreground);
     g.drawText (juce::String (sampleVal),
                 cell.getX(), midY,
@@ -811,7 +811,7 @@ void SliceControlBar::drawMarkerSliderCell (juce::Graphics& g, int x, int y,
         if (dir != 0 && elapsed < 300)
         {
             const float fade = 1.0f - (float) elapsed / 300.0f;
-            g.setFont (DysektLookAndFeel::makeFont (11.0f * paintSf));
+            g.setFont (XivaLookAndFeel::makeFont (11.0f * paintSf));
             g.setColour (T.accent.withAlpha (fade * 0.9f));
             g.drawText (dir > 0 ? juce::CharPointer_UTF8 ("\xe2\x96\xb6")
                                 : juce::CharPointer_UTF8 ("\xe2\x97\x80"),
@@ -825,7 +825,7 @@ void SliceControlBar::drawMarkerSliderCell (juce::Graphics& g, int x, int y,
 
     ParamCell c{};
     c.x = x; c.y = y; c.w = cellW; c.h = cellH;
-    c.lockBit = 0; c.fieldId = DysektProcessor::FieldSliceStart;
+    c.lockBit = 0; c.fieldId = XivaProcessor::FieldSliceStart;
     c.minVal = 0.f; c.maxVal = 1.f; c.step = 0.001f;
     c.isKnob = true; c.isMidiLearnable = true;
     c.knobNorm = frac;
@@ -855,13 +855,13 @@ void SliceControlBar::drawMidiLearnCell (juce::Graphics& g, int x, int y,
  g.drawRoundedRectangle ((float) x + 0.5f, (float) y + 0.5f,
  (float) cellW - 1.f, (float) cellH - 1.f, 0.0f, 1.f);
 
- g.setFont (DysektLookAndFeel::makeFont (12.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeFont (12.0f * paintSf));
  g.setColour (armed ? getTheme().accent
  : mapped ? getTheme().foreground.withAlpha (0.65f)
  : getTheme().foreground.withAlpha (0.38f));
  g.drawText (label, x + juce::roundToInt (5.0f * paintSf), y + juce::roundToInt (2.0f * paintSf), cellW - juce::roundToInt (6.0f * paintSf), juce::roundToInt (13.0f * paintSf), juce::Justification::centredLeft);
 
- g.setFont (DysektLookAndFeel::makeMonoFont (13.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeMonoFont (13.0f * paintSf));
  g.setColour (armed ? getTheme().accent
  : mapped ? getTheme().foreground
  : getTheme().foreground.withAlpha (0.28f));
@@ -889,7 +889,7 @@ void SliceControlBar::showMidiLearnMenu (int fieldId, juce::Point<int> screenPos
  // reopening the menu and picking it again previously just re-armed the
  // same slot with no visible effect, and wasn't a way out. "Cancel Learn"
  // in its place is the discoverable, explicit way to back out, instead of
- // relying on the Esc shortcut (see DysektEditor::keyPressed) that
+ // relying on the Esc shortcut (see XivaEditor::keyPressed) that
  // nothing in this menu ever mentioned. Mirrored in MultisamplerEditor::
  // showMidiLearnMenu for the Multisampler's own version of this menu.
  if (armed)
@@ -903,7 +903,7 @@ void SliceControlBar::showMidiLearnMenu (int fieldId, juce::Point<int> screenPos
  menu.addItem(1000, "Open MIDI Learn Dialog...");
 
  auto* topLvl = getTopLevelComponent();
- float ms = DysektLookAndFeel::getMenuScale();
+ float ms = XivaLookAndFeel::getMenuScale();
  menu.showMenuAsync (
  juce::PopupMenu::Options()
  .withTargetScreenArea(juce::Rectangle<int>(screenPos.x, screenPos.y, 1, 1))
@@ -915,7 +915,7 @@ void SliceControlBar::showMidiLearnMenu (int fieldId, juce::Point<int> screenPos
  else if (result == 3) { processor.midiLearn.cancelLearn(); repaint(); }
  else if (result == 1000)
  {
- if (auto* editor = findParentComponentOfClass<DysektEditor>())
+ if (auto* editor = findParentComponentOfClass<XivaEditor>())
  editor->keyPressed(juce::KeyPress('M', juce::ModifierKeys(), 0));
  }
  }
@@ -1003,7 +1003,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  }
  if (idx < 0 || idx >= numSlices)
  {
- g.setFont (DysektLookAndFeel::makeFont (15.0f * paintSf));
+ g.setFont (XivaLookAndFeel::makeFont (15.0f * paintSf));
  g.setColour (getTheme().foreground.withAlpha (0.35f));
  g.drawText ("No slice selected", si (8), si (24), si (220), si (18), juce::Justification::centredLeft);
  return;
@@ -1053,13 +1053,13 @@ void SliceControlBar::paint (juce::Graphics& g)
  const float effEqHigh = resolveF (kLockEqHigh, s.eqHighGain, apvtsVal (ParamIds::defaultEqHighGain));
 
  int cw;
- using F = DysektProcessor;
+ using F = XivaProcessor;
 
  // Inspector mode: start a new line when the next cell would run past the right edge.
  auto sectionTitle = [&] (const juce::String& title, int ty)
  {
      g.setColour (getTheme().foreground.withAlpha (0.45f));
-     g.setFont (DysektLookAndFeel::makeFont (9.5f * paintSf, true));
+     g.setFont (XivaLookAndFeel::makeFont (9.5f * paintSf, true));
      g.drawText (title.toUpperCase(), si (8), ty, getWidth() - si (16), si (12), juce::Justification::centredLeft);
  };
  // Spread rows a little when the inspector is taller than its ~7 natural rows need.
@@ -1085,7 +1085,7 @@ void SliceControlBar::paint (juce::Graphics& g)
      g.setColour (s.colour);
      g.fillRoundedRectangle ((float) si (8), (float) si (7), (float) si (12), (float) si (12), getTheme().cornerRadius * 0.4f);
      g.setColour (getTheme().foreground);
-     g.setFont (DysektLookAndFeel::makeFont (14.0f * paintSf, true));
+     g.setFont (XivaLookAndFeel::makeFont (14.0f * paintSf, true));
      g.drawText ("Slice " + num + (s.name.isNotEmpty() ? ("  " + s.name) : juce::String()),
                  si (26), si (4), getWidth() - si (26) - si (8), si (18), juce::Justification::centredLeft, true);
      row1y += si (26) + si (30);   // header + flag-pill row
@@ -1282,7 +1282,7 @@ const float relMaxSec = kSlicerMaxReleaseSec;
  int hlSeg = EnvDisplay::SegNone;
  if (activeDragCell >= 0)
  {
-     using FA = DysektProcessor;
+     using FA = XivaProcessor;
      if      (activeCellSnapshot.fieldId == FA::FieldAttack)  hlSeg = EnvDisplay::SegAttack;
      else if (activeCellSnapshot.fieldId == FA::FieldDecay)   hlSeg = EnvDisplay::SegDecay;
      else if (activeCellSnapshot.fieldId == FA::FieldSustain) hlSeg = EnvDisplay::SegSustain;
@@ -1444,7 +1444,7 @@ locked, kLockRelease, F::FieldRelease, 0.f, relMaxSec, 0.001f, cw);
      g.setColour (getTheme().separator.withAlpha (0.50f));
      g.drawRect (meterX, meterY, meterW, meterH);
 
-     if (idx >= 0 && idx < DysektProcessor::kMaxMeterSlices)
+     if (idx >= 0 && idx < XivaProcessor::kMaxMeterSlices)
      {
          const float pkL = (sfzMode ? processor.slicePeak2L : processor.slicePeakL)[(size_t) idx].load (std::memory_order_relaxed);
          const float pkR = (sfzMode ? processor.slicePeak2R : processor.slicePeakR)[(size_t) idx].load (std::memory_order_relaxed);
@@ -1489,7 +1489,7 @@ locked, kLockRelease, F::FieldRelease, 0.f, relMaxSec, 0.001f, cw);
  }
 
  {
- g.setFont (DysektLookAndFeel::makeFont (7.5f * paintSf, true));
+ g.setFont (XivaLookAndFeel::makeFont (7.5f * paintSf, true));
  g.setColour (getTheme().foreground.withAlpha (0.40f));
 
  auto drawGroupLabel = [&] (int x1, int x2, const char* label)
@@ -1530,11 +1530,11 @@ void SliceControlBar::drawSfzZoneCell (juce::Graphics& g, int x, int y,
     // Label+value block is 24px tall (11 + 13) inside a 28px cell, giving an
     // even 2px margin top and bottom instead of running flush to the row
     // divider below — matches the drawParamCell/drawKnobCell centering fix.
-    g.setFont (DysektLookAndFeel::makeFont (12.0f * paintSf));
+    g.setFont (XivaLookAndFeel::makeFont (12.0f * paintSf));
     g.setColour (getTheme().foreground.withAlpha (0.45f));
     g.drawText (label, x + textX, y + juce::roundToInt (2.0f * paintSf), textW, juce::roundToInt (11.0f * paintSf), juce::Justification::centredLeft);
 
-    g.setFont (DysektLookAndFeel::makeMonoFont (13.0f * paintSf));
+    g.setFont (XivaLookAndFeel::makeMonoFont (13.0f * paintSf));
     g.setColour (getTheme().foreground);
     g.drawText (value, x + textX, y + juce::roundToInt (13.0f * paintSf), textW, juce::roundToInt (13.0f * paintSf), juce::Justification::centredLeft);
 
@@ -1548,7 +1548,7 @@ void SliceControlBar::drawSfzZoneSummary (juce::Graphics& g, int x, int y, int w
     auto* self = const_cast<SliceControlBar*> (this);
     if (! sfzZoneSummary.valid)
     {
-        g.setFont (DysektLookAndFeel::makeFont (12.0f * paintSf));
+        g.setFont (XivaLookAndFeel::makeFont (12.0f * paintSf));
         g.setColour (getTheme().foreground.withAlpha (0.35f));
         g.drawText ("Select a zone to edit", x, y, width, height, juce::Justification::centredLeft);
         return;
@@ -1598,7 +1598,7 @@ void SliceControlBar::drawSfzZoneSummary (juce::Graphics& g, int x, int y, int w
     // case, the same width-budgeting the field loop above already does.
     if (z.isAuditioning && cx + juce::roundToInt (86.0f * paintSf) <= x + width)
     {
-        g.setFont (DysektLookAndFeel::makeFont (12.0f * paintSf, true));
+        g.setFont (XivaLookAndFeel::makeFont (12.0f * paintSf, true));
         g.setColour (getTheme().lockActive);
         g.drawText ("\xe2\x80\xa2 AUDITIONING", cx, y, juce::roundToInt (86.0f * paintSf), height,
                     juce::Justification::centredLeft);
@@ -1716,8 +1716,8 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
      const int sIdx = snap.selectedSlice;
      if (sIdx >= 0 && sIdx < snap.numSlices)
      {
-         DysektProcessor::Command cmd;
-         cmd.type         = DysektProcessor::CmdToggleLock;
+         XivaProcessor::Command cmd;
+         cmd.type         = XivaProcessor::CmdToggleLock;
          cmd.intParam1    = sIdx;
          cmd.intParam2    = (int) lc.lockBit;
          cmd.targetEngine2 = sfzMode;
@@ -1765,18 +1765,18 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
  {
  processor.midiLearn.armLearn (-1); repaint(); return;
  }
- DysektProcessor::Command gc;
- gc.type = DysektProcessor::CmdBeginGesture;
+ XivaProcessor::Command gc;
+ gc.type = XivaProcessor::CmdBeginGesture;
  gc.targetEngine2 = sfzMode;
  processor.pushCommand (gc);
  activeDragCell = i;
  activeCellSnapshot = cell; // snapshot before cells[] is rebuilt by next repaint()
  // Pan and Marker sliders are horizontal - store x; all others store y
- dragStartY = (cell.fieldId == DysektProcessor::FieldPan
-            || cell.fieldId == DysektProcessor::FieldSliceStart) ? pos.x : pos.y;
+ dragStartY = (cell.fieldId == XivaProcessor::FieldPan
+            || cell.fieldId == XivaProcessor::FieldSliceStart) ? pos.x : pos.y;
 
  // Activate live drag for slice boundary knobs
- if (cell.fieldId == DysektProcessor::FieldSliceStart)
+ if (cell.fieldId == XivaProcessor::FieldSliceStart)
  {
  int liveSel = ui.selectedSlice;
  if (liveSel >= 0 && liveSel < ui.numSlices)
@@ -1791,7 +1791,7 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
  if (sIdx >= 0 && sIdx < ui.numSlices)
  {
  const auto& sl = ui.slices[(size_t) sIdx];
- using F = DysektProcessor;
+ using F = XivaProcessor;
  // Resolve each field against its global APVTS fallback — mirrors
  // SliceManager::resolveParam so the drag starts from what the audio
  // engine actually uses, not the raw (possibly stale) per-slice field.
@@ -1829,7 +1829,7 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
      dragStartValue = processor.voicePool.legatoGlideMs.load (std::memory_order_relaxed);
      break;
  case kFieldRootNote:
-     // DYSEKT-rootnote-wrongengine fix: was unconditionally sliceManager,
+     // XIVA-rootnote-wrongengine fix: was unconditionally sliceManager,
      // which is wrong for SFZ-PLAYER mode -- see CmdSetRootNote handler.
      dragStartValue = (float) (sfzMode ? processor.sliceManager2.rootNote
                                        : processor.sliceManager.rootNote)
@@ -1850,7 +1850,7 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
  const auto& sl = ui.slices[(size_t) sIdx];
  bool sliceLocked = (sl.lockMask & cell.lockBit) != 0;
  bool currentVal = false;
- using F = DysektProcessor;
+ using F = XivaProcessor;
  if (cell.fieldId == F::FieldStretchEnabled) currentVal = sliceLocked ? sl.stretchEnabled : (processor.apvts.getRawParameterValue (ParamIds::defaultStretchEnabled)->load() > 0.5f);
  else if (cell.fieldId == F::FieldReleaseTail) currentVal = sliceLocked ? sl.releaseTail : (processor.apvts.getRawParameterValue (ParamIds::defaultReleaseTail)->load() > 0.5f);
  else if (cell.fieldId == F::FieldReverse) currentVal = sliceLocked ? sl.reverse : (processor.apvts.getRawParameterValue (ParamIds::defaultReverse)->load() > 0.5f);
@@ -1860,16 +1860,16 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
  {
  // Two-pill: left=ONE SHOT(1), right=HOLD(0) — pick by click X vs cell centre
  const bool clickOneShot = (e.x < (cell.x + cell.w / 2));
- DysektProcessor::Command pCmd;
- pCmd.type = DysektProcessor::CmdSetSliceParam;
+ XivaProcessor::Command pCmd;
+ pCmd.type = XivaProcessor::CmdSetSliceParam;
  pCmd.intParam1 = F::FieldOneShot;
  pCmd.floatParam1 = clickOneShot ? 1.f : 0.f;
  pCmd.targetEngine2 = sfzMode;
  processor.pushCommand (pCmd); repaint();
  return;
  }
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdSetSliceParam;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdSetSliceParam;
  cmd.intParam1 = cell.fieldId; cmd.floatParam1 = currentVal ? 0.f : 1.f;
  cmd.targetEngine2 = sfzMode;
  processor.pushCommand (cmd); repaint();
@@ -1883,7 +1883,7 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
  int sIdx = ui.selectedSlice;
  if (sIdx < 0 || sIdx >= ui.numSlices) return;
 
- using F = DysektProcessor;
+ using F = XivaProcessor;
  const auto& sl = ui.slices[(size_t) sIdx];
 
  juce::PopupMenu menu;
@@ -2002,8 +2002,8 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
          [this, fieldId, chValues] (int result)
          {
              if (result <= 0 || result > (int) chValues.size()) return;
-             DysektProcessor::Command cmd;
-             cmd.type         = DysektProcessor::CmdSetSliceParam;
+             XivaProcessor::Command cmd;
+             cmd.type         = XivaProcessor::CmdSetSliceParam;
              cmd.intParam1    = fieldId;
              cmd.floatParam1  = (float) chValues[(size_t)(result - 1)];  // actual ch number
              cmd.targetEngine2 = isSfzPlayer2Mode();
@@ -2018,8 +2018,8 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
  int current = 0;
  if (fieldId == F::FieldGrainMode) current = (sl.lockMask & kLockGrainMode) ? sl.grainMode : (int) processor.apvts.getRawParameterValue (ParamIds::defaultGrainMode)->load();
  int next = (current + 1) > (int) cell.maxVal ? 0 : current + 1;
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdSetSliceParam;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdSetSliceParam;
  cmd.intParam1 = fieldId; cmd.floatParam1 = (float) next;
  cmd.targetEngine2 = sfzMode;
  processor.pushCommand (cmd); repaint();
@@ -2034,8 +2034,8 @@ void SliceControlBar::mouseDown (const juce::MouseEvent& e)
  [this, fieldId] (int result)
  {
  if (result <= 0) return;
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdSetSliceParam;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdSetSliceParam;
  cmd.intParam1 = fieldId;
  cmd.floatParam1 = (float)(result - 1);
  cmd.targetEngine2 = isSfzPlayer2Mode();
@@ -2094,7 +2094,7 @@ void SliceControlBar::mouseDrag (const juce::MouseEvent& e)
  if (! cell.isKnob) return;
 
  float deltaY = (float) (dragStartY - e.y);
- using F = DysektProcessor;
+ using F = XivaProcessor;
 
  // ── Slice boundary knobs: live drag in sample space ───────────────────
  if (cell.fieldId == F::FieldSliceStart)
@@ -2145,10 +2145,10 @@ void SliceControlBar::mouseDrag (const juce::MouseEvent& e)
         const float sensitivity = e.mods.isShiftDown() ? 0.1f : 0.4f; // notes/pixel
         const int newRoot = juce::jlimit (0, 127,
             (int) std::round (dragStartValue + deltaY * sensitivity));
-        DysektProcessor::Command cmd;
-        cmd.type      = DysektProcessor::CmdSetRootNote;
+        XivaProcessor::Command cmd;
+        cmd.type      = XivaProcessor::CmdSetRootNote;
         cmd.intParam1 = newRoot;
-        // DYSEKT-rootnote-wrongengine fix: was missing entirely -- command
+        // XIVA-rootnote-wrongengine fix: was missing entirely -- command
         // defaulted to targeting sliceManager regardless of which tab was
         // active. See CmdSetRootNote handler in PluginProcessor.cpp.
         cmd.targetEngine2 = sfzMode;
@@ -2257,7 +2257,7 @@ void SliceControlBar::mouseDrag (const juce::MouseEvent& e)
     // already blocked by the lockBit guard above when the node is locked).
     if (isAdsr && cell.fieldId != F::FieldHold)
     {
-        DysektProcessor::Command cmd;
+        XivaProcessor::Command cmd;
         cmd.type         = F::CmdSetSliceParam;
         cmd.intParam1    = cell.fieldId;
         cmd.floatParam1  = newNative;
@@ -2267,7 +2267,7 @@ void SliceControlBar::mouseDrag (const juce::MouseEvent& e)
     }
 
 
- DysektProcessor::Command cmd;
+ XivaProcessor::Command cmd;
  cmd.type = F::CmdSetSliceParam;
  cmd.intParam1 = cell.fieldId; cmd.floatParam1 = newNative;
  cmd.intParam2 = 0;
@@ -2304,7 +2304,7 @@ void SliceControlBar::mouseUp (const juce::MouseEvent& /*e*/)
      sfzZoneEditPending = false;
      return;
  }
- using F = DysektProcessor;
+ using F = XivaProcessor;
 
  if (activeDragCell >= 0)
  {
@@ -2395,7 +2395,7 @@ void SliceControlBar::mouseDoubleClick (const juce::MouseEvent& e)
  if (sIdx >= 0 && sIdx < ui.numSlices)
  {
  const auto& sl = ui.slices[(size_t) sIdx];
- using F = DysektProcessor;
+ using F = XivaProcessor;
  // Values in display units (ms, %, raw)
  switch (cell.fieldId)
  {
@@ -2425,7 +2425,7 @@ void SliceControlBar::mouseDoubleClick (const juce::MouseEvent& e)
  // ROOT NOTE special case -- commits via CmdSetRootNote, not CmdSetSliceParam
  if (cell.fieldId == kFieldRootNote)
  {
-     // DYSEKT-rootnote-wrongengine fix: was unconditionally sliceManager.
+     // XIVA-rootnote-wrongengine fix: was unconditionally sliceManager.
      const int liveRoot = (sfzMode ? processor.sliceManager2.rootNote
                                    : processor.sliceManager.rootNote)
                                .load (std::memory_order_relaxed);
@@ -2433,7 +2433,7 @@ void SliceControlBar::mouseDoubleClick (const juce::MouseEvent& e)
      addAndMakeVisible (*textEditor);
      textEditor->setBounds (cell.x + kParamCellTextX, cell.y + 14,
                             cell.w - kParamCellTextX - 2, 16);
-     textEditor->setFont (DysektLookAndFeel::makeFont (14.0f));
+     textEditor->setFont (XivaLookAndFeel::makeFont (14.0f));
      textEditor->setColour (juce::TextEditor::backgroundColourId, getTheme().darkBar.brighter (0.15f));
      textEditor->setColour (juce::TextEditor::textColourId,    getTheme().foreground);
      textEditor->setColour (juce::TextEditor::outlineColourId, getTheme().accent);
@@ -2442,8 +2442,8 @@ void SliceControlBar::mouseDoubleClick (const juce::MouseEvent& e)
      textEditor->onReturnKey = [this, sfzMode] {
          if (! textEditor) return;
          const int val = juce::jlimit (0, 127, textEditor->getText().getIntValue());
-         DysektProcessor::Command cmd;
-         cmd.type      = DysektProcessor::CmdSetRootNote;
+         XivaProcessor::Command cmd;
+         cmd.type      = XivaProcessor::CmdSetRootNote;
          cmd.intParam1 = val;
          cmd.targetEngine2 = sfzMode;
          processor.pushCommand (cmd);
@@ -2471,7 +2471,7 @@ void SliceControlBar::drawChroBadgeCell (juce::Graphics& g, int x, int y,
     const bool active = (channel > 0);
 
     // Label
-    g.setFont (DysektLookAndFeel::makeFont (10.0f * paintSf));
+    g.setFont (XivaLookAndFeel::makeFont (10.0f * paintSf));
     g.setColour (locked ? theme.lockActive.withAlpha (0.8f)
                         : theme.foreground.withAlpha (0.42f));
     g.drawText ("CHRO", x + juce::roundToInt (4.0f * paintSf), y + juce::roundToInt (2.0f * paintSf), cellW - juce::roundToInt (4.0f * paintSf), juce::roundToInt (11.0f * paintSf), juce::Justification::centredLeft);
@@ -2488,7 +2488,7 @@ void SliceControlBar::drawChroBadgeCell (juce::Graphics& g, int x, int y,
                                   : theme.foreground.withAlpha (0.22f)));
     g.drawRoundedRectangle ((float)bx, (float)by, (float)bw, (float)bh, 0.0f, 0.8f);
 
-    g.setFont (DysektLookAndFeel::makeMonoFont (11.0f * paintSf));
+    g.setFont (XivaLookAndFeel::makeMonoFont (11.0f * paintSf));
     g.setColour (active ? (locked ? theme.lockActive : theme.accent)
                         : (locked ? theme.lockActive.withAlpha (0.5f)
                                   : theme.foreground.withAlpha (0.28f)));
@@ -2499,7 +2499,7 @@ void SliceControlBar::drawChroBadgeCell (juce::Graphics& g, int x, int y,
     ParamCell c {};
     c.x = x; c.y = y; c.w = cellW; c.h = cellH;
     c.lockBit = kLockChromaticChannel;
-    c.fieldId = DysektProcessor::FieldChromaticChannel;
+    c.fieldId = XivaProcessor::FieldChromaticChannel;
     c.minVal = 0.f; c.maxVal = 16.f; c.step = 1.f;
     c.isChoice = true;   // click cycles values
     cells.push_back (c);
@@ -2516,7 +2516,7 @@ void SliceControlBar::drawMixerToggleCell (juce::Graphics& g, int x, int y,
     const auto& theme = getTheme();
 
     // Label
-    g.setFont (DysektLookAndFeel::makeFont (10.0f * paintSf));
+    g.setFont (XivaLookAndFeel::makeFont (10.0f * paintSf));
     g.setColour (locked ? theme.lockActive.withAlpha (0.8f)
                         : theme.foreground.withAlpha (0.42f));
     g.drawText ("MIX", x + juce::roundToInt (4.0f * paintSf), y + juce::roundToInt (2.0f * paintSf), cellW - juce::roundToInt (4.0f * paintSf), juce::roundToInt (11.0f * paintSf), juce::Justification::centredLeft);
@@ -2531,7 +2531,7 @@ void SliceControlBar::drawMixerToggleCell (juce::Graphics& g, int x, int y,
     g.setColour (col);
     g.drawRoundedRectangle ((float)bx, (float)by, (float)bw, (float)bh, 0.0f, 0.8f);
 
-    g.setFont (DysektLookAndFeel::makeMonoFont (11.0f * paintSf));
+    g.setFont (XivaLookAndFeel::makeMonoFont (11.0f * paintSf));
     g.setColour (col);
     // "PINNED" reads clearer than ON here, since this isn't an audio param —
     // it's whether the slice has a row in MixerPanel at all. "AUTO" would be
@@ -2543,7 +2543,7 @@ void SliceControlBar::drawMixerToggleCell (juce::Graphics& g, int x, int y,
     ParamCell c {};
     c.x = x; c.y = y; c.w = cellW; c.h = cellH;
     c.lockBit = 0;   // no lock concept — always per-slice, like LEGATO
-    c.fieldId = DysektProcessor::FieldShowInMixer;
+    c.fieldId = XivaProcessor::FieldShowInMixer;
     c.minVal = 0.f; c.maxVal = 1.f; c.step = 1.f;
     c.isBoolean = true;
     cells.push_back (c);
@@ -2560,7 +2560,7 @@ void SliceControlBar::drawLegatoToggleCell (juce::Graphics& g, int x, int y,
     const auto& theme = getTheme();
 
     // Label
-    g.setFont (DysektLookAndFeel::makeFont (10.0f * paintSf));
+    g.setFont (XivaLookAndFeel::makeFont (10.0f * paintSf));
     g.setColour (locked ? theme.lockActive.withAlpha (0.8f)
                         : theme.foreground.withAlpha (0.42f));
     g.drawText ("LGTO", x + juce::roundToInt (4.0f * paintSf), y + juce::roundToInt (2.0f * paintSf), cellW - juce::roundToInt (4.0f * paintSf), juce::roundToInt (11.0f * paintSf), juce::Justification::centredLeft);
@@ -2576,7 +2576,7 @@ void SliceControlBar::drawLegatoToggleCell (juce::Graphics& g, int x, int y,
     g.setColour (col);
     g.drawRoundedRectangle ((float)bx, (float)by, (float)bw, (float)bh, 0.0f, 0.8f);
 
-    g.setFont (DysektLookAndFeel::makeMonoFont (11.0f * paintSf));
+    g.setFont (XivaLookAndFeel::makeMonoFont (11.0f * paintSf));
     g.setColour (col);
     g.drawText (on ? "ON" : "OFF", bx, by, bw, bh, juce::Justification::centred);
 
@@ -2584,7 +2584,7 @@ void SliceControlBar::drawLegatoToggleCell (juce::Graphics& g, int x, int y,
     ParamCell c {};
     c.x = x; c.y = y; c.w = cellW; c.h = cellH;
     c.lockBit = kLockChromaticLegato;
-    c.fieldId = DysektProcessor::FieldChromaticLegato;
+    c.fieldId = XivaProcessor::FieldChromaticLegato;
     c.minVal = 0.f; c.maxVal = 1.f; c.step = 1.f;
     c.isBoolean = true;
     cells.push_back (c);
@@ -2632,12 +2632,12 @@ void SliceControlBar::showTextEditor (const ParamCell& cell, float currentValue)
  addAndMakeVisible (*textEditor);
  textEditor->setBounds (cell.x + kParamCellTextX, cell.y + 14,
  cell.w - kParamCellTextX - 2, 16);
- textEditor->setFont (DysektLookAndFeel::makeFont (14.0f));
+ textEditor->setFont (XivaLookAndFeel::makeFont (14.0f));
  textEditor->setColour (juce::TextEditor::backgroundColourId, getTheme().darkBar.brighter (0.15f));
  textEditor->setColour (juce::TextEditor::textColourId, getTheme().foreground);
  textEditor->setColour (juce::TextEditor::outlineColourId, getTheme().accent);
 
- using F = DysektProcessor;
+ using F = XivaProcessor;
  juce::String displayVal;
  if (cell.fieldId == F::FieldAttack || cell.fieldId == F::FieldDecay || cell.fieldId == F::FieldRelease)
  displayVal = EnvDisplay::formatTime (currentValue);
@@ -2661,11 +2661,11 @@ void SliceControlBar::showTextEditor (const ParamCell& cell, float currentValue)
 
  textEditor->onReturnKey = [this, fieldId, minV, maxV, bareIsMs] {
  if (! textEditor) return;
- float val = (fieldId == DysektProcessor::FieldAttack || fieldId == DysektProcessor::FieldDecay
-              || fieldId == DysektProcessor::FieldRelease)
+ float val = (fieldId == XivaProcessor::FieldAttack || fieldId == XivaProcessor::FieldDecay
+              || fieldId == XivaProcessor::FieldRelease)
                  ? EnvDisplay::parseTime (textEditor->getText(), bareIsMs)
                  : textEditor->getText().getFloatValue();
- using F2 = DysektProcessor;
+ using F2 = XivaProcessor;
  const bool isAdsrField = (fieldId == F2::FieldAttack || fieldId == F2::FieldDecay
                            || fieldId == F2::FieldSustain || fieldId == F2::FieldRelease);
  if (fieldId == F2::FieldSustain)
@@ -2690,8 +2690,8 @@ void SliceControlBar::showTextEditor (const ParamCell& cell, float currentValue)
              p->setValueNotifyingHost (p->convertTo0to1 (apvtsNative));
      textEditor.reset(); repaint(); return;
  }
- DysektProcessor::Command cmd;
- cmd.type = DysektProcessor::CmdSetSliceParam;
+ XivaProcessor::Command cmd;
+ cmd.type = XivaProcessor::CmdSetSliceParam;
  cmd.intParam1 = fieldId; cmd.floatParam1 = val;
  cmd.intParam2 = 0;
  cmd.targetEngine2 = sfzMode;
@@ -2717,7 +2717,7 @@ void SliceControlBar::showSfzZoneTextEditor (const SfzZoneCell& cell, float curr
     const int textX = juce::roundToInt (14.0f * paintSf);
     textEditor->setBounds (cell.bounds.getX() + textX, cell.bounds.getY() + 14,
                            cell.bounds.getWidth() - textX - 2, 16);
-    textEditor->setFont (DysektLookAndFeel::makeFont (14.0f));
+    textEditor->setFont (XivaLookAndFeel::makeFont (14.0f));
     textEditor->setColour (juce::TextEditor::backgroundColourId, getTheme().darkBar.brighter (0.15f));
     textEditor->setColour (juce::TextEditor::textColourId,    getTheme().foreground);
     textEditor->setColour (juce::TextEditor::outlineColourId, getTheme().accent);

@@ -1,5 +1,5 @@
 /*
-    DYSEKT 2
+    XIVA 2
     Metro UI
 
     BenchColours.h
@@ -7,7 +7,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace dysekt::bench
+namespace xiva::bench
 {
 using Colour = juce::Colour;
 

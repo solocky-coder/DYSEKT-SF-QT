@@ -1,7 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../PluginProcessor.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 
 //==============================================================================
 //  SliceStrip
@@ -15,7 +15,7 @@ class SliceStrip final : public juce::Component,
                          private juce::Timer
 {
 public:
-    explicit SliceStrip (DysektProcessor& p) : processor (p) { startTimerHz (15); }
+    explicit SliceStrip (XivaProcessor& p) : processor (p) { startTimerHz (15); }
     ~SliceStrip() override { stopTimer(); }
 
     void paint (juce::Graphics& g) override
@@ -30,7 +30,7 @@ public:
         int visStart = 0, visLen = 0;
         if (! visibleRange (visStart, visLen)) return;
 
-        g.setFont (DysektLookAndFeel::makeFont (10.5f * sf, true));
+        g.setFont (XivaLookAndFeel::makeFont (10.5f * sf, true));
         const float W = (float) getWidth();
         for (int i = 0; i < ui.numSlices; ++i)
         {
@@ -73,8 +73,8 @@ public:
         {
             if (sample >= ui.slices[(size_t) i].startSample && sample < ui.sliceEndSamples[(size_t) i])
             {
-                DysektProcessor::Command cmd;
-                cmd.type      = DysektProcessor::CmdSelectSlice;
+                XivaProcessor::Command cmd;
+                cmd.type      = XivaProcessor::CmdSelectSlice;
                 cmd.intParam1 = i;
                 processor.pushCommand (cmd);
                 processor.uiNoteOnRequest.store (processor.sliceManager.getSlice (i).midiNote, std::memory_order_relaxed);
@@ -100,6 +100,6 @@ private:
 
     void timerCallback() override { if (isShowing()) repaint(); }
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SliceStrip)
 };

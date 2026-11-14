@@ -35,9 +35,9 @@ public:
         // in the main editor. arrangeView's track rows don't carry a theme
         // colour distinct from waveformBg/accent/separator (which are all
         // already reachable elsewhere), so it only gets the panel-level tag.
-        mixerPanel.getProperties().set  ("dysektThemeKey", "waveformBg");
-        eqPanel.getProperties().set     ("dysektThemeKey", "waveformBg");
-        arrangeView.getProperties().set ("dysektThemeKey", "waveformBg");
+        mixerPanel.getProperties().set  ("xivaThemeKey", "waveformBg");
+        eqPanel.getProperties().set     ("xivaThemeKey", "waveformBg");
+        arrangeView.getProperties().set ("xivaThemeKey", "waveformBg");
 
         configureViewButton (mixerButton, "MIXER");
         configureViewButton (arrangeButton, "ARRANGER");
@@ -177,7 +177,7 @@ public:
 
         for (auto* c = hit; c != nullptr && c != this; c = c->getParentComponent())
         {
-            const auto& key = c->getProperties()["dysektThemeKey"];
+            const auto& key = c->getProperties()["xivaThemeKey"];
             if (! key.isVoid())
                 return key.toString();
         }

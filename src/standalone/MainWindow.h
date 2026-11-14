@@ -44,7 +44,7 @@ public:
         const double deviceSampleRate = device != nullptr ? device->getCurrentSampleRate() : 44100.0;
         const int deviceBlockSize = device != nullptr ? juce::jmax (1, device->getCurrentBufferSizeSamples()) : 512;
         processor->prepareToPlay (deviceSampleRate > 0.0 ? deviceSampleRate : 44100.0, deviceBlockSize);
-        editor = std::make_unique<DysektEditor> (*processor);
+        editor = std::make_unique<XivaEditor> (*processor);
         editor->setWindowMenuBar (this, kMenuH);
 
         RecordOffsetStore::load (processor->sequencer);
@@ -254,7 +254,7 @@ private:
     {
         fileChooser = std::make_unique<juce::FileChooser> (
             "Open XIVA Project",
-            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.dysekt");
+            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.xiva;*.dysekt");   // .dysekt = projects from older builds
         fileChooser->launchAsync (
             juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
             [this] (const juce::FileChooser& fc)
@@ -291,14 +291,14 @@ private:
         fileChooser = std::make_unique<juce::FileChooser> (
             "Save XIVA Project",
             juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-                .getChildFile ("Untitled.dysekt"), "*.dysekt");
+                .getChildFile ("Untitled.xiva"), "*.xiva");
         fileChooser->launchAsync (
             juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
             [this] (const juce::FileChooser& fc)
             {
                 auto result = fc.getResult();
                 if (result == juce::File()) return;
-                currentProjectFile = result.withFileExtension ("dysekt");
+                currentProjectFile = result.withFileExtension ("xiva");
                 saveProject();
                 setName ("XIVA  —  " + currentProjectFile.getFileNameWithoutExtension());
             });
@@ -662,7 +662,7 @@ private:
     std::unique_ptr<NetworkMidiManager> networkMidiManager;
     std::unique_ptr<NetworkAudioAutoTrack> autoTrack;
     std::unique_ptr<NetworkAudioProcessor> processor;
-    std::unique_ptr<DysektEditor> editor;
+    std::unique_ptr<XivaEditor> editor;
     std::unique_ptr<juce::MenuBarComponent> menuBar;
     std::unique_ptr<juce::FileChooser> fileChooser;
     juce::File currentProjectFile;

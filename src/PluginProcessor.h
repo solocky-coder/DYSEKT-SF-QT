@@ -11,11 +11,11 @@
 #include "audio/SampleData.h"
 #include "audio/SliceManager.h"
 #include "audio/VoicePool.h"
-// SequencerEngine has no DYSEKT_STANDALONE dependency of its own and is now
-// a member of DysektProcessor in every build (see the `sequencer` member
+// SequencerEngine has no XIVA_STANDALONE dependency of its own and is now
+// a member of XivaProcessor in every build (see the `sequencer` member
 // below) — its header must be included unconditionally too.
 #include "sequencer/SequencerEngine.h"
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
 #include "sequencer/AbletonLink.h"
 #endif
 #include "audio/LazyChopEngine.h"
@@ -125,7 +125,7 @@ private:
 //==============================================================================
 // Transparent below 0.9, then a smooth tanh knee that approaches (never exceeds) +-1.0.
 // Replaces a pass-through-up-to-8.0 sanity check, so overs no longer reach the host unbounded.
-inline float dysektSoftLimit (float s) noexcept
+inline float xivaSoftLimit (float s) noexcept
 {
         if (! std::isfinite (s)) return 0.0f;
         const float a = std::abs (s);
@@ -135,7 +135,7 @@ inline float dysektSoftLimit (float s) noexcept
 }
 
 
-class DysektProcessor : public juce::AudioProcessor
+class XivaProcessor : public juce::AudioProcessor
 {
 public:
     // =========================================================================
@@ -368,8 +368,8 @@ public:
     // =========================================================================
     // Constructor / Destructor
     // =========================================================================
-    DysektProcessor();
-    ~DysektProcessor() override;
+    XivaProcessor();
+    ~XivaProcessor() override;
 
     // =========================================================================
     // AudioProcessor overrides
@@ -546,14 +546,14 @@ public:
     juce::AudioProcessorValueTreeState apvts;
     SliceManager     sliceManager;
     VoicePool        voicePool;
-    // SequencerEngine has no DYSEKT_STANDALONE dependency of its own (see
+    // SequencerEngine has no XIVA_STANDALONE dependency of its own (see
     // sequencer/SequencerEngine.h, sequencer/AbletonLink.h) — it's declared
     // unconditionally so processBlock() can always keep it in sync with the
     // host BPM (see the comment at the sequencer.setHostBpm() call site),
     // even though the sequencer *UI* and most of its other call sites
     // remain standalone-only below.
     SequencerEngine  sequencer;
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
     AbletonLink      abletonLink;
 
     /** Selected-track live MIDI routing state — see
@@ -596,7 +596,7 @@ public:
      *  zoneBuilderReloadPending is set true (by writeSfzZoneChange) just
      *  before kicking off the loadSoundFontAsync that a zone edit causes.
      *  processBlock checks it immediately before sliceManager2.clearAll():
-     *  if set, every current slice's DYSEKT-only fields are captured here
+     *  if set, every current slice's XIVA-only fields are captured here
      *  first, keyed by MIDI note, then reapplied to the matching rebuilt
      *  slice afterward. The flag is consumed (reset false) once used, so an
      *  unrelated/fresh load right after still gets the normal clean slate. */
@@ -733,7 +733,7 @@ public:
      *  polls this (trimAuditionPlayheadPoller, 30 Hz) and pushes it into
      *  AddZoneTrimOverlay::setPlayheadFrame() while the overlay is open —
      *  AddZoneTrimOverlay itself never reads this directly, keeping it
-     *  decoupled from DysektProcessor (see its class comment). */
+     *  decoupled from XivaProcessor (see its class comment). */
     std::atomic<int64_t> trimAuditionPlayheadFrame { -1 };
 
     /** Holds AddZoneTrimOverlay's currently-decoded preview buffer, published
@@ -803,8 +803,8 @@ public:
      *  Left default-constructed here, not brace-initialized — std::atomic's
      *  default constructor doesn't guarantee a zeroed value before C++20,
      *  same reasoning MidiLearnManager's own atomic arrays follow. Zeroed
-     *  explicitly in the constructor body instead (see DysektProcessor::
-     *  DysektProcessor()). */
+     *  explicitly in the constructor body instead (see XivaProcessor::
+     *  XivaProcessor()). */
     std::array<std::atomic<float>, (size_t) MultisamplerZoneField::kCount> msMidiLearnRelDelta;
     std::array<std::atomic<float>, (size_t) MultisamplerZoneField::kCount> msMidiLearnAbsValue;
     std::array<std::atomic<bool>,  (size_t) MultisamplerZoneField::kCount> msMidiLearnAbsDirty;
@@ -1029,7 +1029,7 @@ public:
     std::atomic<bool> trimModeActive   { false };  // set by editor; CC routes to trim when true
     std::atomic<int>  midiRouteMode    { 0 };       // 0=Slicer, 1=SfPlayer, 2=SfzPlayer2, 3=Sequencer
 
-    // Which UI tab is actually selected — mirrors DysektEditor::uiMode
+    // Which UI tab is actually selected — mirrors XivaEditor::uiMode
     // (0=Slicer, 1=SfzPlayer2, 2=SfPlayer) and is set ONLY from setUiMode().
     // Unlike midiRouteMode, this is NEVER overwritten when the Arranger opens
     // (syncMidiRouteMode() forces midiRouteMode to Sequencer for live-MIDI
@@ -1232,7 +1232,7 @@ public:
      *
      *  A LoadJob's discovery/render passes can legitimately run for several
      *  seconds (a 128-note SF2 preset probe+render easily produces minutes
-     *  of synthesized audio), and ~DysektProcessor()'s
+     *  of synthesized audio), and ~XivaProcessor()'s
      *  fileLoadPool.removeAllJobs(true, 5000) only WAITS up to 5 seconds for
      *  a job to notice it should exit -- it does not forcibly kill the job's
      *  thread if that timeout is exceeded. Without this flag, a job still
@@ -1246,7 +1246,7 @@ public:
      *  for the job to read even after `processor` no longer exists. */
     std::shared_ptr<std::atomic<bool>> loaderAliveFlag { std::make_shared<std::atomic<bool>> (true) };
 
-    /** Call once, at the very top of ~DysektProcessor(), before
+    /** Call once, at the very top of ~XivaProcessor(), before
      *  fileLoadPool.removeAllJobs(). See loaderAliveFlag's comment. */
     void markLoaderJobsShouldStop() noexcept
     {
@@ -1444,5 +1444,5 @@ public:
     // ensuring the log captures the full object lifetime.
     CrashLogger crashLogger;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DysektProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (XivaProcessor)
 };

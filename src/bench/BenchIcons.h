@@ -1,5 +1,5 @@
 #pragma once
-#include "../ui/DysektLookAndFeel.h"
+#include "../ui/XivaLookAndFeel.h"
 
 // Windows Metro / Fluent icon policy.
 //

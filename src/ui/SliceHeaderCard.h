@@ -1,7 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../PluginProcessor.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 #include "WaveformView.h"
 
 //==============================================================================
@@ -18,7 +18,7 @@ class SliceHeaderCard final : public juce::Component,
 public:
     static constexpr int kDesignHeight = 56;
 
-    SliceHeaderCard (DysektProcessor& p, WaveformView& w) : processor (p), waveform (w) { startTimerHz (8); }
+    SliceHeaderCard (XivaProcessor& p, WaveformView& w) : processor (p), waveform (w) { startTimerHz (8); }
     ~SliceHeaderCard() override { stopTimer(); }
 
     void paint (juce::Graphics& g) override
@@ -55,7 +55,7 @@ public:
         const int leftLimit = right - juce::roundToInt (12.0f * sf);
         auto left = juce::Rectangle<int> (pad, 0, juce::jmax (0, leftLimit - pad), getHeight());
 
-        const auto nameFont = DysektLookAndFeel::makeFont (15.5f * sf, true);
+        const auto nameFont = XivaLookAndFeel::makeFont (15.5f * sf, true);
         const juce::String title = name.isNotEmpty() ? name : "No sample";
         g.setColour (t.foreground);
         g.setFont (nameFont);
@@ -63,7 +63,7 @@ public:
                     juce::Justification::centredLeft, true);
 
         g.setColour (t.foreground.withAlpha (0.55f));
-        g.setFont (DysektLookAndFeel::makeFont (11.0f * sf));
+        g.setFont (XivaLookAndFeel::makeFont (11.0f * sf));
         g.drawText ("Slicer  ·  " + juce::String (numSlices) + (numSlices == 1 ? " slice" : " slices")
                         + "  ·  " + juce::String (sr / 1000.0, 1) + " kHz",
                     left.withTrimmedTop (juce::roundToInt (30.0f * sf)).withHeight (juce::roundToInt (16.0f * sf)),
@@ -72,7 +72,7 @@ public:
         // Info chips to the right of the name
         if (snap)
         {
-            const auto chipFont = DysektLookAndFeel::makeFont (10.5f * sf);
+            const auto chipFont = XivaLookAndFeel::makeFont (10.5f * sf);
             int cx = pad + juce::GlyphArrangement::getStringWidthInt (nameFont, title) + juce::roundToInt (12.0f * sf);
             const int chipH = juce::roundToInt (18.0f * sf), chipY = juce::roundToInt (9.0f * sf);
             for (const auto& txt : { juce::String (seconds, 2) + " s", juce::String (numSlices) + " slices" })
@@ -103,7 +103,7 @@ private:
     int segmented (juce::Graphics& g, int right, int y, int h, float sf, std::initializer_list<Seg> items, int selectedId)
     {
         const auto& t = getTheme();
-        const auto font = DysektLookAndFeel::makeFont (12.0f * sf, true);
+        const auto font = XivaLookAndFeel::makeFont (12.0f * sf, true);
         const int padX = juce::roundToInt (11.0f * sf);
         const int inset = juce::roundToInt (3.0f * sf);
 
@@ -140,16 +140,16 @@ private:
 
         if (id == 50)   // MIDI slice (same flow as the waveform's context menu)
         {
-            DysektProcessor::Command cmd;
+            XivaProcessor::Command cmd;
             if (waveform.isMidiSliceActive())
             {
-                cmd.type = DysektProcessor::CmdLazyChopStop;
+                cmd.type = XivaProcessor::CmdLazyChopStop;
                 processor.pushCommand (cmd);
                 waveform.setMidiSliceActive (false);
             }
             else
             {
-                cmd.type = DysektProcessor::CmdLazyChopStart;
+                cmd.type = XivaProcessor::CmdLazyChopStart;
                 processor.pushCommand (cmd);
                 processor.midiSelectsSlice.store (true);
                 waveform.setMidiSliceActive (true);
@@ -157,15 +157,15 @@ private:
             return;
         }
 
-        DysektProcessor::Command cmd;
-        cmd.type      = DysektProcessor::CmdEqualChop;
+        XivaProcessor::Command cmd;
+        cmd.type      = XivaProcessor::CmdEqualChop;
         cmd.intParam1 = id;
         processor.pushCommand (cmd);
     }
 
     void timerCallback() override { if (isShowing()) repaint(); }
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
     WaveformView&    waveform;
     std::vector<Hit> hits;
 

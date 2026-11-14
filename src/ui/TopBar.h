@@ -4,7 +4,7 @@
 #include "../PluginProcessor.h"
 #include "../params/ParamIds.h"
 #include "../sequencer/SequencerEngine.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 
 //==============================================================================
 //  TopBar
@@ -32,7 +32,7 @@ public:
         float scale = 1.0f;
     };
 
-    TopBar (DysektProcessor& p, SequencerEngine& seq)
+    TopBar (XivaProcessor& p, SequencerEngine& seq)
         : processor (p), engine (seq)
     {
         for (auto* s : { &pitchSlider, &volumeSlider })
@@ -115,7 +115,7 @@ public:
         g.setFont (juce::Font (juce::FontOptions (15.0f * s, juce::Font::bold)));
         juce::String titleText = "XiVA";
         if (auto snap = processor.sampleData.getSnapshot())
-            if (! snap->filePath.containsIgnoreCase ("DYSEKT_default.wav") && snap->filePath.isNotEmpty())
+            if (! snap->filePath.containsIgnoreCase ("XIVA_default.wav") && snap->filePath.isNotEmpty())
                 titleText = juce::File (snap->filePath).getFileNameWithoutExtension();
         g.drawText (titleText, slots.title.withHeight (slots.title.getHeight() / 2 + juce::roundToInt (4 * s)),
                     juce::Justification::bottomLeft, false);
@@ -148,7 +148,7 @@ public:
             g.setFont (juce::Font (juce::FontOptions (9.5f * s)));
             g.drawText (label, r.withHeight (r.getHeight() / 2), juce::Justification::bottomLeft, false);
             g.setColour (col);
-            g.setFont (DysektLookAndFeel::makeMonoFont (13.0f * s));
+            g.setFont (XivaLookAndFeel::makeMonoFont (13.0f * s));
             g.drawText (value, r.withTrimmedTop (r.getHeight() / 2), juce::Justification::topLeft, false);
         };
         readout (slots.position, "POSITION", posText, t.foreground);
@@ -179,7 +179,7 @@ private:
         const double beats = juce::jmax (0.0, engine.getPlayheadBeats());
         const int bar = (int) (beats / 4.0) + 1, beat = (int) beats % 4 + 1, sub = (int) ((beats - std::floor (beats)) * 4.0) + 1;
         const auto pos = juce::String (bar).paddedLeft ('0', 3) + "." + juce::String (beat) + "." + juce::String (sub);
-#if DYSEKT_STANDALONE
+#if XIVA_STANDALONE
         const int pc = processor.abletonLink.getPeerCount();
 #else
         const int pc = 0;   // Ableton Link only exists in the standalone build
@@ -189,7 +189,7 @@ private:
         { bpmText = txt; posText = pos; linkText = lnk; peers = pc; repaint(); }
     }
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
     SequencerEngine& engine;
 
     juce::Slider pitchSlider, volumeSlider;

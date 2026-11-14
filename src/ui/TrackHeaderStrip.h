@@ -5,7 +5,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../sequencer/SequencerEngine.h"
 #include "../audio/SfzZoneLabel.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 #include "HorizontalLevelMeter.h"
 #include "../network/NetworkTrackMeters.h"
 

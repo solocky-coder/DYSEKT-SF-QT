@@ -8,7 +8,7 @@
 #include "../network/RtpMidiSession.h"
 #include "../network/NetworkMidiManager.h"
 
-// "USB MIDI" page of the Network Audio panel: sends DYSEKT's live incoming MIDI to
+// "USB MIDI" page of the Network Audio panel: sends XIVA's live incoming MIDI to
 // an iPhone / iPad over the direct Apple USB link (wired RTP-MIDI, no Wi-Fi).
 //
 // The panel owns no session - it controls and reflects manager.getSession (deviceId), so

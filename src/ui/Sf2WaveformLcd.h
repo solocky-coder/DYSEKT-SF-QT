@@ -1,7 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 
-class DysektProcessor;
+class XivaProcessor;
 
 /**
  * Right LCD panel shown when uiMode == 2 (SF2-Player / FluidSynth).
@@ -29,7 +29,7 @@ class DysektProcessor;
 class Sf2WaveformLcd : public juce::Component
 {
 public:
-    explicit Sf2WaveformLcd (DysektProcessor& p);
+    explicit Sf2WaveformLcd (XivaProcessor& p);
 
     void paint     (juce::Graphics& g) override;
     void resized   () override;
@@ -89,7 +89,7 @@ private:
 
     NodeRole hitTest (juce::Point<float> pos) const;
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
 
     // ── Waveform backdrop ────────────────────────────────────────────────────
     static constexpr int kPeaks = 512;

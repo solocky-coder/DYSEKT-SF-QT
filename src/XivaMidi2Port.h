@@ -1,13 +1,13 @@
 #pragma once
 // =============================================================================
-// DysektMidi2Port.h  —  VST3 two-port MIDI side-channel bridge
+// XivaMidi2Port.h  —  VST3 two-port MIDI side-channel bridge
 // =============================================================================
 //
 // Problem solved
 // ──────────────
 // JUCE 8's AudioProcessor::processBlock() receives a single MidiBuffer.  When
 // we patch juce_audio_plugin_client_VST3.cpp to advertise two MIDI input buses
-// (Port 0 "DYSEKT-SF" → Slicer, Port 1 "DY-SFP" → SF-Player), the DAW sends
+// (Port 0 "XIVA" → Slicer, Port 1 "DY-SFP" → SF-Player), the DAW sends
 // events for each port with a different Steinberg::Vst::Event::busIndex value.
 // The wrapper must deliver Port-1 events to processBlock() without contaminating
 // the Port-0 MidiBuffer that drives the slicer.
@@ -15,7 +15,7 @@
 // Solution
 // ────────
 // A thread_local pointer set by the wrapper immediately before each processBlock
-// call and cleared immediately after.  DysektProcessor reads it during
+// call and cleared immediately after.  XivaProcessor reads it during
 // processBlock to obtain the Port-1 (SF-Player) MIDI stream.
 //
 // Thread safety
@@ -31,20 +31,20 @@
 // Fallback
 // ────────
 // If the pointer is nullptr (DAW does not support multi-port MIDI, or is calling
-// processBlock outside the normal VST3 path), DysektProcessor falls back to the
+// processBlock outside the normal VST3 path), XivaProcessor falls back to the
 // legacy channel-based routing (sf2Ch dedicted channel on port 0).
 //
 // Integration
 // ───────────
 //  1. juce_audio_plugin_client_VST3.cpp  — includes this header, calls
-//       dysektSetSfPlayerMidiPort(&sfPlayerMidiBuffer) / (nullptr)
+//       xivaSetSfPlayerMidiPort(&sfPlayerMidiBuffer) / (nullptr)
 //  2. src/PluginProcessor.cpp             — defines the thread_local + helpers,
-//       reads dysektGetSfPlayerMidiPort() in processBlock()
+//       reads xivaGetSfPlayerMidiPort() in processBlock()
 // =============================================================================
 
 // Forward-declare only — avoids dragging in all of juce_audio_basics from here.
 namespace juce { class MidiBuffer; }
 
 // Implemented in PluginProcessor.cpp; called by the patched JUCE VST3 wrapper.
-extern "C" void         dysektSetSfPlayerMidiPort (juce::MidiBuffer* buf) noexcept;
-extern "C" juce::MidiBuffer* dysektGetSfPlayerMidiPort()                  noexcept;
+extern "C" void         xivaSetSfPlayerMidiPort (juce::MidiBuffer* buf) noexcept;
+extern "C" juce::MidiBuffer* xivaGetSfPlayerMidiPort()                  noexcept;

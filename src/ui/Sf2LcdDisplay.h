@@ -1,7 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 
-class DysektProcessor;
+class XivaProcessor;
 
 /**  Left LCD panel shown when uiMode == 2 (SF2-Player / FluidSynth).
  *
@@ -21,7 +21,7 @@ class DysektProcessor;
 class Sf2LcdDisplay : public juce::Component
 {
 public:
-    explicit Sf2LcdDisplay (DysektProcessor& p);
+    explicit Sf2LcdDisplay (XivaProcessor& p);
 
     static constexpr int kPreferredHeight = 320;
 
@@ -77,7 +77,7 @@ private:
     static juce::String formatMs  (float secs);
     static juce::String formatPct (float v);
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
     DisplayData      data;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Sf2LcdDisplay)

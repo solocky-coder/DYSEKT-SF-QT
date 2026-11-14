@@ -1,7 +1,7 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../PluginProcessor.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 
 //==============================================================================
 //  SliceTable
@@ -19,7 +19,7 @@ public:
     /** Design height in layout units (scaled by the editor like every other region). */
     static constexpr int kDesignHeight = 200;
 
-    explicit SliceTable (DysektProcessor& p) : processor (p) { startTimerHz (10); }
+    explicit SliceTable (XivaProcessor& p) : processor (p) { startTimerHz (10); }
     ~SliceTable() override { stopTimer(); }
 
     void paint (juce::Graphics& g) override
@@ -40,16 +40,16 @@ public:
         // Header
         auto head = getLocalBounds().reduced (pad, 0).removeFromTop (headerH());
         g.setColour (t.foreground);
-        g.setFont (DysektLookAndFeel::makeFont (14.0f * sf, true));
+        g.setFont (XivaLookAndFeel::makeFont (14.0f * sf, true));
         g.drawText ("Slices", head, juce::Justification::centredLeft, false);
         g.setColour (t.foreground.withAlpha (0.5f));
-        g.setFont (DysektLookAndFeel::makeFont (11.5f * sf));
+        g.setFont (XivaLookAndFeel::makeFont (11.5f * sf));
         g.drawText ("click a row to audition", head, juce::Justification::centredRight, false);
 
         // Column titles
         const auto cols = columns();
         auto colRow = juce::Rectangle<int> (pad, headerH(), getWidth() - pad * 2, rowH());
-        g.setFont (DysektLookAndFeel::makeFont (10.5f * sf));
+        g.setFont (XivaLookAndFeel::makeFont (10.5f * sf));
         g.setColour (t.foreground.withAlpha (0.45f));
         g.drawText ("#",      colRow.withX (cols.num).withWidth (cols.name - cols.num),       juce::Justification::centredLeft, false);
         g.drawText ("NAME",   colRow.withX (cols.name).withWidth (cols.start - cols.name),    juce::Justification::centredLeft, false);
@@ -60,7 +60,7 @@ public:
         if (ui.numSlices <= 0)
         {
             g.setColour (t.foreground.withAlpha (0.4f));
-            g.setFont (DysektLookAndFeel::makeFont (12.5f * sf));
+            g.setFont (XivaLookAndFeel::makeFont (12.5f * sf));
             g.drawText ("No slices yet. Use Auto slice or click the waveform to add one.",
                         getLocalBounds().withTrimmedTop (headerH() + rowH()), juce::Justification::centred, false);
             return;
@@ -94,15 +94,15 @@ public:
             const double st  = (double) s.startSample / sr;
             const double len = (double) juce::jmax (0, endS - s.startSample) / sr;
 
-            g.setFont (DysektLookAndFeel::makeMonoFont (11.5f * sf));
+            g.setFont (XivaLookAndFeel::makeMonoFont (11.5f * sf));
             g.setColour (t.foreground.withAlpha (0.6f));
             g.drawText (juce::String (i + 1).paddedLeft ('0', 2),
                         row.withX (cols.num).withWidth (cols.name - cols.num), juce::Justification::centredLeft, false);
             g.setColour (t.foreground);
-            g.setFont (DysektLookAndFeel::makeFont (13.0f * sf));
+            g.setFont (XivaLookAndFeel::makeFont (13.0f * sf));
             g.drawText (s.name.isNotEmpty() ? s.name : ("Slice " + juce::String (i + 1)),
                         row.withX (cols.name).withWidth (cols.start - cols.name - 6), juce::Justification::centredLeft, true);
-            g.setFont (DysektLookAndFeel::makeMonoFont (11.5f * sf));
+            g.setFont (XivaLookAndFeel::makeMonoFont (11.5f * sf));
             g.setColour (t.foreground.withAlpha (0.7f));
             g.drawText (juce::String (st, 3), row.withX (cols.start).withWidth (cols.length - cols.start), juce::Justification::centredLeft, false);
             g.drawText (juce::String (len, 3), row.withX (cols.length).withWidth (cols.lock - cols.length), juce::Justification::centredLeft, false);
@@ -120,8 +120,8 @@ public:
         const int idx = rowAt (e.getPosition());
         if (idx < 0) return;
 
-        DysektProcessor::Command cmd;
-        cmd.type      = DysektProcessor::CmdSelectSlice;
+        XivaProcessor::Command cmd;
+        cmd.type      = XivaProcessor::CmdSelectSlice;
         cmd.intParam1 = idx;
         processor.pushCommand (cmd);
 
@@ -170,7 +170,7 @@ private:
 
     void timerCallback() override { if (isShowing()) repaint(); }
 
-    DysektProcessor& processor;
+    XivaProcessor& processor;
     mutable int scrollRow = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SliceTable)

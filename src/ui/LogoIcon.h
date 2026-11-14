@@ -1,8 +1,8 @@
 #pragma once
 #include <juce_graphics/juce_graphics.h>
-#include "DysektLookAndFeel.h"  // for getTheme()
+#include "XivaLookAndFeel.h"  // for getTheme()
 
-/**  Renders a square DYSEKT-SF waveform icon from the current theme.
+/**  Renders a square XIVA waveform icon from the current theme.
      Mirrors the drawing logic in LogoBar::paint() so the icon always
      matches the live theme — including user-created custom themes.
      @param size  Pixel dimensions of the square image (power of two; 256 recommended). */

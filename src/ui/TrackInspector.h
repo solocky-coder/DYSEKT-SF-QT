@@ -2,7 +2,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include "../sequencer/SequencerEngine.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 #include <cmath>
 
 //==============================================================================
@@ -68,7 +68,7 @@ public:
 
     explicit TrackInspector (SequencerEngine& sequencer) : engine (sequencer)
     {
-        // DYSEKT-METRO pass: M/S/R go back to filled swatches, but flat —
+        // XIVA-BENCH pass: M/S/R go back to filled swatches, but flat —
         // solid tile per button, sharp corners, no cyan-outline chrome.
         // Each keeps its own accent (amber/gold/red) so the row still reads
         // as three distinct controls rather than three cyan copies. Amber
@@ -101,13 +101,13 @@ public:
             auto* b = colourButtons.add (new juce::TextButton());
             b->setClickingTogglesState (false);
             b->setColour (juce::TextButton::buttonColourId, swatchColour);
-            // Without this, DysektLookAndFeel::drawButtonBackground falls
+            // Without this, XivaLookAndFeel::drawButtonBackground falls
             // through to its default fill path, which ignores
             // buttonColourId entirely and always paints theme.button (a
             // generic UI grey) for a non-toggled, non-hovered button — the
             // exact "all swatches render grey" bug this property fixes. See
             // its use on muteButton/soloButton/recordButton above, and
-            // DysektLookAndFeel.cpp's own comment on the flatFill branch.
+            // XivaLookAndFeel.cpp's own comment on the flatFill branch.
             b->getProperties().set ("flatFill", true);
             b->onClick = [this, swatchColour]
             {
@@ -474,7 +474,7 @@ public:
         if (! hasTrack())
         {
             g.setColour (theme.foreground.withAlpha (0.42f));
-            g.setFont (DysektLookAndFeel::makeFont (16.0f, true));
+            g.setFont (XivaLookAndFeel::makeFont (16.0f, true));
             g.drawFittedText ("SELECT A TRACK", content, juce::Justification::centred, 1);
             return;
         }
@@ -489,30 +489,30 @@ public:
         g.setColour (info.colour);
         g.fillRect (swatch);
         g.setColour (info.colour.contrasting (0.85f));
-        g.setFont (DysektLookAndFeel::makeFont (16.0f, true));
+        g.setFont (XivaLookAndFeel::makeFont (16.0f, true));
         g.drawText (arrangerTrackName (info).substring (0, 1).toUpperCase(), swatch.toNearestInt(),
                     juce::Justification::centred, false);
 
         idRow.removeFromLeft (10);
         auto nameArea = idRow.removeFromTop (19);
         g.setColour (theme.foreground);
-        g.setFont (DysektLookAndFeel::makeFont (16.0f, true));
+        g.setFont (XivaLookAndFeel::makeFont (16.0f, true));
         g.drawFittedText (arrangerTrackName (info), nameArea, juce::Justification::centredLeft, 1);
 
         auto metaArea = idRow.removeFromTop (16);
         juce::String typeTag = trackTypeName (info.type);
         const int badgeW = juce::jmin (metaArea.getWidth() - 4,
-            juce::GlyphArrangement::getStringWidthInt (DysektLookAndFeel::makeFont (11.0f, true), typeTag) + 12);
+            juce::GlyphArrangement::getStringWidthInt (XivaLookAndFeel::makeFont (11.0f, true), typeTag) + 12);
         auto badgeR = metaArea.removeFromLeft (badgeW);
         g.setColour (theme.button);
         g.fillRect (badgeR);
         g.setColour (theme.foreground.withAlpha (0.75f));
-        g.setFont (DysektLookAndFeel::makeFont (11.0f, true));
+        g.setFont (XivaLookAndFeel::makeFont (11.0f, true));
         g.drawText (typeTag, badgeR, juce::Justification::centred, false);
 
         metaArea.removeFromLeft (6);
         g.setColour (theme.foreground.withAlpha (0.6f));
-        g.setFont (DysektLookAndFeel::makeFont (11.5f, false));
+        g.setFont (XivaLookAndFeel::makeFont (11.5f, false));
         g.drawText ("CH " + juce::String (info.midiChannel + 1), metaArea, juce::Justification::centredLeft, false);
 
         content.removeFromTop (kGapM);
@@ -523,7 +523,7 @@ public:
         // class's header comment, point 3). ──────────────────────────
         content.removeFromTop (25 + kGapL);
         g.setColour (theme.foreground.withAlpha (0.5f));
-        g.setFont (DysektLookAndFeel::makeFont (10.0f, true));
+        g.setFont (XivaLookAndFeel::makeFont (10.0f, true));
         g.drawText ("ACT", activityDotBounds.withTrimmedBottom (activityDotBounds.getHeight() - 9),
                     juce::Justification::centredLeft, false);
         auto dot = activityDotBounds.withTrimmedTop (9).withHeight (4).toFloat();
@@ -545,10 +545,10 @@ public:
             {
                 auto row = presetRowBounds;
                 g.setColour (theme.foreground.withAlpha (0.85f));
-                g.setFont (DysektLookAndFeel::makeFont (13.0f, false));
+                g.setFont (XivaLookAndFeel::makeFont (13.0f, false));
                 g.drawFittedText (presetName, row.removeFromTop (16), juce::Justification::centredLeft, 1);
                 g.setColour (theme.foreground.withAlpha (0.4f));
-                g.setFont (DysektLookAndFeel::makeFont (11.5f, false));
+                g.setFont (XivaLookAndFeel::makeFont (11.5f, false));
                 g.drawText (presetTag, row.removeFromTop (14), juce::Justification::centredLeft, false);
             }
             content.removeFromTop (kPresetRowH + kGapL);
@@ -601,7 +601,7 @@ private:
     //  the active theme rather than a hardcoded colour, so the strip matches
     //  whichever skin is active. Selected per-slider via "mockupPan".
     //==========================================================================
-    // DYSEKT-METRO pass: the groove is a tapered wedge rather than a flat
+    // XIVA-BENCH pass: the groove is a tapered wedge rather than a flat
     // bar — thin at the "quiet"/edge end, thick at the "loud"/centre end —
     // so the taper itself communicates level, not just the fill length.
     // VOLUME tapers thin→thick left→right (single ramp, since VOLUME only
@@ -727,7 +727,7 @@ private:
 
     bool hasTrack() const { return juce::isPositiveAndBelow (selectedTrack, engine.getNumTracks()); }
 
-    // DYSEKT-METRO pass: M/S/R stay three distinct accent colours (amber /
+    // XIVA-BENCH pass: M/S/R stay three distinct accent colours (amber /
     // gold / red) — that per-button colour is a functional cue, not just
     // decoration — but move from an alpha-tinted outline to a solid flat
     // fill so they read as tiles rather than translucent chips. Off-state
@@ -815,14 +815,14 @@ private:
     {
         auto label = control.getBounds().withHeight (13).translated (0, -14);
         g.setColour (getTheme().foreground.withAlpha (0.62f));
-        g.setFont (DysektLookAndFeel::makeFont (11.5f, true));
+        g.setFont (XivaLookAndFeel::makeFont (11.5f, true));
         g.drawText (text, label, juce::Justification::centredLeft, false);
     }
 
     static void sectionLabel (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> bounds)
     {
         g.setColour (getTheme().foreground.withAlpha (0.62f));
-        g.setFont (DysektLookAndFeel::makeFont (12.0f, true));
+        g.setFont (XivaLookAndFeel::makeFont (12.0f, true));
         g.drawText (text, bounds, juce::Justification::centredLeft);
         const float ruleY = (float) bounds.getCentreY();
         g.setColour (getTheme().separator.withAlpha (0.85f));

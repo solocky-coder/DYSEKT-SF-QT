@@ -1,6 +1,6 @@
 #include "FileBrowserPanel.h"
 #include "../util/AppDataDir.h"
-#include "DysektLookAndFeel.h"
+#include "XivaLookAndFeel.h"
 #include "UIHelpers.h"
 #include "../PluginProcessor.h"
 #include <cmath>
@@ -141,7 +141,7 @@ void FileBrowserPanel::ArchiveListModel::listBoxItemDoubleClicked (int row, cons
                 {
                     // The download is done, but SoundFontLoader::load() (called below)
                     // just kicks off an async sfizz decode/render — mirrored by
-                    // DysektProcessor::mainLoadInFlight — that can itself take a while
+                    // XivaProcessor::mainLoadInFlight — that can itself take a while
                     // for a large kit. Claim a fresh generation (stopPreview() just
                     // bumped it) and keep the popup up, now in an indeterminate
                     // "loading instrument" state, instead of hiding it here.
@@ -194,7 +194,7 @@ void FileBrowserPanel::ArchiveListModel::listBoxItemDoubleClicked (int row, cons
 
 // ── Constructor / Destructor ─────────────────────────────────────────────────
 
-FileBrowserPanel::FileBrowserPanel (DysektProcessor& p)
+FileBrowserPanel::FileBrowserPanel (XivaProcessor& p)
     : processor (p)
 {
     // ── SfzFileBrowser — same widget used in the SFZ-Player panel ────────────
@@ -293,7 +293,7 @@ FileBrowserPanel::FileBrowserPanel (DysektProcessor& p)
     };
     transport.setGain (0.8f);
     addChildComponent (volumeSlider);
-    volumeSlider.getProperties().set ("dysektThemeKey", "accent");
+    volumeSlider.getProperties().set ("xivaThemeKey", "accent");
 
     // ── File name label ───────────────────────────────────────────────────────
     fileNameLabel.setFont (juce::Font (juce::FontOptions{}.withHeight (19.5f)));
@@ -371,7 +371,7 @@ FileBrowserPanel::FileBrowserPanel (DysektProcessor& p)
             });
     };
     addAndMakeVisible (addBmBtn);
-    addBmBtn.getProperties().set ("dysektThemeKey", "button");
+    addBmBtn.getProperties().set ("xivaThemeKey", "button");
 
     // ── Internet Archive bookmarks ────────────────────────────────────────────
     addArchiveBtn.setButtonText ("IA");
@@ -381,7 +381,7 @@ FileBrowserPanel::FileBrowserPanel (DysektProcessor& p)
     addArchiveBtn.setColour (juce::TextButton::textColourOffId, getTheme().foreground);
     addArchiveBtn.onClick = [this] { showArchiveUrlDialog(); };
     addAndMakeVisible (addArchiveBtn);
-    addArchiveBtn.getProperties().set ("dysektThemeKey", "button");
+    addArchiveBtn.getProperties().set ("xivaThemeKey", "button");
 
     loadArchiveBookmarks();
     rebuildArchiveButtons();
@@ -550,15 +550,15 @@ void FileBrowserPanel::paint (juce::Graphics& g)
         card (benchSide); card (benchMain); card (benchPane);
 
         g.setColour (T.foreground);
-        g.setFont (DysektLookAndFeel::makeFont (15.0f, true));
+        g.setFont (XivaLookAndFeel::makeFont (15.0f, true));
         g.drawText ("Places", benchSide.reduced (14, 8).removeFromTop (28), juce::Justification::centredLeft, false);
         g.setColour (T.foreground.withAlpha (0.5f));
-        g.setFont (DysektLookAndFeel::makeFont (11.0f, true));
+        g.setFont (XivaLookAndFeel::makeFont (11.0f, true));
         g.drawText ("INTERNET ARCHIVE", benchSide.getX() + 14, benchArchiveLabelY, benchSide.getWidth() - 28, 22,
                     juce::Justification::centredLeft, false);
 
         g.setColour (T.foreground);
-        g.setFont (DysektLookAndFeel::makeFont (15.0f, true));
+        g.setFont (XivaLookAndFeel::makeFont (15.0f, true));
         g.drawText (archiveViewActive && archiveListTitle.isNotEmpty() ? archiveListTitle : juce::String ("Files"),
                     benchMain.reduced (14, 6).removeFromTop (28), juce::Justification::centredLeft, true);
         if (! benchPane.isEmpty())
@@ -706,7 +706,7 @@ void FileBrowserPanel::fileDoubleClicked (const juce::File& f)
     {
         // Same reasoning as the archive-download path: loading a local
         // .sf2/.sfz file is fast to read off disk but can still take a
-        // while to decode/render via sfizz (DysektProcessor::mainLoadInFlight).
+        // while to decode/render via sfizz (XivaProcessor::mainLoadInFlight).
         // stopPreview() above already bumped streamGeneration once; claim a
         // fresh id for this load so a later click can supersede this poll.
         const int loadGeneration = ++streamGeneration;
