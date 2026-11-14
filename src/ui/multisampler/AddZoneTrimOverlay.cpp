@@ -148,7 +148,7 @@ AddZoneTrimOverlay::AddZoneTrimOverlay (const juce::File& sampleFile, juce::Thre
 {
     const auto& T = getTheme();
 
-    titleLabel.setText ("TRIM  —  " + sampleFile.getFileName().toUpperCase(), juce::dontSendNotification);
+    titleLabel.setText (juce::String::fromUTF8 ("TRIM  —  ") + sampleFile.getFileName().toUpperCase(), juce::dontSendNotification);
     titleLabel.setFont (XivaLookAndFeel::makeFont (16.0f, true));
     titleLabel.setColour (juce::Label::textColourId, T.accent);
     titleLabel.setInterceptsMouseClicks (false, false);

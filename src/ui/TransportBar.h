@@ -105,7 +105,7 @@ public:
         posLabel.setFont (XivaLookAndFeel::makeMonoFont (14.0f, true));
         posLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
         posLabel.setColour (juce::Label::textColourId, Accent::Orange);
-        posLabel.setTooltip ("Playhead position — scroll over a segment to nudge it");
+        posLabel.setTooltip (juce::String::fromUTF8 ("Playhead position — scroll over a segment to nudge it"));
         posLabel.onSegmentScroll = [this] (int segment, int direction) { adjustPlayhead (segment, direction); };
         addAndMakeVisible (posLabel);
 
@@ -122,7 +122,7 @@ public:
             field->setFont (XivaLookAndFeel::makeMonoFont (11.0f));
             field->setColour (juce::Label::backgroundColourId, Base::Surface);
             field->setColour (juce::Label::textColourId, Text::Primary);
-            field->setTooltip ("Cycle locator — click to type bars.beats.ticks, "
+            field->setTooltip (juce::String::fromUTF8 ("Cycle locator — click to type bars.beats.ticks, ") +
                                "or scroll over a segment to nudge it");
             field->onTextChange = [this] { updateLocatorsFromEditors(); };
             addAndMakeVisible (*field);

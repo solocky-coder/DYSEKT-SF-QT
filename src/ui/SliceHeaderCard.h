@@ -64,8 +64,8 @@ public:
 
         g.setColour (t.foreground.withAlpha (0.55f));
         g.setFont (XivaLookAndFeel::makeFont (11.0f * sf));
-        g.drawText ("Slicer  ·  " + juce::String (numSlices) + (numSlices == 1 ? " slice" : " slices")
-                        + "  ·  " + juce::String (sr / 1000.0, 1) + " kHz",
+        g.drawText (juce::String (juce::CharPointer_UTF8 ("Slicer  \xc2\xb7  ")) + juce::String (numSlices) + (numSlices == 1 ? " slice" : " slices")
+                        + juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  ")) + juce::String (sr / 1000.0, 1) + " kHz",
                     left.withTrimmedTop (juce::roundToInt (30.0f * sf)).withHeight (juce::roundToInt (16.0f * sf)),
                     juce::Justification::centredLeft, true);
 

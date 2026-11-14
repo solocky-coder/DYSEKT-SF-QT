@@ -860,20 +860,20 @@ private:
         if (audioReady >= 4)
         {
             directUsbProgressLabel.setText (
-                "USB connection: 4/4 devices connected • 4/4 audio ready",
+                juce::String::fromUTF8 ("USB connection: 4/4 devices connected • 4/4 audio ready"),
                 juce::dontSendNotification);
         }
         else if (responding > 0)
         {
             directUsbProgressLabel.setText (
-                "USB connection: " + juce::String (responding) + "/4 responding • "
+                "USB connection: " + juce::String (responding) + juce::String::fromUTF8 ("/4 responding • ")
                 + juce::String (audioReady) + "/4 audio ready",
                 juce::dontSendNotification);
         }
         else
         {
             directUsbProgressLabel.setText (
-                "USB connection: waiting for Apple USB devices…",
+                juce::String::fromUTF8 ("USB connection: waiting for Apple USB devices…"),
                 juce::dontSendNotification);
         }
 

@@ -128,7 +128,7 @@ addAndMakeVisible (*b);
     positionLabel.setFont (XivaLookAndFeel::makeMonoFont (26.0f, true));
     positionLabel.setColour (juce::Label::backgroundColourId, Base::Background);
     positionLabel.setColour (juce::Label::textColourId, Accent::Orange);
-    positionLabel.setTooltip ("Playhead position — scroll over a segment to nudge it");
+    positionLabel.setTooltip (juce::String::fromUTF8 ("Playhead position — scroll over a segment to nudge it"));
     positionLabel.onSegmentScroll = [this] (int segment, int direction) { adjustPlayhead (segment, direction); };
  addAndMakeVisible (positionLabel);
 
@@ -169,7 +169,7 @@ addAndMakeVisible (*b);
     };
     stopButton.onClick   = [this] { engine.stop(); };
     recordButton.onStateChange = [this] { engine.setRecording (recordButton.getToggleState()); };
-    recordButton.setTooltip ("Record — right-click to choose Overdub/Add");
+    recordButton.setTooltip (juce::String::fromUTF8 ("Record — right-click to choose Overdub/Add"));
     recordButton.addMouseListener (this, false);
     cycleButton.onStateChange  = [this] { engine.setLooping (cycleButton.getToggleState()); };
 
@@ -190,7 +190,7 @@ addAndMakeVisible (*b);
         field->setFont (XivaLookAndFeel::makeMonoFont (26.0f, true)); // matches positionLabel's size/weight
         field->setColour (juce::Label::backgroundColourId, Base::Background);
         field->setColour (juce::Label::textColourId, Text::Primary);
-        field->setTooltip ("Cycle locator — click to type bars.beats.ticks, "
+        field->setTooltip (juce::String::fromUTF8 ("Cycle locator — click to type bars.beats.ticks, ") +
                            "or scroll over a segment to nudge it");
         field->onTextChange = [this] { updateLocatorsFromEditors(); };
  addAndMakeVisible (*field);

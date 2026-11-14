@@ -3119,7 +3119,7 @@ void XivaProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         if (! loggedProcessBlockEntryOnce)
         {
             loggedProcessBlockEntryOnce = true;
-            crashLogger.log ("processBlock() ENTRY — first call reached. numSamples="
+            crashLogger.log (juce::String::fromUTF8 ("processBlock() ENTRY — first call reached. numSamples=")
                 + juce::String (buffer.getNumSamples())
                 + " midi.getNumEvents()=" + juce::String (midi.getNumEvents()));
         }

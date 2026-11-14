@@ -91,7 +91,7 @@ public:
 
         // ── Open log (append mode) ────────────────────────────────────────────
         logger = std::make_unique<juce::FileLogger> (logFile,
-            "XIVA crash log — " + juce::Time::getCurrentTime().toString (true, true));
+            juce::String::fromUTF8 ("XIVA crash log — ") + juce::Time::getCurrentTime().toString (true, true));
 
         if (previousCrash)
         {
@@ -111,7 +111,7 @@ public:
         s_dumpDirPath = dumpDir.getFullPathName();
         installHandlers();
 
-        log ("XivaProcessor constructed — session started");
+        log (juce::String::fromUTF8 ("XivaProcessor constructed — session started"));
         // Version marker for the zone-builder diagnostics added to
         // SoundFontLoader.cpp (discoverActiveNotes/finishAndPost logging for
         // the SfzPlayer2 target, full-0-127 empty-discovery fallback). If a
@@ -123,7 +123,7 @@ public:
 
     ~CrashLogger()
     {
-        log ("XivaProcessor destructed — session ended cleanly");
+        log (juce::String::fromUTF8 ("XivaProcessor destructed — session ended cleanly"));
         lockFile.deleteFile();
         // Leave the log file; only the sentinel is removed.
     }
@@ -223,7 +223,7 @@ private:
 
     static LONG WINAPI windowsExceptionFilter (EXCEPTION_POINTERS* info)
     {
-        crashWrite ("\n!! CRASH — unhandled exception !!\n");
+        crashWrite ("\n!! CRASH - unhandled exception !!\n");
 
         // Write a minidump alongside the log
         juce::String dumpPath = s_dumpDirPath + "\\xiva_crash.dmp";
@@ -262,7 +262,7 @@ private:
 
     static void posixSignalHandler (int sig)
     {
-        crashWrite ("\n!! CRASH — signal received: ");
+        crashWrite ("\n!! CRASH - signal received: ");
         switch (sig)
         {
             case SIGSEGV: crashWrite ("SIGSEGV (segmentation fault)\n"); break;

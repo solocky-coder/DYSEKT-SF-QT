@@ -167,11 +167,13 @@ private:
 
     bool isActive (Item it) const noexcept
     {
+        // A tab is only highlighted while no panel (Browser/Mixer/EQ) covers it, so two items are never lit at once.
+        const bool anyPanel = panelActive[Browser] || panelActive[Mixer] || panelActive[Eq];
         switch (it)
         {
-            case Slicer: return currentTab == 0;
-            case Multi:  return currentTab == 1;
-            case Sf2:    return currentTab == 2;
+            case Slicer: return currentTab == 0 && ! anyPanel;
+            case Multi:  return currentTab == 1 && ! anyPanel;
+            case Sf2:    return currentTab == 2 && ! anyPanel;
             default:     return panelActive[it];
         }
     }

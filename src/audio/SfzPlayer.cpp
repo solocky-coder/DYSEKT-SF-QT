@@ -927,7 +927,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
         if (! loggedEntryOnce)
         {
             loggedEntryOnce = true;
-            SF2_DBG ("process() ENTRY — first call reached. numSamples=" + juce::String (numSamples)
+            SF2_DBG (juce::String::fromUTF8 ("process() ENTRY — first call reached. numSamples=") + juce::String (numSamples)
                 + " midiIn.getNumEvents()=" + juce::String (midiIn.getNumEvents()));
         }
     }
@@ -938,7 +938,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
     // on an actual note-on. This logs every block that actually carries
     // MIDI, for as long as the session runs.
     if (! midiIn.isEmpty())
-        SF2_DBG ("process(): non-empty block — " + juce::String (midiIn.getNumEvents())
+        SF2_DBG (juce::String::fromUTF8 ("process(): non-empty block — ") + juce::String (midiIn.getNumEvents())
             + " event(s), loaded=" + juce::String ((int) loaded.load (std::memory_order_relaxed))
             + " isSfzFile=" + juce::String ((int) isSfzFile)
             + " sfizzSynth=" + juce::String (sfizzSynth != nullptr ? "non-null" : "NULL")
@@ -949,7 +949,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
     if (! loaded.load (std::memory_order_relaxed))
     {
         if (! midiIn.isEmpty())
-            SF2_DBG ("process(): loaded==false — bailing out at the very top with "
+            SF2_DBG (juce::String::fromUTF8 ("process(): loaded==false — bailing out at the very top with ")
                 + juce::String (midiIn.getNumEvents()) + " MIDI event(s) discarded this block.");
         return;
     }
@@ -1150,7 +1150,7 @@ void SfzPlayer::process (const juce::MidiBuffer& midiIn,
         if (! loggedNullSynthOnce)
         {
             loggedNullSynthOnce = true;
-            SF2_DBG ("process(): synth == nullptr — bailing out before any FluidSynth "
+            SF2_DBG (juce::String::fromUTF8 ("process(): synth == nullptr — bailing out before any FluidSynth ")
                          "call. isSfzFile=" + juce::String ((int) isSfzFile)
                          + " loaded=" + juce::String ((int) loaded.load (std::memory_order_relaxed)));
         }

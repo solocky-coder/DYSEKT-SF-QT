@@ -344,7 +344,7 @@ public:
 
     void showArrange()
     {
-        setName ("ARRANGE  •  TRACKS");
+        setName (juce::String::fromUTF8 ("ARRANGE  •  TRACKS"));
         content.show (SlotWindowContent::Content::Arrange);
         showWindow();
     }

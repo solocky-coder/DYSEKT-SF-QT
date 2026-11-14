@@ -111,6 +111,7 @@ public:
      *  helper all read the same up-to-date value without needing their own
      *  Component reference plumbing. */
     const juce::Rectangle<int>& getDesignArea() const noexcept { return designArea; }
+    juce::Rectangle<int> getInspectorBounds() const noexcept { return sliceControlBar.isVisible() && sliceControlBar.getWidth() > 0 ? sliceControlBar.getBounds() : juce::Rectangle<int>(); }
 
 private:
     void timerCallback() override;

@@ -268,7 +268,7 @@ private:
                 fis.read (block.getData(), (int) size);
                 processor->setStateInformation (block.getData(), (int) block.getSize());
                 currentProjectFile = result;
-                setName ("XIVA  —  " + result.getFileNameWithoutExtension());
+                setName (juce::String::fromUTF8 ("XIVA  —  ") + result.getFileNameWithoutExtension());
             });
     }
 
@@ -300,7 +300,7 @@ private:
                 if (result == juce::File()) return;
                 currentProjectFile = result.withFileExtension ("xiva");
                 saveProject();
-                setName ("XIVA  —  " + currentProjectFile.getFileNameWithoutExtension());
+                setName (juce::String::fromUTF8 ("XIVA  —  ") + currentProjectFile.getFileNameWithoutExtension());
             });
     }
 

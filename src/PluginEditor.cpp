@@ -259,12 +259,12 @@ XivaEditor::XivaEditor (XivaProcessor& p)
          lines.add (line);
      }
      if ((int) warnings.size() > kMaxLines)
-         lines.add ("… and " + juce::String ((int) warnings.size() - kMaxLines) + " more");
+         lines.add (juce::String::fromUTF8 ("… and ") + juce::String ((int) warnings.size() - kMaxLines) + " more");
 
      messageOverlay = std::make_unique<MessageOverlay> (
          importSucceeded ? "Import Completed With Warnings" : "Import Failed",
          (importSucceeded ? juce::String ("Imported ") : juce::String ("Could not import "))
-             + sourceFileName + (importSucceeded ? juce::String (" — some data may not round-trip:") : juce::String())
+             + sourceFileName + (importSucceeded ? juce::String (juce::String::fromUTF8 (" — some data may not round-trip:")) : juce::String())
              + "\n\n" + lines.joinIntoString ("\n"),
          MessageOverlay::Kind::Warning);
      addAndMakeVisible (*messageOverlay);
@@ -1302,7 +1302,11 @@ static juce::Rectangle<float> waveformFrameRect (const XivaEditor& ed,
  const float sf = (float) da.getHeight() / (float) kTotalH;
  const int kFrameInset = juce::roundToInt (4.0f * sf);
  const int kFX = da.getX() + juce::roundToInt (kMargin * sf);
- const int kFW = da.getWidth() - juce::roundToInt (kMargin * sf) * 2;
+ int kFW = da.getWidth() - juce::roundToInt (kMargin * sf) * 2;
+ // Bench: the inspector panel sits to the right of the frame; stop the frame before it.
+ const auto insp = ed.getInspectorBounds();
+ if (insp.getWidth() > 0 && insp.getX() > kFX)
+     kFW = insp.getX() - juce::roundToInt (kMargin * sf) - kFX;
  const int trimExtra = hasTrimDialog ? juce::roundToInt (kTrimBarH * sf) : 0;
  return { (float) kFX,
  (float) wvBounds.getY() - kFrameInset,
@@ -1722,7 +1726,7 @@ void XivaEditor::resized()
  // In the Bench layout the slice control bar becomes a tall panel on the right
  // of the slicer view instead of a strip under the waveform. Same conditions as
  // the strip (Slicer tab, a real sample loaded, no trim bar, nothing covering).
- const int inspW   = benchInspector ? si (300) : 0;
+ const int inspW   = benchInspector ? si (280) : 0;
  const int inspGap = benchInspector ? si (kMargin) : 0;
  const int kFX = area.getX() + si (kMargin);
  const int kFW = area.getWidth() - si (kMargin) * 2 - inspW - inspGap;

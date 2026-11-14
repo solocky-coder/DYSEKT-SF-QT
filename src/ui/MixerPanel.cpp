@@ -1118,7 +1118,7 @@ void MixerPanel::drawMasterRow (juce::Graphics& g, int ry) const
     g.setFont (XivaLookAndFeel::makeFont (14.0f));
     g.setColour (theme.foreground.withAlpha (0.15f));
     for (int i = ColFcut; i < kNumCols; ++i)
-        g.drawText ("—", colX ((Col)i), ry, kKnobColW, kMasterH, juce::Justification::centred);
+        g.drawText (juce::String::fromUTF8 ("—"), colX ((Col)i), ry, kKnobColW, kMasterH, juce::Justification::centred);
 
     // === ADD THIS BLOCK HERE: ===
     const int mx = colX(ColOut) + kKnobColW + 4;
@@ -1210,7 +1210,7 @@ void MixerPanel::drawSf2Row (juce::Graphics& g, int ry) const
     g.setFont (XivaLookAndFeel::makeFont (11.0f));
     g.setColour (theme.foreground.withAlpha (0.15f));
     for (int i = ColFcut; i < kNumCols; ++i)
-        g.drawText ("—", colX ((Col)i), ry, kKnobColW, kSf2RowH, juce::Justification::centred);
+        g.drawText (juce::String::fromUTF8 ("—"), colX ((Col)i), ry, kKnobColW, kSf2RowH, juce::Justification::centred);
 
     // Peak meter using sfzPeakL/R from processor (this row's own engine, sfzPlayer)
     const int mx = colX (ColOut) + kKnobColW + 4;
@@ -1355,7 +1355,7 @@ void MixerPanel::drawSf2ChannelRow (juce::Graphics& g, int ry,
     g.setFont (XivaLookAndFeel::makeFont (10.0f));
     g.setColour (theme.foreground.withAlpha (0.12f));
     for (int i = ColPres; i < kNumCols; ++i)
-        g.drawText ("—", colX ((Col)i), ry, kKnobColW, kSf2ChRowH, juce::Justification::centred);
+        g.drawText (juce::String::fromUTF8 ("—"), colX ((Col)i), ry, kKnobColW, kSf2ChRowH, juce::Justification::centred);
 
     // Per-channel peak meter (same column as slice meters, after OUT)
     {
@@ -1463,7 +1463,7 @@ void MixerPanel::drawSfz2Row (juce::Graphics& g, int ry) const
     g.setFont (XivaLookAndFeel::makeFont (11.0f));
     g.setColour (theme.foreground.withAlpha (0.15f));
     for (int i = ColFcut; i < kNumCols; ++i)
-        g.drawText ("—", colX ((Col)i), ry, kKnobColW, kSf2RowH, juce::Justification::centred);
+        g.drawText (juce::String::fromUTF8 ("—"), colX ((Col)i), ry, kKnobColW, kSf2RowH, juce::Justification::centred);
 
     // Peak meter using sfz2PeakL/R from processor (this row's own engine, sfzPlayer2)
     const int mx = colX (ColOut) + kKnobColW + 4;
@@ -1592,7 +1592,7 @@ void MixerPanel::drawSfz2ChannelRow (juce::Graphics& g, int ry, int zoneIdx) con
     g.setFont (XivaLookAndFeel::makeFont (10.0f));
     g.setColour (theme.foreground.withAlpha (0.12f));
     for (int i = ColFcut; i < kNumCols; ++i)
-        g.drawText ("—", colX ((Col)i), ry, kKnobColW, kSf2ChRowH, juce::Justification::centred);
+        g.drawText (juce::String::fromUTF8 ("—"), colX ((Col)i), ry, kKnobColW, kSf2ChRowH, juce::Justification::centred);
 
     // Per-zone peak meter — real per-voice peaks written by processBlock
     // into slicePeak2L/R (indexed by voicePool2's sliceIdx), same source the
