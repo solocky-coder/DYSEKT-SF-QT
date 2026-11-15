@@ -18,21 +18,15 @@ class XivaProcessor;
 // This draws a simple vector folder outline that actually respects setColour().
 static inline void drawFileListFolderGlyph (juce::Graphics& g, juce::Rectangle<float> box, juce::Colour colour)
 {
-    const float tabW  = box.getWidth()  * 0.45f;
-    const float tabH  = box.getHeight() * 0.30f;
-    const float bodyY = box.getY() + tabH;
-
-    juce::Path p;
-    p.startNewSubPath (box.getX(),                      box.getBottom());
-    p.lineTo           (box.getX(),                      bodyY);
-    p.lineTo           (box.getX() + tabW,               bodyY);
-    p.lineTo           (box.getX() + tabW + tabH * 0.8f, box.getY());
-    p.lineTo           (box.getRight(),                  box.getY());
-    p.lineTo           (box.getRight(),                  box.getBottom());
-    p.closeSubPath();
+    box = box.withSizeKeepingCentre (juce::jmax (box.getWidth(), box.getHeight() * 1.25f), box.getHeight());
+    const float r     = juce::jmin (2.0f, box.getHeight() * 0.14f);
+    const float tabW  = box.getWidth()  * 0.42f;
+    const float tabH  = box.getHeight() * 0.24f;
+    const float bodyY = box.getY() + tabH * 0.8f;
 
     g.setColour (colour);
-    g.strokePath (p, juce::PathStrokeType (1.3f));
+    g.fillRoundedRectangle (box.getX(), box.getY(), tabW, tabH + r, r);
+    g.fillRoundedRectangle (box.getX(), bodyY, box.getWidth(), box.getBottom() - bodyY, r);
 }
 
 // ── Tiny LookAndFeel override to shrink the file-list font ───────────────────

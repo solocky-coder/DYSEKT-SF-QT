@@ -16,13 +16,17 @@
 // browser and the folder rows listed inside it read as the same glyph.
 static void drawFolderGlyph (juce::Graphics& g, juce::Rectangle<float> box, juce::Colour colour)
 {
-    const float tabW  = box.getWidth()  * 0.55f;
-    const float tabH  = box.getHeight() * 0.22f;
-    const float bodyY = box.getY() + tabH;
+    // Fixed small radius: the theme's corner radius can be pill-sized, which
+    // turned both rectangles into ellipses and made the glyph read as a blob.
+    box = box.withSizeKeepingCentre (juce::jmax (box.getWidth(), box.getHeight() * 1.25f), box.getHeight());
+    const float r     = juce::jmin (2.0f, box.getHeight() * 0.14f);
+    const float tabW  = box.getWidth()  * 0.42f;
+    const float tabH  = box.getHeight() * 0.24f;
+    const float bodyY = box.getY() + tabH * 0.8f;
 
     g.setColour (colour);
-    g.fillRoundedRectangle (box.getX(), box.getY(), tabW, tabH, getTheme().cornerRadius);
-    g.fillRoundedRectangle (box.getX(), bodyY, box.getWidth(), box.getBottom() - bodyY, getTheme().cornerRadius);
+    g.fillRoundedRectangle (box.getX(), box.getY(), tabW, tabH + r, r);
+    g.fillRoundedRectangle (box.getX(), bodyY, box.getWidth(), box.getBottom() - bodyY, r);
 }
 
 // =============================================================================
