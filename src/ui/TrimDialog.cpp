@@ -16,6 +16,15 @@ TrimDialog::TrimDialog (XivaProcessor& proc, WaveformView& wv)
     cancelBtn.onClick = [this] { onCancel(); };
     addAndMakeVisible (cancelBtn);
 
+    UIHelpers::styleSecondaryPopupButton (snapBtn, getTheme());
+    snapBtn.onClick = [this] { snapToZeroCrossings(); };
+    snapBtn.setTooltip ("Move IN and OUT to the nearest zero crossing so the cut does not click");
+    addAndMakeVisible (snapBtn);
+
+    UIHelpers::styleSecondaryPopupButton (resetBtn, getTheme());
+    resetBtn.onClick = [this] { resetToFull(); };
+    addAndMakeVisible (resetBtn);
+
     // 30 Hz repaint keeps cells in sync with MIDI CC driving trimRegionStart/End
     startTimerHz (30);
 }
@@ -25,153 +34,143 @@ TrimDialog::~TrimDialog() { stopTimer(); }
 void TrimDialog::timerCallback() { repaint(); }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Flat LCD-style knob cell — wide enough to read, tall enough for two rows
+//  Bench trim card: IN / OUT (draggable) and LENGTH readouts, helper buttons, Cancel / Apply
 // ─────────────────────────────────────────────────────────────────────────────
+static juce::String formatTrimTime (double seconds)
+{
+    seconds = juce::jmax (0.0, seconds);
+    const int m = (int) (seconds / 60.0);
+    return juce::String (m) + ":" + juce::String (seconds - m * 60.0, 3).paddedLeft ('0', 6);
+}
+
+static juce::String formatThousands (int v)
+{
+    auto s = juce::String (v);
+    juce::String out;
+    for (int i = 0; i < s.length(); ++i)
+    {
+        if (i > 0 && (s.length() - i) % 3 == 0) out += " ";
+        out += juce::String::charToString (s[i]);
+    }
+    return out;
+}
+
 void TrimDialog::drawTrimKnob (juce::Graphics& g,
                                 juce::Rectangle<int> cell,
                                 const char* label, int sampleVal, int totalFrames,
                                 bool invertFill)
 {
     const auto& T = getTheme();
-    const float sf = (float) getHeight() / 34.0f;   // scale relative to nominal 34px bar height
+    const float sf = (float) getHeight() / 92.0f;
+    const double sr = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 44100.0;
+    const bool draggable = (label[0] == 'I' || label[0] == 'O');
 
-    // Background + border — square corners, flat 1px hairline accent border, no glow.
-    // Alpha dropped from full-strength to match AddZoneTrimOverlay's popup-box
-    // hairline treatment (UIHelpers::drawPopupBox uses T.separator; this stays
-    // on T.accent but softened, since these cells are draggable controls, not
-    // a static frame).
-    g.setColour (T.darkBar);
-    g.fillRoundedRectangle (cell.toFloat(), 0.0f);
-    g.setColour (T.accent.withAlpha (0.55f));
-    g.drawRoundedRectangle (cell.toFloat().reduced (0.5f), 0.0f, 1.0f);
+    g.setColour (T.button);
+    g.fillRoundedRectangle (cell.toFloat(), T.cornerRadius);
+    g.setColour (T.separator);
+    g.drawRoundedRectangle (cell.toFloat().reduced (0.5f), T.cornerRadius, 1.0f);
 
-    // Grip motif — same two-bar tab language as AddZoneTrimOverlay::drawTrimHandleTab,
-    // scaled down into the cell's existing top-right corner so it reads as "this
-    // is a drag handle" without adding any height/width to the cell itself.
-    {
-        const int barW = juce::roundToInt (2.0f * sf);
-        const int barH = juce::roundToInt (5.0f * sf);
-        const int gap  = juce::roundToInt (2.0f * sf);
-        const int y    = cell.getY() + juce::roundToInt (2.0f * sf);
-        const int x    = cell.getRight() - juce::roundToInt (4.0f * sf) - barW * 2 - gap;
-        g.setColour (T.accent.withAlpha (0.6f));
-        g.fillRect (x,              y, barW, barH);
-        g.fillRect (x + barW + gap, y, barW, barH);
-    }
-
-    // Progress bar — inset inside frame, does NOT mutate cell.
-    // Both knobs represent "how much audio remains once this trim point is
-    // applied": OUT fills by outPt/total (shrinks as you pull the end in);
-    // IN must fill by the inverse, 1 - inPt/total, so it also reads as fully
-    // lit at the untouched (whole-file, inPt==0) state and shrinks as you
-    // push the start forward, rather than starting empty and filling up.
-    if (totalFrames > 0)
-    {
-        float frac = juce::jlimit (0.0f, 1.0f, (float) sampleVal / (float) totalFrames);
-        if (invertFill) frac = 1.0f - frac;
-        const int   inset  = juce::roundToInt (1.0f * sf);
-        const int   barH   = juce::roundToInt (3.0f * sf);
-        const auto  bar    = juce::Rectangle<float> (
-            (float) (cell.getX()      + inset),
-            (float) (cell.getBottom() - inset - barH),
-            (float) (cell.getWidth()  - 2 * inset),
-            (float) barH);
-        g.setColour (T.separator);
-        g.fillRect (bar);
-        g.setColour (T.accent);
-        const float filledW = bar.getWidth() * frac;
-        // withWidth() keeps the left edge fixed, which is correct for OUT
-        // (fill grows from the left as outPt increases) but wrong for IN:
-        // the kept audio runs from the IN point to the right edge of the
-        // file, so its fill must stay anchored to the bar's right edge and
-        // erode from the left as inPt moves forward.
-        const auto filled = invertFill
-            ? bar.withLeft (bar.getRight() - filledW)
-            : bar.withWidth (filledW);
-        g.fillRect (filled);
-    }
-
-    // Label — top half, small caps style
-    const int midY = cell.getY() + cell.getHeight() / 2;
-    g.setFont (XivaLookAndFeel::makeFont (8.0f * sf));
-    g.setColour (T.accent.withAlpha (0.65f));
-    g.drawText (label,
-                cell.getX(), cell.getY() + 2,
-                cell.getWidth(), midY - cell.getY() - 2,
-                juce::Justification::centred, false);
-
-    // Value — bottom half, full brightness. Bold, matching the readout-text
-    // weight AddZoneTrimOverlay uses for its IN/OUT/LENGTH figures.
+    auto r = cell.reduced (juce::roundToInt (12.0f * sf), juce::roundToInt (8.0f * sf));
     g.setFont (XivaLookAndFeel::makeFont (10.0f * sf, true));
-    g.setColour (T.foreground);
-    const int barH = juce::roundToInt (4.0f * sf);   // reserve space for progress bar
-    g.drawText (juce::String (sampleVal),
-                cell.getX(), midY,
-                cell.getWidth(), cell.getBottom() - midY - barH,
-                juce::Justification::centred, false);
+    g.setColour (T.foreground.withAlpha (0.6f));
+    g.drawText (label, r.removeFromTop (juce::roundToInt (13.0f * sf)), juce::Justification::centredLeft, false);
+
+    g.setFont (XivaLookAndFeel::makeFont (18.0f * sf, true));
+    g.setColour (draggable ? T.accent : T.foreground);
+    g.drawText (formatTrimTime ((double) sampleVal / sr), r.removeFromTop (juce::roundToInt (24.0f * sf)),
+                juce::Justification::centredLeft, false);
+
+    g.setFont (XivaLookAndFeel::makeFont (11.0f * sf));
+    g.setColour (T.foreground.withAlpha (0.55f));
+    g.drawText (formatThousands (sampleVal) + " smp", r, juce::Justification::centredLeft, false);
+
+    juce::ignoreUnused (totalFrames, invertFill);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 void TrimDialog::paint (juce::Graphics& g)
 {
-    g.fillAll (getTheme().header);
-    g.setColour (getTheme().accent.withAlpha (0.5f));
-    g.drawLine (0.0f, 0.0f, (float) getWidth(), 0.0f, 1.0f);
+    const auto& T = getTheme();
+    const auto bf = getLocalBounds().toFloat();
+    g.setColour (T.waveformBg);
+    g.fillRoundedRectangle (bf, T.cornerRadius);
+    g.setColour (T.separator);
+    g.drawRoundedRectangle (bf.reduced (0.5f), T.cornerRadius, 1.0f);
 
     const int total = processor.sampleData.getNumFrames();
     const int inPt  = processor.trimRegionStart.load (std::memory_order_relaxed);
     const int outPt = processor.trimRegionEnd  .load (std::memory_order_relaxed);
 
-    drawTrimKnob (g, inCell,  "IN",  inPt,  total, true);
-    drawTrimKnob (g, outCell, "OUT", outPt, total, false);
-
-    // ── "TRIM SAMPLE" title on the left ──────────────────────────────────────
-    if (! labelArea.isEmpty())
-    {
-        const auto& T = getTheme();
-        const auto  r = labelArea.toFloat();
-
-        // Background + accent border — square corners, flat 1px hairline border,
-        // matching AddZoneTrimOverlay's popup-box hairline weight.
-        g.setColour (T.darkBar);
-        g.fillRoundedRectangle (r, 0.0f);
-        g.setColour (T.accent.withAlpha (0.55f));
-        g.drawRoundedRectangle (r.reduced (0.5f), 0.0f, 1.0f);
-
-        // Title text — single line: "TRIM SAMPLE" centred. Bold, matching the
-        // weight of AddZoneTrimOverlay's "TRIM — <filename>" title.
-        const float sf = (float) getHeight() / 34.0f;
-        g.setFont (XivaLookAndFeel::makeFont (11.0f * sf, true));
-        g.setColour (T.accent);
-        g.drawText ("TRIM SAMPLE", r.getX(), (int) r.getY(),
-                    (int) r.getWidth(), (int) r.getHeight(),
-                    juce::Justification::centred, false);
-    }
+    drawTrimKnob (g, inCell,  "IN",     inPt,         total, true);
+    drawTrimKnob (g, outCell, "OUT",    outPt,        total, false);
+    drawTrimKnob (g, lenCell, "LENGTH", outPt - inPt, total, false);
 }
 
 void TrimDialog::resized()
 {
-    const float sf = (float) getHeight() / 34.0f;   // scale relative to nominal 34px bar height
-    auto si = [sf](int v) { return juce::roundToInt ((float) v * sf); };
+    const float sf = (float) getHeight() / 92.0f;
+    auto si = [sf] (int v) { return juce::roundToInt ((float) v * sf); };
 
-    auto b = getLocalBounds().reduced (si (6), si (4));
+    auto b = getLocalBounds().reduced (si (14), si (10));
+    const int gap = si (12);
 
-    const int btnW  = si (72);
-    const int knobW = si (72);   // wide enough for 6-digit sample number
-    const int gap   = si (5);
-
-    cancelBtn.setBounds (b.removeFromRight (btnW));
+    applyBtn.setBounds (b.removeFromRight (si (118)).withSizeKeepingCentre (si (118), si (44)));
     b.removeFromRight (gap);
-    applyBtn.setBounds (b.removeFromRight (btnW));
-    b.removeFromRight (gap * 3);
+    cancelBtn.setBounds (b.removeFromRight (si (96)).withSizeKeepingCentre (si (96), si (44)));
+    b.removeFromRight (gap * 2);
 
-    outCell = b.removeFromRight (knobW);
-    b.removeFromRight (gap);
-    inCell  = b.removeFromRight (knobW);
-    b.removeFromRight (gap);
+    const int cellW = juce::jmax (si (60), juce::jmin (si (210), (b.getWidth() - gap * 4 - si (190)) / 3));
+    inCell  = b.removeFromLeft (cellW);  b.removeFromLeft (gap);
+    outCell = b.removeFromLeft (cellW);  b.removeFromLeft (gap);
+    lenCell = b.removeFromLeft (cellW);  b.removeFromLeft (gap);
 
-    // Left-side title label — whatever space remains
-    labelArea = b;
+    auto col = b.removeFromLeft (juce::jmin (b.getWidth(), si (190)));
+    snapBtn .setBounds (col.removeFromTop (si (34)));
+    col.removeFromTop (si (6));
+    resetBtn.setBounds (col.removeFromTop (si (34)));
+    labelArea = {};
+}
+
+// Moves IN and OUT to the nearest sign change of the first channel (within ~50 ms) so the cut does not click.
+void TrimDialog::snapToZeroCrossings()
+{
+    auto snap = processor.sampleData.getSnapshot();
+    if (snap == nullptr || snap->buffer.getNumChannels() == 0) return;
+    const auto* d = snap->buffer.getReadPointer (0);
+    const int total = snap->buffer.getNumSamples();
+    const int window = juce::jmax (64, (int) (0.05 * (processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 44100.0)));
+
+    auto nearest = [&] (int pos)
+    {
+        pos = juce::jlimit (1, total - 1, pos);
+        for (int k = 0; k <= window; ++k)
+            for (int sgn : { -1, 1 })
+            {
+                const int i = pos + sgn * k;
+                if (i < 1 || i >= total) continue;
+                if ((d[i - 1] <= 0.0f && d[i] > 0.0f) || (d[i - 1] >= 0.0f && d[i] < 0.0f)) return i;
+            }
+        return pos;
+    };
+
+    const int curIn  = processor.trimRegionStart.load (std::memory_order_relaxed);
+    const int curOut = processor.trimRegionEnd  .load (std::memory_order_relaxed);
+    const int inPt  = curIn  <= 0     ? 0     : nearest (curIn);
+    const int outPt = curOut >= total ? total : nearest (curOut);
+    if (outPt - inPt < 64) return;
+    processor.trimRegionStart.store (inPt,  std::memory_order_relaxed);
+    processor.trimRegionEnd  .store (outPt, std::memory_order_relaxed);
+    waveformView.setTrimPoints (inPt, outPt);
+    repaint();
+}
+
+void TrimDialog::resetToFull()
+{
+    const int total = processor.sampleData.getNumFrames();
+    if (total <= 0) return;
+    processor.trimRegionStart.store (0,     std::memory_order_relaxed);
+    processor.trimRegionEnd  .store (total, std::memory_order_relaxed);
+    waveformView.setTrimPoints (0, total);
+    repaint();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

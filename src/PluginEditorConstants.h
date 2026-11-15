@@ -17,7 +17,7 @@ constexpr int kSliceCtrlH = 72;
 // the ZoneMapView/keyboard. Sized for one si(24)-tall button plus margin.
 constexpr int kMultisamplerScbH = 40;
 constexpr int kActionH    = 22;
-constexpr int kTrimBarH   = 34;
+constexpr int kTrimBarH   = 92;   // Bench trim card height
 constexpr int kPanelSlotH = 200;
 
 // Centre column width and explicit frame height (3/4 of kLcdRowH)

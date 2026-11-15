@@ -1353,7 +1353,8 @@ static juce::Rectangle<float> waveformFrameRect (const XivaEditor& ed,
  const auto insp = ed.getInspectorBounds();
  if (insp.getWidth() > 0 && insp.getX() > kFX)
      kFW = insp.getX() - juce::roundToInt (kMargin * sf) - kFX;
- const int trimExtra = hasTrimDialog ? juce::roundToInt (kTrimBarH * sf) : 0;
+ const int trimExtra = 0;   // the trim card is its own card below the frame
+ (void) hasTrimDialog;
  return { (float) kFX,
  (float) wvBounds.getY() - kFrameInset,
  (float) kFW,
@@ -1643,6 +1644,7 @@ void XivaEditor::resized()
  // ── Top strip ─────────────────────────────────────────────────────────────
  // In PAD mode shrink LCD rows to 65% — frees ~116px for the pad grid
  const bool bench = getTheme().isBench();
+ juce::Rectangle<int> trimCardRect;
  // (old note) Bench slicer: the top LCD row is slimmed to a single readout (the main waveform view
  // below already shows the waveform), which gives the waveform and slice list more room.
  bool benchInspector = false;
@@ -1663,7 +1665,8 @@ void XivaEditor::resized()
  const bool benchMulti = bench && isMultisamplerTabActive() && trimDialog == nullptr;   // Multi tab: LCD row folds into the layout below
  const bool benchNoLcd = (bench && uiMode == 0 && trimDialog == nullptr && ! benchInspector) || benchMulti
                        || (bench && uiMode == 2 && trimDialog == nullptr);   // SF2 tab: the workspace fills the area
- const int lcdRowH = benchInspector ? si (SliceHeaderCard::kDesignHeight + 8)
+ const bool benchTrim = bench && uiMode == 0 && trimDialog != nullptr;   // trim bar open: header card + trim card
+ const int lcdRowH = (benchInspector || benchTrim) ? si (SliceHeaderCard::kDesignHeight + 8)
                    : benchNoLcd     ? 0
                                     : si (kLcdRowH);
  const int ctrlFrmH = si (kCtrlFrameH);
@@ -1696,8 +1699,8 @@ void XivaEditor::resized()
  // going blank while MULTISAMPLER is open.
  const bool sf2Mode = (uiMode == 2);
  const bool multiMode = isMultisamplerTabActive();
- sliceLcd.setVisible (! sf2Mode && ! benchInspector && ! benchNoLcd);
- sliceWaveformLcd.setVisible (! sf2Mode && ! multiMode && ! benchInspector && ! benchNoLcd);
+ sliceLcd.setVisible (! sf2Mode && ! benchInspector && ! benchTrim && ! benchNoLcd);
+ sliceWaveformLcd.setVisible (! sf2Mode && ! multiMode && ! benchInspector && ! benchTrim && ! benchNoLcd);
  sf2Lcd.setVisible (sf2Mode && ! benchNoLcd);
  sf2WaveformLcd.setVisible (sf2Mode && ! benchNoLcd);
  multisamplerWaveformLcd.setVisible (multiMode);
@@ -1741,7 +1744,8 @@ void XivaEditor::resized()
  sliceWaveformLcd.setBounds (topRow);
  sf2WaveformLcd.setBounds (topRow);
  multisamplerWaveformLcd.setBounds (topRow);
- if (benchInspector) { sliceLcd.setBounds ({}); sliceWaveformLcd.setBounds ({}); sliceHeader.setBounds (topRowFull); sliceHeader.setVisible (true); }
+ sliceHeader.setTrimMode (benchTrim);
+ if (benchInspector || benchTrim) { sliceLcd.setBounds ({}); sliceWaveformLcd.setBounds ({}); sliceHeader.setBounds (topRowFull); sliceHeader.setVisible (true); }
  else { sliceHeader.setVisible (false); sliceHeader.setBounds ({}); }
  if (benchNoLcd) { sliceLcd.setBounds ({}); sliceWaveformLcd.setBounds ({}); }
 
@@ -1919,6 +1923,8 @@ void XivaEditor::resized()
 #endif
 
  if (trimDialog != nullptr) {
+ trimCardRect = area.removeFromBottom (si (kTrimBarH)).withX (kFX).withWidth (kFW);
+ area.removeFromBottom (si (kMargin));
  sliceControlBar.setBounds ({});
  waveformOverview.setVisible (false);
  waveformOverview.setBounds ({});
@@ -1999,7 +2005,7 @@ void XivaEditor::resized()
   int y = screenTop;
  sliceLane.setBounds ({});
 
- int trimH = (trimDialog != nullptr) ? si (kTrimBarH) : 0;
+ int trimH = 0;   // the trim card was reserved from `area` above
  int h = juce::jmax (si (80), screenBot - trimH - y);
 
  #if XIVA_STANDALONE
@@ -2101,7 +2107,7 @@ void XivaEditor::resized()
  if (normalBrowserOpen || inlineMixerOpen)
  trimDialog->setBounds ({}); // hide trim bar — browser/mixer is covering the workspace
  else
- trimDialog->setBounds (screenX, y + h, screenW, si (kTrimBarH));
+ trimDialog->setBounds (trimCardRect);
  }
 
  if (shortcutsPanel.isVisible())

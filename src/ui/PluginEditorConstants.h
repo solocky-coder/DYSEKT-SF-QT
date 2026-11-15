@@ -11,7 +11,7 @@ constexpr int kSliceLaneH = 36;
 constexpr int kScrollbarH = 28;
 constexpr int kSliceCtrlH = 72;
 constexpr int kActionH    = 22;
-constexpr int kTrimBarH   = 34;
+constexpr int kTrimBarH   = 92;   // Bench trim card height
 constexpr int kPanelSlotH = 200;
 
 // Centre column width and explicit frame height (3/4 of kLcdRowH)

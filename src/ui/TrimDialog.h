@@ -35,10 +35,14 @@ private:
     XivaProcessor& processor;
     WaveformView&    waveformView;
 
-    juce::TextButton applyBtn  { "APPLY" };
-    juce::TextButton cancelBtn { "CANCEL" };
+    juce::TextButton applyBtn  { "Apply trim" };
+    juce::TextButton cancelBtn { "Cancel" };
+    juce::TextButton snapBtn   { "Snap to zero crossing" };
+    juce::TextButton resetBtn  { "Reset to full length" };
 
-    juce::Rectangle<int> inCell, outCell, labelArea;
+    juce::Rectangle<int> inCell, outCell, lenCell, labelArea;
+    void snapToZeroCrossings();
+    void resetToFull();
     int  activeDrag   = -1;   // 0=IN, 1=OUT, -1=none
     int  dragStartY   = 0;
     int  dragStartVal = 0;

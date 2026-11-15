@@ -21,6 +21,9 @@ public:
     /** Fired by the LOAD button: the editor opens the in-app browser for this tab. */
     std::function<void()> onLoad;
 
+    /** Trim mode: the card shows the file being trimmed and how much is kept instead of the slicing controls. */
+    void setTrimMode (bool on) { if (trimMode != on) { trimMode = on; repaint(); } }
+
     SliceHeaderCard (XivaProcessor& p, WaveformView& w) : processor (p), waveform (w) { startTimerHz (8); }
     ~SliceHeaderCard() override { stopTimer(); }
 
@@ -41,6 +44,56 @@ public:
         const juce::String name = snap ? juce::File (snap->filePath).getFileNameWithoutExtension() : juce::String();
         const double seconds = snap ? (double) snap->buffer.getNumSamples() / sr : 0.0;
         const int numSlices = processor.getUiSliceSnapshot().numSlices;
+
+        if (trimMode)
+        {
+            const int tp = juce::roundToInt (14.0f * sf);
+            const int total = snap ? snap->buffer.getNumSamples() : 0;
+            const int inPt  = processor.trimRegionStart.load (std::memory_order_relaxed);
+            const int outPt = processor.trimRegionEnd.load (std::memory_order_relaxed);
+            auto mmss = [] (double s)
+            {
+                const int m = (int) (s / 60.0);
+                return juce::String (m) + ":" + juce::String (s - m * 60.0, 2).paddedLeft ('0', 5);
+            };
+            g.setColour (t.foreground);
+            g.setFont (XivaLookAndFeel::makeFont (15.5f * sf, true));
+            const auto title = name.isEmpty() ? juce::String ("Trim sample") : name;
+            const int nameW = juce::jmin (juce::roundToInt ((float) getWidth() * 0.45f),
+                                          juce::GlyphArrangement::getStringWidthInt (XivaLookAndFeel::makeFont (15.5f * sf, true), title) + 4);
+            g.drawText (title, juce::Rectangle<int> (tp, juce::roundToInt (7.0f * sf), nameW, juce::roundToInt (22.0f * sf)),
+                        juce::Justification::centredLeft, true);
+            g.setColour (t.foreground.withAlpha (0.55f));
+            g.setFont (XivaLookAndFeel::makeFont (11.0f * sf));
+            g.drawText (juce::String ("Trim sample  ") + juce::String (juce::CharPointer_UTF8 ("\xc2\xb7")) + "  " + juce::String (sr / 1000.0, 1) + " kHz",
+                        juce::Rectangle<int> (tp, juce::roundToInt (30.0f * sf), nameW, juce::roundToInt (16.0f * sf)),
+                        juce::Justification::centredLeft, true);
+
+            const auto chipFont = XivaLookAndFeel::makeFont (10.5f * sf);
+            const int chipH = juce::roundToInt (18.0f * sf), chipY = (getHeight() - chipH) / 2;
+            int cx = tp + nameW + juce::roundToInt (14.0f * sf);
+            const juce::String totalTxt = mmss ((double) total / sr) + " total";
+            const juce::String keptTxt  = mmss ((double) juce::jmax (0, outPt - inPt) / sr) + " kept";
+            for (int k = 0; k < 2; ++k)
+            {
+                const auto& txt = k == 0 ? totalTxt : keptTxt;
+                const int w = juce::GlyphArrangement::getStringWidthInt (chipFont, txt) + juce::roundToInt (18.0f * sf);
+                const juce::Rectangle<int> cr (cx, chipY, w, chipH);
+                g.setColour (k == 0 ? t.button : t.accent);
+                g.fillRoundedRectangle (cr.toFloat(), chipH * 0.5f);
+                g.setColour (k == 0 ? t.foreground.withAlpha (0.75f) : t.waveformBg);
+                g.setFont (chipFont);
+                g.drawText (txt, cr, juce::Justification::centred, false);
+                cx += w + juce::roundToInt (6.0f * sf);
+            }
+            g.setColour (t.foreground.withAlpha (0.55f));
+            g.setFont (XivaLookAndFeel::makeFont (11.0f * sf));
+            const juce::Rectangle<int> hint (cx + tp, 0, getWidth() - cx - tp * 2, getHeight());
+            if (hint.getWidth() > 60)
+                g.drawText ("Play any MIDI key to audition the kept region. C3 plays it at original pitch.", hint,
+                            juce::Justification::centredRight, true);
+            return;
+        }
 
         // ── Right side: controls, laid out from the right edge ──────────────
         const int pad = juce::roundToInt (12.0f * sf);
@@ -171,6 +224,7 @@ private:
 
     void timerCallback() override { if (isShowing()) repaint(); }
 
+    bool trimMode = false;
     XivaProcessor& processor;
     WaveformView&    waveform;
     std::vector<Hit> hits;
