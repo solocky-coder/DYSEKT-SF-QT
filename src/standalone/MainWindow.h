@@ -1,4 +1,5 @@
 #pragma once
+#include "../util/SharedAudio.h"
 #include <set>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_extra/juce_gui_extra.h>
@@ -35,6 +36,7 @@ public:
         // default device when nothing is saved or the saved state is missing/corrupt.
         AudioDeviceSettingsStore::initialiseDeviceManager (deviceManager, 0, 2);
         deviceManager.addChangeListener (this);
+        XivaSharedAudio::manager() = &deviceManager;   // file-browser preview plays through this device
 
         juce::AudioProcessor::setTypeOfNextNewPlugin (juce::AudioProcessor::wrapperType_Standalone);
         processor = std::make_unique<NetworkAudioProcessor>();
@@ -131,6 +133,7 @@ public:
         //    un-maximise it, shrink it and re-grow it, which shows up as the window
         //    repeatedly flashing/resizing before it finally disappears.
         setVisible (false);
+        XivaSharedAudio::shutdown();
 
         // 2) Detach the editor BEFORE removing the menu bar. The editor is set as
         //    non-owned content with resizeToFit = true, so while it is attached,

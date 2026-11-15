@@ -7,6 +7,7 @@
 #include "ArchiveUrlOverlay.h"
 #include "LoadProgressOverlay.h"
 #include "SfzFileBrowser.h"
+#include "../util/SharedAudio.h"
 
 class XivaProcessor;
 
@@ -253,6 +254,7 @@ private:
     void startPreview (const juce::File& f);
     void startPreviewFromReader (juce::AudioFormatReader* reader);  // takes ownership
     void stopPreview();
+    void ensurePreviewDevice();
     void updatePlayButton();
 
     // ── Post-load "instrument decoding" indicator ─────────────────────────────

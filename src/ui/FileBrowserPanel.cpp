@@ -400,6 +400,7 @@ FileBrowserPanel::~FileBrowserPanel()
     transport.stop();
     transport.setSource (nullptr);   // blocks until audio thread releases reader
     readerSource.reset();            // now safe to destroy
+    XivaSharedAudio::detach (&sourcePlayer);
     sourcePlayer.setSource (nullptr);
     if (deviceManager.getCurrentAudioDevice() != nullptr)
         deviceManager.removeAudioCallback (&sourcePlayer);
@@ -763,11 +764,7 @@ void FileBrowserPanel::startPreview (const juce::File& f)
     transport.setSource (nullptr);   // blocks until audio thread releases reader
     readerSource.reset();            // now safe to destroy
 
-    if (deviceManager.getCurrentAudioDevice() == nullptr)
-    {
-        deviceManager.initialise (0, 2, nullptr, true, {}, nullptr);
-        deviceManager.addAudioCallback (&sourcePlayer);
-    }
+    ensurePreviewDevice();
 
     auto* reader = formatManager.createReaderFor (f);
     if (reader == nullptr) return;   // unsupported format or file not ready
@@ -790,6 +787,22 @@ void FileBrowserPanel::startPreview (const juce::File& f)
     transport.start();
 
     updatePlayButton();
+}
+
+// Preview plays through the app's own audio device when there is one (ASIO and exclusive drivers
+// can't be opened a second time); otherwise through a private device as before (plugin builds).
+void FileBrowserPanel::ensurePreviewDevice()
+{
+    if (XivaSharedAudio::available())
+    {
+        XivaSharedAudio::attach (&sourcePlayer);
+        return;
+    }
+    if (deviceManager.getCurrentAudioDevice() == nullptr)
+    {
+        deviceManager.initialise (0, 2, nullptr, true, {}, nullptr);
+        deviceManager.addAudioCallback (&sourcePlayer);
+    }
 }
 
 void FileBrowserPanel::stopPreview()
@@ -871,11 +884,7 @@ void FileBrowserPanel::startPreviewFromReader (juce::AudioFormatReader* reader)
         return;
     }
 
-    if (deviceManager.getCurrentAudioDevice() == nullptr)
-    {
-        deviceManager.initialise (0, 2, nullptr, true, {}, nullptr);
-        deviceManager.addAudioCallback (&sourcePlayer);
-    }
+    ensurePreviewDevice();
 
     readerSource = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
     transport.setSource (readerSource.get(), 0, nullptr, reader->sampleRate);
