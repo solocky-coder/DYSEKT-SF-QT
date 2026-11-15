@@ -4023,7 +4023,10 @@ void XivaProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // A Network MIDI track is an external destination: forward the live MIDI
     // input to its per-device sink and remove it from the internal engine path.
     // Clip playback is already handled by SequencerEngine::processBlock().
-    if (selectedTarget.player == LiveTargetPlayer::network)
+    // While the Slicer trim bar is open, live notes audition the sample being trimmed, whatever
+    // arranger track happens to be selected, so they are neither forwarded nor cleared below.
+    const bool liveTrimAudition = trimModeActive.load (std::memory_order_relaxed);
+    if (selectedTarget.player == LiveTargetPlayer::network && ! liveTrimAudition)
     {
         // Standalone forwards this straight from the MIDI input thread (see MidiRouter),
         // so only do it here when that path is not active (plugin build).
@@ -4124,7 +4127,7 @@ void XivaProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             {
                 const auto msg = meta.getMessage();
                 if (msg.isController()
-                    || (inAddZoneTrimAudition && (msg.isNoteOn() || msg.isNoteOff())))
+                    || ((inAddZoneTrimAudition || liveTrimAudition) && (msg.isNoteOn() || msg.isNoteOff())))
                     preservedLiveEvents.addEvent (msg, meta.samplePosition);
             }
             midi.clear();
