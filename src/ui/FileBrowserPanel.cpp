@@ -343,6 +343,12 @@ FileBrowserPanel::FileBrowserPanel (XivaProcessor& p)
     loadCustomBookmarks();
     rebuildBookmarkBar();
 
+    closeBtn.setTooltip ("Close the browser without loading a file");
+    closeBtn.setColour (juce::TextButton::buttonColourId,  getTheme().button);
+    closeBtn.setColour (juce::TextButton::textColourOnId,  getTheme().foreground);
+    closeBtn.setColour (juce::TextButton::textColourOffId, getTheme().foreground);
+    closeBtn.onClick = [this] { if (onCloseRequested) onCloseRequested(); };
+    addAndMakeVisible (closeBtn);
     addBmBtn.setButtonText ("+");
     addBmBtn.setTooltip    ("Add folder bookmark");
     addBmBtn.setColour (juce::TextButton::buttonColourId,  getTheme().button);
@@ -457,6 +463,9 @@ void FileBrowserPanel::resized()
             volumeSlider.setBounds (ctl.withSizeKeepingCentre (ctl.getWidth(), 24));
         }
 
+        closeBtn.setBounds (benchMain.getRight() - 92, benchMain.getY() + 3, 84, 24);
+        closeBtn.toFront (false);
+
         // Files card: 28 px header, then the list
         auto files = benchMain.withTrimmedTop (30).reduced (4, 0).withTrimmedBottom (4);
         if (archiveViewActive) { archiveList.setVisible (true);  sfzBrowser.setVisible (false); archiveList.setBounds (files); }
@@ -466,6 +475,8 @@ void FileBrowserPanel::resized()
 
     // All layout happens inside the inner screen area (4 px inset on all sides).
     auto inner = getLocalBounds().reduced (4);
+    closeBtn.setBounds (inner.getRight() - 70, inner.getY() + 2, 66, kBmH - 4);
+    closeBtn.toFront (false);
 
     // ── Preview bar at the BOTTOM of the inner area ───────────────────────────
     if (previewVisible)

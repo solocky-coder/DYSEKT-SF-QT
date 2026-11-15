@@ -644,6 +644,7 @@ XivaEditor::XivaEditor (XivaProcessor& p)
 #else
  navRail.setSeqAvailable (false);
 #endif
+ browserPanel.onCloseRequested = [this] { if (initBrowserOpen || activeSlot == SlotContent::Browser) toggleBrowserPanel(); };
  addChildComponent (slicerLoadButton);
  slicerLoadButton.onClick = [this] { openBrowserForTab(); };
  sliceHeader.onLoad = [this] { openBrowserForTab(); };

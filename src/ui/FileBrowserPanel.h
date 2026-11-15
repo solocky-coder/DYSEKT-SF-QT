@@ -232,6 +232,8 @@ public:
     void refreshTheme();
 
     std::function<void()> onFileLoaded;
+    /** Fired by the CLOSE button: the host dismisses the browser and returns to the previous view. */
+    std::function<void()> onCloseRequested;
     std::function<void (const juce::File&)> onLoadRequest;
 
     void setBrowserMode (SfzFileBrowser::Mode m);
@@ -309,6 +311,7 @@ private:
     juce::Array<ArchiveBookmark>       archiveBookmarks;
     juce::OwnedArray<RemovableButton>  archiveBtns;
     juce::TextButton                      addArchiveBtn;
+    juce::TextButton                      closeBtn { "CLOSE" };
     std::unique_ptr<ArchiveUrlOverlay>    archiveUrlOverlay;
     std::unique_ptr<ArchiveMessageOverlay> archiveMessageOverlay;
 
