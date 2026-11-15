@@ -292,9 +292,12 @@ public:
     void paint (juce::Graphics& g) override
     {
         {
-            g.fillAll (Base::SurfaceAlt);
-            g.setColour (Base::Border);
-            g.fillRect (getLocalBounds().removeFromBottom (1));
+            // Bench card: rounded surface inset 2px from the bar's bounds
+            const auto cardR = getLocalBounds().toFloat().reduced (2.0f);
+            g.setColour (getTheme().waveformBg);
+            g.fillRoundedRectangle (cardR, getTheme().cornerRadius);
+            g.setColour (getTheme().separator);
+            g.drawRoundedRectangle (cardR.reduced (0.5f), getTheme().cornerRadius, 1.0f);
         }
 
         // Locator captions, painted the same way FloatingTransportBar's

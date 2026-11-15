@@ -465,10 +465,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         const auto& theme = getTheme();
-        g.setColour (theme.header.darker (0.12f));
-        g.fillRect (getLocalBounds());
-        g.setColour (theme.separator);
-        g.fillRect (getWidth() - 1, 0, 1, getHeight());
+        // The card surface (rounded fill + border) is drawn by ArrangeView behind this component.
 
         auto content = getLocalBounds().reduced (12);
         if (! hasTrack())
@@ -487,7 +484,7 @@ public:
         auto idRow = content.removeFromTop (kIdentityH);
         auto swatch = idRow.removeFromLeft (kIdentityH).reduced (2).toFloat();
         g.setColour (info.colour);
-        g.fillRect (swatch);
+        g.fillRoundedRectangle (swatch, 8.0f);
         g.setColour (info.colour.contrasting (0.85f));
         g.setFont (XivaLookAndFeel::makeFont (16.0f, true));
         g.drawText (arrangerTrackName (info).substring (0, 1).toUpperCase(), swatch.toNearestInt(),

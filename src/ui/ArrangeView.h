@@ -506,17 +506,23 @@ public:
         {
             auto inspectorCol = r.removeFromLeft (kInspectorW);
             inspectorCol.removeFromTop (miniArrangerHeight() + kRulerH);
-            inspector.setBounds (inspectorCol);
+            inspectorCardR = inspectorCol.withTrimmedRight (3).withTrimmedBottom (3);
+            inspector.setBounds (inspectorCardR);
         }
         else
+        {
+            inspectorCardR = {};
             inspector.setBounds ({});
+        }
 
         auto leftCol = r.removeFromLeft (kStripW);
         leftCol.removeFromTop (miniArrangerHeight() + kRulerH);
-        trackStrip.setBounds (leftCol);
+        stripCardR = leftCol.withTrimmedRight (3).withTrimmedBottom (3);
+        trackStrip.setBounds (stripCardR);
         trackStrip.setTrackHeight (trackH);
 
         gridArea = r;
+        gridCardR = r.withTrimmedLeft (3).withTrimmedBottom (3);
         miniArrangerBounds = gridArea.removeFromTop (miniArrangerHeight());
         // In collapsed mode the horizontal scrollbar uses the full overview
         // strip; the toggle is in the toolbar, beside INSPECTOR.
@@ -533,24 +539,41 @@ public:
         const auto& theme = getTheme();
         auto b = getLocalBounds();
 
-        // ── LCD-style frame — flat, square-cornered, no gradient, no glow ────
-        g.setColour (theme.waveformBg);
-        g.fillRoundedRectangle (b.toFloat(), getTheme().cornerRadius);
-        g.setColour (theme.separator);
-        g.drawRoundedRectangle (b.toFloat().reduced (0.5f), getTheme().cornerRadius, 1.0f);
+        // ── Bench cards: toolbar, inspector, track strip and clip grid each sit on
+        // their own rounded surface over the app background. ──────────────────
+        const float cr = theme.cornerRadius;
+        auto card = [&] (juce::Rectangle<int> r, juce::Colour fill)
+        {
+            if (r.isEmpty()) return;
+            g.setColour (fill);
+            g.fillRoundedRectangle (r.toFloat(), cr);
+            g.setColour (theme.separator);
+            g.drawRoundedRectangle (r.toFloat().reduced (0.5f), cr, 1.0f);
+        };
+        card (inspectorCardR, theme.waveformBg);
+        card (stripCardR,     theme.waveformBg);
 
-        // Clip all track content to the inner screen rect
+        // Clip all track content to the inner screen rect, and the grid to its rounded card
         g.saveState();
         g.reduceClipRegion (b.reduced (3));
 
         paintArrangeHeader (g);
-        paintMiniArranger (g);
-        paintRuler (g);
-        paintTrackRows (g);
-        paintLoopOverlay (g);
-        paintPlayhead (g);
-        paintRubberBand (g);
-        paintDrawClipPreview (g);
+        {
+            g.saveState();
+            juce::Path gridPath;
+            gridPath.addRoundedRectangle (gridCardR.toFloat(), cr);
+            g.reduceClipRegion (gridPath);
+            paintMiniArranger (g);
+            paintRuler (g);
+            paintTrackRows (g);
+            paintLoopOverlay (g);
+            paintPlayhead (g);
+            paintRubberBand (g);
+            paintDrawClipPreview (g);
+            g.restoreState();
+        }
+        g.setColour (theme.separator);
+        g.drawRoundedRectangle (gridCardR.toFloat().reduced (0.5f), cr, 1.0f);
 
         g.restoreState();
     }
@@ -1292,6 +1315,7 @@ private:
     bool inspectorVisible = false;
 
     juce::Rectangle<int>  gridArea, miniArrangerBounds, rulerBounds, clipGridBounds;
+    juce::Rectangle<int>  inspectorCardR, stripCardR, gridCardR;   // Bench card surfaces
     enum class MiniDragMode { None, Move, leftEdge, rightEdge };
     MiniDragMode miniDragMode = MiniDragMode::None;
     double miniDragStartX = 0.0, miniDragStartScroll = 0.0, miniDragStartZoom = 1.0;
@@ -2575,10 +2599,14 @@ private:
     void paintArrangeHeader (juce::Graphics& g) const
     {
         const auto& theme = getTheme();
-        const auto panel = dockedToolbarBounds();
-        g.setColour (theme.header);
+        const auto panel = dockedToolbarBounds().withTrimmedBottom (4);
+        g.setColour (theme.waveformBg);
         if (theme.isBench())
+        {
             g.fillRoundedRectangle (panel.toFloat(), theme.cornerRadius);
+            g.setColour (theme.separator);
+            g.drawRoundedRectangle (panel.toFloat().reduced (0.5f), theme.cornerRadius, 1.0f);
+        }
         else
         {
             g.fillRect (panel);
@@ -2622,20 +2650,7 @@ private:
      *  so they stay visible on top of trackStrip / inspector. The bottom line
      *  is 2px, straddling the seam, so it reads as a border rather than a
      *  rounding artifact. */
-    void paintOverChildren (juce::Graphics& g) override
-    {
-        const auto panel = dockedToolbarBounds();
-        const auto& theme = getTheme();
-        g.setColour (theme.separator);
-        g.fillRect (panel.getX(), panel.getBottom() - 1, panel.getWidth(), 2);
-
-        // Column divider: 2px, full height, on the seam between the left
-        // columns (toolbar panel / inspector / track header strip) and the
-        // grid side (mini arranger / ruler / clip grid). Lighter than the
-        // ordinary separator so the seam is visible at a glance.
-        g.setColour (theme.separator.interpolatedWith (theme.foreground, 0.22f));
-        g.fillRect (panel.getRight() - 2, panel.getY(), 2, getHeight() - 3 - panel.getY());
-    }
+    void paintOverChildren (juce::Graphics&) override {}   // card borders are drawn in paint()
 
     int miniArrangerHeight() const noexcept
     {
@@ -3091,8 +3106,11 @@ private:
             ? info.colour.withSaturation (0.10f).withBrightness (0.30f)
             : info.colour;
 
-        g.setColour (tile);
-        g.fillRoundedRectangle (clipR.reduced (1, 1).toFloat(), getTheme().isBench() ? 5.0f : 0.0f);
+        // Bench: soft tinted tile with a 1px outline in the track colour.
+        g.setColour (tile.withAlpha (muted ? 0.35f : 0.20f));
+        g.fillRoundedRectangle (clipR.reduced (1, 1).toFloat(), 6.0f);
+        g.setColour (tile.withAlpha (muted ? 0.45f : 0.65f));
+        g.drawRoundedRectangle (clipR.reduced (1, 1).toFloat().reduced (0.5f), 6.0f, 1.0f);
 
         // Selection reads as a single accent-colour edge line rather than a
         // brightened outline — an outline implies "this shape has a
@@ -3110,8 +3128,7 @@ private:
         if (trackH >= 20)
         {
             g.setFont (juce::Font (juce::jmin (14.f, (float)trackH * 0.24f), juce::Font::bold));
-            g.setColour (muted ? juce::Colours::white.withAlpha (0.45f)
-                               : juce::Colours::white.withAlpha (0.92f));
+            g.setColour (muted ? tile.withAlpha (0.55f) : tile.brighter (0.25f));
             g.drawText (arrangerTrackName (info),
                         clipR.getX() + 6, clipR.getY() + 2,
                         juce::jmax (0, clipR.getWidth() - 26),
@@ -3182,14 +3199,16 @@ private:
             ? info.colour.withSaturation (0.10f).withBrightness (0.30f)
             : info.colour;
 
-        g.setColour (tile);
-        g.fillRoundedRectangle (clipR.reduced (1, 1).toFloat(), getTheme().isBench() ? 5.0f : 0.0f);
+        g.setColour (tile.withAlpha (muted ? 0.35f : 0.20f));
+        g.fillRoundedRectangle (clipR.reduced (1, 1).toFloat(), 6.0f);
+        g.setColour (tile.withAlpha (muted ? 0.45f : 0.65f));
+        g.drawRoundedRectangle (clipR.reduced (1, 1).toFloat().reduced (0.5f), 6.0f, 1.0f);
 
         // Waveform, decoded from the recording itself — see
         // getAudioClipWaveform()/paintAudioClipWaveform() below. Peaks are
         // cached per file so this is a lookup + line-draw here, not a
         // re-decode on every repaint.
-        paintAudioClipWaveform (g, clipR, clip.filePath, muted);
+        paintAudioClipWaveform (g, clipR, clip.filePath, muted, tile);
 
         if (isSel)
         {
@@ -3205,8 +3224,7 @@ private:
         if (trackH >= 20)
         {
             g.setFont (juce::Font (juce::jmin (14.f, (float) trackH * 0.24f), juce::Font::bold));
-            g.setColour (muted ? juce::Colours::white.withAlpha (0.45f)
-                               : juce::Colours::white.withAlpha (0.92f));
+            g.setColour (muted ? tile.withAlpha (0.55f) : tile.brighter (0.25f));
             g.drawText (juce::File (clip.filePath).getFileNameWithoutExtension(),
                         clipR.getX() + 6, clipR.getY() + 2,
                         juce::jmax (0, clipR.getWidth() - 26),
@@ -3285,10 +3303,10 @@ private:
      *  resampling the fixed-resolution bucket data to whatever pixel width
      *  the clip currently occupies (so this needs no rebuild on zoom). */
     void paintAudioClipWaveform (juce::Graphics& g, juce::Rectangle<int> clipR,
-                                 const juce::String& filePath, bool muted) const
+                                 const juce::String& filePath, bool muted, juce::Colour tile) const
     {
         const auto& peaks = getAudioClipWaveform (filePath);
-        paintPeaksInRect (g, clipR, peaks, juce::Colours::black.withAlpha (muted ? 0.30f : 0.50f));
+        paintPeaksInRect (g, clipR, peaks, tile.withAlpha (muted ? 0.45f : 0.80f));
     }
 
     /** Shared min/max peak renderer — used both for a finished clip's

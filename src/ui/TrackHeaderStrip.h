@@ -88,7 +88,7 @@ public:
         const auto& theme = getTheme();
         // One step lighter than the clip grid (see ArrangeView::gridBackground)
         // so the header column and the grid read as separate surfaces.
-        g.fillAll (theme.waveformBg.interpolatedWith (juce::Colours::white, 0.035f));
+        // Card surface is drawn by ArrangeView behind this component.
         g.setOrigin (0, -scrollY);   // rows scroll with the arranger's vertical scroll bar
         const auto nest    = engine.getTrackNesting();
         const auto visible = visibleFrom (nest);
