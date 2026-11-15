@@ -113,18 +113,9 @@ public:
             const bool active  = isActive ((Item) i);
             const bool hovered = (i == hoverItem);
 
-            if (active)
-            {
-                g.setColour (t.accent);
-                g.fillRoundedRectangle (r, 12.0f * sf);
-            }
-            else if (hovered)
-            {
-                g.setColour (t.buttonHover);
-                g.fillRoundedRectangle (r, 12.0f * sf);
-            }
+            // Active items are shown by an accent-coloured icon and label only; hover just brightens the ink.
 
-            const auto ink = active ? t.waveformBg : (hovered ? t.foreground : t.foreground.withAlpha (0.62f));
+            const auto ink = active ? t.accent : (hovered ? t.foreground : t.foreground.withAlpha (0.62f));
 
             auto iconBox = juce::Rectangle<float> (22.0f * sf, 22.0f * sf)
                                .withCentre ({ r.getCentreX(), r.getY() + 19.0f * sf });
@@ -169,7 +160,7 @@ private:
     bool isActive (Item it) const noexcept
     {
         // A tab is only highlighted while no panel (Browser/Mixer/EQ) covers it, so two items are never lit at once.
-        const bool anyPanel = panelActive[Browser] || panelActive[Mixer] || panelActive[Eq];
+        const bool anyPanel = panelActive[Browser] || panelActive[Mixer] || panelActive[Eq] || panelActive[Seq];
         switch (it)
         {
             case Slicer: return currentTab == 0 && ! anyPanel;
