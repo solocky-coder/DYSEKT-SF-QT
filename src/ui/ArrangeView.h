@@ -259,6 +259,7 @@ public:
                 b.setColour (juce::TextButton::textColourOffId,  xiva::bench::Text::Secondary);
                 b.setColour (juce::TextButton::textColourOnId,   xiva::bench::Base::White);
                 b.getProperties().set ("flatFill", true);
+                b.getProperties().set ("chip", true);
                 b.onClick = [this, itemId] { transport.setSnapItemId (itemId); };
                 addAndMakeVisible (b);
             }
@@ -294,6 +295,7 @@ public:
                 b.setColour (juce::TextButton::textColourOffId, xiva::bench::Text::Secondary);
                 b.setColour (juce::TextButton::textColourOnId, xiva::bench::Base::White);
                 b.getProperties().set ("flatFill", true);
+                b.getProperties().set ("chip", true);
                 addAndMakeVisible (b);
             }
 
@@ -345,6 +347,7 @@ public:
         miniArrangerToggleButton.setColour (juce::TextButton::textColourOffId, xiva::bench::Text::Secondary);
         miniArrangerToggleButton.setColour (juce::TextButton::textColourOnId, xiva::bench::Base::White);
         miniArrangerToggleButton.getProperties().set ("flatFill", true);
+        miniArrangerToggleButton.getProperties().set ("chip", true);
         miniArrangerToggleButton.onClick = [this]
         {
             miniArrangerExpanded = ! miniArrangerExpanded;
@@ -2756,9 +2759,11 @@ private:
         {
             const float lx = tickToX (loopStart);
             const float rx = tickToX (loopEnd);
-            g.setColour (theme.accent.withAlpha (0.22f));
-            g.fillRect (lx, (float)rulerBounds.getY(), rx - lx,
-                        (float)rulerBounds.getHeight());
+            g.setColour (theme.accent.withAlpha (0.85f));
+            g.fillRoundedRectangle (lx, (float) rulerBounds.getY() + 2.0f, rx - lx, 5.0f, 2.5f);
+            g.setColour (theme.accent.withAlpha (0.55f));
+            g.fillRect (lx, (float) rulerBounds.getY(), 1.0f, (float) rulerBounds.getHeight());
+            g.fillRect (rx - 1.0f, (float) rulerBounds.getY(), 1.0f, (float) rulerBounds.getHeight());
         }
 
         const int64_t ppq    = MidiClip::kPPQ;

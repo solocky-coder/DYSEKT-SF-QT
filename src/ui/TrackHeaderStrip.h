@@ -130,7 +130,7 @@ public:
             // still leaving enough black underneath for the name text (see
             // below, drawn in full-opacity info.colour on top) to sit
             // against without flattening into its own background.
-            g.setColour (info.colour.withAlpha (sel ? 0.62f : 0.14f));
+            g.setColour (info.colour.withAlpha (sel ? 0.20f : 0.07f));
             g.fillRoundedRectangle (rowR.reduced (0, 1).toFloat(), theme.isBench() ? 6.0f : 0.0f);
 
             }

@@ -142,6 +142,22 @@ void XivaLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& but
     // roles (M/S/R's amber/gold/red) render as distinct solid tiles
     // instead of collapsing to one colour. Square corners, no highlight
     // brightening — the colour itself carries the state.
+    // "chip" buttons (arranger quantize / edit tools): rounded, and the on-state follows the
+    // CURRENT theme accent rather than a colour captured when the button was created.
+    if (button.getProperties().getWithDefault ("chip", false))
+    {
+        auto fill = toggled ? getTheme().accent
+                            : (isHighlighted ? getTheme().buttonHover : getTheme().button);
+        g.setColour (fill);
+        g.fillRoundedRectangle (bounds, 7.0f);
+        if (! toggled)
+        {
+            g.setColour (getTheme().separator);
+            g.drawRoundedRectangle (bounds.reduced (0.5f), 7.0f, 1.0f);
+        }
+        return;
+    }
+
     if (button.getProperties().getWithDefault ("flatFill", false))
     {
         auto roleFill = toggled ? button.findColour (juce::TextButton::buttonOnColourId)
@@ -170,6 +186,11 @@ void XivaLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& butto
     if (button.getProperties().getWithDefault ("flatOutline", false))
     {
         textCol = getTheme().accent;
+    }
+    else if (button.getProperties().getWithDefault ("chip", false))
+    {
+        textCol = button.getToggleState() ? getTheme().waveformBg
+                                          : getTheme().foreground.withAlpha (0.8f);
     }
     else
     {
