@@ -525,9 +525,17 @@ void Sf2InstrumentWorkspace::handlePresetRightClicked (int idx, juce::Point<int>
     {
         const uint32_t chromaMask = processor.chromaticSliceChannelMask.load (std::memory_order_relaxed);
         const uint32_t sfz2Mask   = processor.sfzPlayer2ChannelMask.load (std::memory_order_relaxed);
-        const bool blocked = (chromaMask | sfz2Mask) & (1u << ch);
+        bool blocked = (chromaMask | sfz2Mask) & (1u << ch);
+        // A channel already used by ANOTHER preset is greyed out; this preset's own channel stays ticked.
+        bool takenByOther = false, isOwn = false;
+        for (const auto& [pIdx, pCh] : programGrid.getPresetChannels())
+            if (pCh == ch)
+            {
+                if (pIdx == idx) isOwn = true;
+                else             takenByOther = true;
+            }
         menu.addItem (ch, "Assign MIDI channel " + juce::String (ch),
-                      ! blocked);
+                      ! blocked && ! takenByOther, isOwn);
     }
 
     const float ms = XivaLookAndFeel::getMenuScale();
@@ -556,6 +564,10 @@ void Sf2InstrumentWorkspace::handleChannelAssigned (int presetIdx, int ch)
         const uint32_t sfz2Mask   = processor.sfzPlayer2ChannelMask.load (std::memory_order_relaxed);
         if ((chromaMask | sfz2Mask) & (1u << ch))
             return;   // channel is slicer-owned or sfzPlayer2-owned — silently reject
+
+        for (const auto& [pIdx, pCh] : programGrid.getPresetChannels())
+            if (pCh == ch && pIdx != presetIdx)
+                return;   // already assigned to another preset
     }
 
     if (ch == 0)
