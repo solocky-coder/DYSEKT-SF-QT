@@ -423,6 +423,55 @@ FloatingTransportBar::Layout FloatingTransportBar::computeLayout() const
     Layout L;
  auto area = getLocalBounds();
 
+    if (docked)
+    {
+        // Compact card layout (Bench style): small captions over the fields,
+        // transport cluster beside the position, view switcher at the far right.
+        auto row = area.reduced (2).reduced (10, 0);
+        const int capH = 12, fieldH = juce::jmin (28, juce::jmax (16, row.getHeight() - capH - 8));
+        const int fieldY = row.getCentreY() - (capH + fieldH) / 2 + capH;
+        const int btnH = juce::jmin (28, row.getHeight() - 8);
+        const int btnY = row.getCentreY() - btnH / 2;
+        auto fieldAt = [&] (int x, int w) { return juce::Rectangle<int> (x, fieldY, w, fieldH); };
+        auto capAt   = [&] (const juce::Rectangle<int>& f) { return juce::Rectangle<int> (f.getX(), f.getY() - capH - 1, f.getWidth(), capH); };
+
+        // Right group, peeled from the right edge.
+        const int gap = 4;
+        L.eqButtonField      = juce::Rectangle<int> (row.getRight() - 92, btnY, 92, btnH);
+        L.arrangeButtonField = juce::Rectangle<int> (L.eqButtonField.getX() - gap - 80, btnY, 80, btnH);
+        L.mixerButtonField   = juce::Rectangle<int> (L.arrangeButtonField.getX() - gap - 66, btnY, 66, btnH);
+        int rightEdge = L.mixerButtonField.getX() - 14;
+        L.floatField = juce::Rectangle<int> (rightEdge - 56, btnY, 56, btnH);
+        rightEdge = L.floatField.getX() - gap;
+        if (linkPtr != nullptr)
+        {
+            L.linkField = juce::Rectangle<int> (rightEdge - 56, btnY, 56, btnH);
+            rightEdge = L.linkField.getX() - 14;
+        }
+
+        // Left group, scaled down if the window is narrow.
+        const int baseW = 124 + 14 + 212 + 14 + 118 + 6 + 118 + 14 + 56 + 10 + 64;
+        const float k = juce::jlimit (0.6f, 1.0f, (float) (rightEdge - row.getX()) / (float) baseW);
+        auto sc = [k] (int v) { return juce::roundToInt ((float) v * k); };
+        int x = row.getX();
+        L.positionField = fieldAt (x, sc (124));            x += sc (124) + 14;
+        L.posCap = capAt (L.positionField);
+        const int tw = 6 * sc (32) + 5 * 4;
+        L.transportRow = juce::Rectangle<int> (x, btnY, tw, btnH);  x += tw + 14;
+        L.leftLocField  = fieldAt (x, sc (118));            x += sc (118) + 6;
+        L.rightLocField = fieldAt (x, sc (118));            x += sc (118) + 14;
+        L.lCap = capAt (L.leftLocField);
+        L.rCap = capAt (L.rightLocField);
+        L.locatorsField = L.leftLocField.getUnion (L.rightLocField);
+        L.tempoField = fieldAt (x, sc (56));                x += sc (56) + 10;
+        L.tempoCaption = capAt (L.tempoField);
+        L.bpmCap = L.tempoCaption;
+        L.gridField = fieldAt (x, sc (64));
+        L.gridCap = capAt (L.gridField);
+        L.gridButtonsFit = false;
+        return L;
+    }
+
 
     // Docked: the title strip is empty (switcher + Float live in the content
     // row), so drop it and centre the content row vertically in the panel
@@ -607,9 +656,34 @@ void FloatingTransportBar::resized()
     // The floating title strip's buttons are 24px tall; the docked content
     // row's are 40px. Size the view-switcher text to fit its current home
     // instead of always using the 26pt readout size (clips in the strip).
-    const float viewFontSize = docked ? transportTextSize : 15.0f;
+    const float viewFontSize = docked ? 12.0f : 15.0f;
     for (auto* b : { &mixerButton, &arrangeButton, &eqButton })
         b->getProperties().set ("transportFontSize", viewFontSize);
+
+    {
+        // Docked = compact chips + smaller readouts; floating keeps the large look.
+        const float big = docked ? 12.0f : transportTextSize;
+        for (juce::Button* b : { (juce::Button*) &floatButton, (juce::Button*) &linkButton })
+            b->getProperties().set ("transportFontSize", big);
+        gridCombo.getProperties().set ("transportFontSize", big);
+        for (juce::Button* b : { (juce::Button*) &mixerButton, (juce::Button*) &arrangeButton, (juce::Button*) &eqButton, (juce::Button*) &floatButton, (juce::Button*) &linkButton })
+            b->getProperties().set ("chip", docked);
+        for (auto* b : { viewMixerBtn, viewArrangeBtn, viewEqBtn })
+            if (b != nullptr)
+            {
+                b->getProperties().set ("transportFontSize", (double) viewFontSize);
+                b->getProperties().set ("chip", docked);
+            }
+        {
+            const auto bg = docked ? juce::Colours::transparentBlack : Base::Background;
+            for (juce::Label* l : { (juce::Label*) &positionLabel, (juce::Label*) &tempoLabel, (juce::Label*) &leftLocatorLabel, (juce::Label*) &rightLocatorLabel })
+                l->setColour (juce::Label::backgroundColourId, bg);
+        }
+        positionLabel.setFont (XivaLookAndFeel::makeMonoFont (docked ? 18.0f : 26.0f, true));
+        tempoLabel.setFont    (XivaLookAndFeel::makeMonoFont (docked ? 17.0f : transportTextSize, true));
+        for (auto* f : { &leftLocatorLabel, &rightLocatorLabel })
+            f->setFont (XivaLookAndFeel::makeMonoFont (docked ? 16.0f : 26.0f, true));
+    }
 
     if (docked)
     {
@@ -648,7 +722,7 @@ void FloatingTransportBar::resized()
 
     positionLabel.setBounds (L.positionField);
  auto transport = L.transportRow;
- const int btnGap = BenchMetrics::halfGrid;
+ const int btnGap = docked ? 4 : BenchMetrics::halfGrid;
  const int n = 6;
  const int btnW = (transport.getWidth() - btnGap * (n - 1)) / n;
  for (auto* b : { &toStartButton, &backButton, &playButton, &stopButton, &recordButton, &cycleButton })
@@ -694,6 +768,31 @@ void FloatingTransportBar::paint (juce::Graphics& g)
 {
  const auto L = computeLayout();
 
+
+    if (docked)
+    {
+        const auto& th = getTheme();
+        g.fillAll (th.darkBar);
+        const auto card = getLocalBounds().toFloat().reduced (2.0f);
+        g.setColour (th.waveformBg);
+        g.fillRoundedRectangle (card, th.cornerRadius);
+        g.setColour (th.separator);
+        g.drawRoundedRectangle (card.reduced (0.5f), th.cornerRadius, 1.0f);
+
+        g.setFont (XivaLookAndFeel::makeFont (10.0f));
+        g.setColour (th.foreground.withAlpha (0.55f));
+        g.drawText ("POSITION", L.posCap, juce::Justification::centredLeft);
+        g.drawText ("L",        L.lCap,   juce::Justification::centredLeft);
+        g.drawText ("R",        L.rCap,   juce::Justification::centredLeft);
+        g.drawText ("BPM",      L.bpmCap, juce::Justification::centredLeft);
+        g.drawText ("GRID",     L.gridCap, juce::Justification::centredLeft);
+
+        // Readout wells
+        g.setColour (th.darkBar);
+        for (auto r : { L.positionField, L.leftLocField, L.rightLocField, L.tempoField })
+            g.fillRoundedRectangle (r.toFloat(), 6.0f);
+        return;
+    }
 
     g.fillAll (Base::Background);
 

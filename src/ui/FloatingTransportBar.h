@@ -133,7 +133,7 @@ public:
         viewEqBtn      = eqBtn;
         for (auto* button : { viewMixerBtn, viewArrangeBtn, viewEqBtn })
             if (button != nullptr)
-                button->getProperties().set ("transportFontSize", 26.0);
+                button->getProperties().set ("transportFontSize", docked ? 12.0 : 26.0);
         syncViewButtons();
         resized();
     }
@@ -214,6 +214,8 @@ private:
         juce::Rectangle<int> gridButtonsField;  // wider radio-button slot — used when there is
         bool gridButtonsFit = false;            // which of the two the row actually has room for
         juce::Rectangle<int> linkField;
+        juce::Rectangle<int> leftLocField, rightLocField;           // docked layout only
+        juce::Rectangle<int> posCap, lCap, rCap, bpmCap, gridCap;   // docked captions
  int divider0 = 0, divider1 = 0, divider2 = 0;
     };
     Layout computeLayout() const;
