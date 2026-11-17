@@ -1098,9 +1098,17 @@ private:
                     const int bufEnd   = desc.endSample
                                         - juce::jmin (releaseSamples, noteLen - 1);
 
-                    if (bufEnd > bufStart)
+                    if (bufEnd > bufStart + 2)
                     {
-                        desc.loopStart = bufStart;
+                        // The loop must start AFTER the note's first sample: the
+                        // processor builds a one-shot head [startSample, loopStart)
+                        // chained into the looping tail, and rejects loopStart ==
+                        // startSample (an empty head), which silently turned every
+                        // loop into a plain one-shot. Keep the attack in the head
+                        // (up to 250 ms, never more than half the sustain).
+                        const int sustainLen = bufEnd - bufStart;
+                        const int headLen    = juce::jmax (1, juce::jmin ((int) (sampleRate * 0.25), sustainLen / 2));
+                        desc.loopStart = bufStart + headLen;
                         desc.loopEnd   = bufEnd;
                     }
                     break;   // first matching region wins
