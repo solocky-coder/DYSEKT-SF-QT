@@ -694,7 +694,11 @@ void ZoneMapView::showZoneContextMenu (const juce::Uuid& zoneId,
     {
         const auto& r = *layerHits[i];
         layerIds.push_back (r.id);
-        const auto label = juce::String ((int) i + 1) + ". " + r.label
+        // Numbered by list position, matching the "ZONE n" in the zone panel header.
+        int listPos = 0;
+        for (size_t zi = 0; zi < instrument->zones.size(); ++zi)
+            if (instrument->zones[zi].id == r.id) { listPos = (int) zi + 1; break; }
+        const auto label = "Zone " + juce::String (listPos) + "  " + r.label
                          + "  [" + UIHelpers::midiNoteToName (r.lowKey)
                          + "-" + UIHelpers::midiNoteToName (r.highKey)
                          + ", v" + juce::String (r.lowVel)

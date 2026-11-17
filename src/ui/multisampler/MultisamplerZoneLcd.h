@@ -63,7 +63,8 @@ public:
         — see MultisamplerEditor's constructor. In the standalone build, only
         the processor's Main bus ever reaches a physical output (there's no
         multi-channel device routing UI in standalone/), so an AUX 1–15
-        choice there is a dead end: audio is rendered but never heard, yet
+        choice there is a dead end: the host has no such outputs, so the
+        voice falls back to Main and sounds mixed in there, yet
         the OUT knob would still look fully functional and the choice would
         still persist in the saved patch. Rather than lock the control
         read-only (which still leaves a dead, confusing knob on screen), the

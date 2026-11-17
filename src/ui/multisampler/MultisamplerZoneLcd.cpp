@@ -148,7 +148,7 @@ juce::String MultisamplerZoneLcd::labelFor (MultisamplerZoneField field) const
         case MultisamplerZoneField::group:       return "GROUP";
         case MultisamplerZoneField::tune:        return "TUNE";
         case MultisamplerZoneField::pan:         return "PAN";
-        case MultisamplerZoneField::gain:        return "GAIN";
+        case MultisamplerZoneField::gain:        return "LEVEL";
         case MultisamplerZoneField::loopEnabled: return "LOOP";
         case MultisamplerZoneField::attack:      return "ATTACK";
         case MultisamplerZoneField::decay:       return "DECAY";
@@ -158,15 +158,15 @@ juce::String MultisamplerZoneLcd::labelFor (MultisamplerZoneField field) const
         case MultisamplerZoneField::resonance:   return "RES";
         case MultisamplerZoneField::outputBus:   return "OUT";
         case MultisamplerZoneField::showInMixer: return "MIX";
-        case MultisamplerZoneField::eq1Freq:     return "FREQ";
-        case MultisamplerZoneField::eq1Gain:     return "GAIN";
-        case MultisamplerZoneField::eq1Bw:       return "BW";
-        case MultisamplerZoneField::eq2Freq:     return "FREQ";
-        case MultisamplerZoneField::eq2Gain:     return "GAIN";
-        case MultisamplerZoneField::eq2Bw:       return "BW";
-        case MultisamplerZoneField::eq3Freq:     return "FREQ";
-        case MultisamplerZoneField::eq3Gain:     return "GAIN";
-        case MultisamplerZoneField::eq3Bw:       return "BW";
+        case MultisamplerZoneField::eq1Freq:     return "FREQ 1";
+        case MultisamplerZoneField::eq1Gain:     return "GAIN 1";
+        case MultisamplerZoneField::eq1Bw:       return "BW 1";
+        case MultisamplerZoneField::eq2Freq:     return "FREQ 2";
+        case MultisamplerZoneField::eq2Gain:     return "GAIN 2";
+        case MultisamplerZoneField::eq2Bw:       return "BW 2";
+        case MultisamplerZoneField::eq3Freq:     return "FREQ 3";
+        case MultisamplerZoneField::eq3Gain:     return "GAIN 3";
+        case MultisamplerZoneField::eq3Bw:       return "BW 3";
         case MultisamplerZoneField::lowVelocity:  return "V LO";
         case MultisamplerZoneField::highVelocity: return "V HI";
         case MultisamplerZoneField::kCount:      break;   // sentinel, never a real field
@@ -447,7 +447,8 @@ juce::String MultisamplerZoneLcd::formatFieldValue (MultisamplerZoneField field)
         case MultisamplerZoneField::outputBus:
             return snapshot.outputBus == 0 ? juce::String ("MAIN")
                                             : "AUX " + juce::String (snapshot.outputBus);
-        case MultisamplerZoneField::showInMixer: return snapshot.showInMixer ? "SHOWN" : "HIDDEN";
+        case MultisamplerZoneField::showInMixer: // A zone routed to an Aux bus always gets a mixer row, whatever this pin says.
+            return snapshot.showInMixer ? "SHOWN" : (snapshot.outputBus > 0 ? "AUTO" : "HIDDEN");
         case MultisamplerZoneField::eq1Freq:
             return snapshot.eq1Freq >= 1000.0f
                        ? juce::String (snapshot.eq1Freq / 1000.0f, 1) + "kHz"

@@ -935,7 +935,8 @@ void MultisamplerEditor::refreshEditLayerCombo()
     for (auto idx : stackIdx)
     {
         const auto& z = instrument.zones[idx];
-        const juce::String label = juce::String (itemId) + ". "
+        // Numbered by list position so it matches the "ZONE n" in the zone panel header.
+        const juce::String label = "Zone " + juce::String ((int) idx + 1) + "  "
             + (z.sampleFile != juce::File() ? z.sampleFile.getFileNameWithoutExtension()
                                              : juce::String ("(no sample)"))
             + "  [" + UIHelpers::midiNoteToName (z.lowKey) + "-" + UIHelpers::midiNoteToName (z.highKey)
