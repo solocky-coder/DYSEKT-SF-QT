@@ -1379,10 +1379,14 @@ void MultisamplerEditor::showDrumPadContextMenu (int note, juce::Point<int> scre
 
     if (primary != nullptr)
     {
-        juce::PopupMenu busMenu;
-        for (int bus = 0; bus <= 15; ++bus)
-            busMenu.addItem (100 + bus, bus == 0 ? "Main" : "Aux " + juce::String (bus), true, primary->outputBus == bus);
-        menu.addSubMenu ("Output bus", busMenu);
+        // Same gate as the zone panel's OUT cell: standalone has no Aux outputs to honour this.
+        if (processor.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+        {
+            juce::PopupMenu busMenu;
+            for (int bus = 0; bus <= 15; ++bus)
+                busMenu.addItem (100 + bus, bus == 0 ? "Main" : "Aux " + juce::String (bus), true, primary->outputBus == bus);
+            menu.addSubMenu ("Output bus", busMenu);
+        }
 
         juce::PopupMenu colMenu;
         colMenu.addItem (299, "Auto colour", true, ! primary->hasCustomColour);

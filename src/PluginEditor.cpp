@@ -2894,6 +2894,11 @@ void XivaEditor::offerDrumKitAutoRouting (const juce::File& sfzFile)
     // user-initiated, so the instrument is not marked dirty.
     multisamplerEditor.setKitMode (true);
 
+    // The standalone app has no Aux 1-15 outputs to route to (the zone panel hides its OUT
+    // cell for the same reason), so offering to assign them would only write dead settings.
+    if (processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+        return;
+
     confirmOverlay = std::make_unique<ConfirmOverlay> (
         "Drum Kit Detected",
         juce::String (classification.numZones) + " zones look like separate one-shot "
