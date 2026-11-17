@@ -53,11 +53,13 @@ public:
         g.setFont (XivaLookAndFeel::makeFont (15.5f, true));
         g.drawText ("Record sample", head.removeFromLeft (180), juce::Justification::centredLeft);
 
-        auto src = head.removeFromRight (250);
+        auto src = head.removeFromRight (370);
         const bool inputSel = (sourceChoice == SliceRecorder::Source::Input);
-        chip (g, src.removeFromLeft (122), "AUDIO INPUT", inputSel, ! recording, 1);
+        chip (g, src.removeFromLeft (112), "AUDIO INPUT", inputSel, ! recording, 1);
         src.removeFromLeft (6);
-        chip (g, src.removeFromLeft (122), "MASTER OUT", ! inputSel, ! recording, 2);
+        chip (g, src.removeFromLeft (108), "MASTER OUT", ! inputSel, ! recording, 2);
+        src.removeFromLeft (14);
+        chip (g, src, "START ON 1ST KEY", startOnKey, ! recording, 6);
 
         // ── Footer: status + buttons ─────────────────────────────────────────
         auto foot = area.removeFromBottom (48);
@@ -69,7 +71,10 @@ public:
         button (g, btns, recording ? "CANCEL" : "CLOSE", false, 5);
 
         const double sr = rec.getSampleRate() > 0.0 ? rec.getSampleRate() : juce::jmax (1.0, processor.getSampleRate());
-        const double secs = (double) rec.getFrames() / sr;
+        rec.snapshot (peaksCopy, markersCopy);
+        const bool waiting = recording && rec.isStartOnFirstKey() && markersCopy.empty();
+        const int origin = (recording && rec.isStartOnFirstKey() && ! markersCopy.empty()) ? markersCopy.front() : 0;
+        const double secs = waiting ? 0.0 : (double) juce::jmax (0, rec.getFrames() - origin) / sr;
         g.setFont (XivaLookAndFeel::makeFont (13.0f, true));
         g.setColour (recording ? t.accent : t.foreground.withAlpha (0.8f));
         g.drawText (formatTime (secs), foot.removeFromLeft (92), juce::Justification::centredLeft);
@@ -77,13 +82,16 @@ public:
         g.setFont (XivaLookAndFeel::makeFont (11.5f));
         g.setColour (t.foreground.withAlpha (0.6f));
         juce::String status;
-        if (recording)
+        if (waiting)
+            status = "Armed - recording starts on your first MIDI key; that key is the start of slice 1.";
+        else if (recording)
             status = juce::String (rec.getNumMarkers()) + " slice markers  -  press any MIDI key to mark a slice"
                      + (rec.isFull() ? "  -  buffer full, press STOP" : "");
         else if (sourceChoice == SliceRecorder::Source::Input && rec.getInputChannelCount() == 0)
             status = "No audio input is enabled. Enable one under Audio / MIDI > Audio Settings.";
         else
-            status = "Press REC, then play MIDI keys to mark slices while it records. Notes are not sounded while recording.";
+            status = startOnKey ? "Press REC to arm; recording starts on your first MIDI key, which becomes the start of slice 1."
+                                : "Press REC, then play MIDI keys to mark slices while it records. Notes are not sounded while recording.";
         g.drawText (status, foot, juce::Justification::centredLeft, true);
 
         // ── Live waveform ────────────────────────────────────────────────────
@@ -208,7 +216,8 @@ private:
         {
             case 1: sourceChoice = SliceRecorder::Source::Input;  break;
             case 2: sourceChoice = SliceRecorder::Source::Output; break;
-            case 4: rec.start (sourceChoice, processor.getSampleRate()); break;
+            case 4: rec.start (sourceChoice, processor.getSampleRate(), startOnKey); break;
+            case 6: startOnKey = ! startOnKey; break;
             case 3:   // STOP & USE
             {
                 auto take = rec.stop();
@@ -227,6 +236,7 @@ private:
 
     XivaProcessor& processor;
     SliceRecorder::Source sourceChoice { SliceRecorder::Source::Input };
+    bool               startOnKey = false;
     std::vector<Hit>   hits;
     std::vector<float> peaksCopy;
     std::vector<int>   markersCopy;

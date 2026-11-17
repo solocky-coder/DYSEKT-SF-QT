@@ -42,7 +42,7 @@ public:
     };
 
     // ── Message thread ───────────────────────────────────────────────────────
-    bool start (Source s, double sr)
+    bool start (Source s, double sr, bool onFirstKey = false)
     {
         if (recording.load (std::memory_order_acquire) || sr <= 1000.0)
             return false;
@@ -57,6 +57,7 @@ public:
         curFill = 0;
         level.store (0.0f);
         sampleRate = sr;
+        startOnFirstKey.store (onFirstKey);
         source.store ((int) s);
         full.store (false);
         recording.store (true, std::memory_order_release);
@@ -80,6 +81,26 @@ public:
         for (int i = 0; i < mc; ++i)
             t.markers.push_back (juce::jlimit (0, n, markerPos[i]));
         std::sort (t.markers.begin(), t.markers.end());
+
+        // "Start on first key": the take begins at the first key press (minus a short
+        // pre-roll so the attack is not clipped) and that press is the start of slice 1.
+        if (startOnFirstKey.load())
+        {
+            if (t.markers.empty())
+            {
+                t.audio.setSize (2, 0);          // nothing was played: no take
+                return t;
+            }
+            const int first = t.markers.front();
+            const int cut   = juce::jmax (0, first - (int) (sampleRate * 0.010));
+            const int keep  = n - cut;
+            juce::AudioBuffer<float> trimmed (2, keep);
+            for (int ch = 0; ch < 2; ++ch)
+                trimmed.copyFrom (ch, 0, t.audio, ch, cut, keep);
+            t.audio = std::move (trimmed);
+            t.markers.erase (t.markers.begin());           // first key = start of slice 1
+            for (auto& m : t.markers) m -= cut;
+        }
         return t;
     }
 
@@ -89,6 +110,7 @@ public:
     double getSampleRate() const noexcept   { return sampleRate; }
     Source getSource() const noexcept       { return (Source) source.load(); }
     float  getLevel() const noexcept        { return level.load (std::memory_order_relaxed); }
+    bool   isStartOnFirstKey() const noexcept { return startOnFirstKey.load(); }
     int    getNumMarkers() const noexcept   { return juce::jmin (kMaxMarkers, markerCount.load (std::memory_order_acquire)); }
 
     /** Copies the stored peaks (one per kPeakBlock frames) and marker positions. */
@@ -193,6 +215,7 @@ private:
     std::atomic<bool>  recording { false };
     std::atomic<bool>  busy      { false };
     std::atomic<bool>  full      { false };
+    std::atomic<bool>  startOnFirstKey { false };
     std::atomic<int>   source    { (int) Source::Input };
     std::atomic<int>   writePos  { 0 };
     std::atomic<int>   peakCount { 0 };
