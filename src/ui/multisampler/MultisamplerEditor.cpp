@@ -1,7 +1,3 @@
-        case MultisamplerZoneField::loopEnabled:
-            // 0 off, 1 one-shot, 2 loop, 3 sustain loop (matches the LoopMode enum order).
-            z.loopMode = (LoopMode) juce::jlimit (0, 3, juce::roundToInt (value));
-
 #include "MultisamplerEditor.h"
 #include "../../PluginProcessor.h"
 #include "../../PluginEditor.h"   // XivaEditor — needed for findParentComponentOfClass<XivaEditor>()
@@ -1252,14 +1248,16 @@ void MultisamplerEditor::applyZoneFieldEdit (MultisamplerZoneField field, float 
             z.showInMixer = value > 0.5f;
             break;
         case MultisamplerZoneField::loopEnabled:
-            z.loopMode = (value > 0.5f) ? LoopMode::loopContinuous : LoopMode::noLoop;
+            // 0 off, 1 one-shot, 2 loop, 3 sustain loop (matches the LoopMode enum order).
+            z.loopMode = (LoopMode) juce::jlimit (0, 3, juce::roundToInt (value));
 
             // Root cause 2 fix (MULTISAMPLER), same as
             // applySliceControlBarFieldEdit's identical branch above — see
             // that comment for the full explanation. Kept in both places
             // rather than factored out since the two callers resolve the
             // target zone through different keys (id here, index there).
-            if (z.loopMode == LoopMode::loopContinuous && (z.loopStart < 0 || z.loopEnd < 0))
+            if ((z.loopMode == LoopMode::loopContinuous || z.loopMode == LoopMode::loopSustain)
+                && (z.loopStart < 0 || z.loopEnd < 0))
             {
                 juce::AudioFormatManager fm;
                 fm.registerBasicFormats();
