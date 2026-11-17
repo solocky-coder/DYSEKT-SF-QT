@@ -39,6 +39,8 @@ enum class MultisamplerZoneField
     eq3Freq,
     eq3Gain,
     eq3Bw,
+    lowVelocity,    // appended after the original fields so existing MIDI Learn slots keep their numbers
+    highVelocity,
 
     // Sentinel — NOT a real field. Always the last enumerator, so its
     // integer value equals the number of real fields above. Used to size

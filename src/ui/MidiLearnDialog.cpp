@@ -86,6 +86,8 @@ static const char* const gSlotParamNames[kMidiLearnNumSlots] = {
     "MS EQ3 Freq",            // 74 eq3Freq
     "MS EQ3 Gain",            // 75 eq3Gain
     "MS EQ3 Bandwidth",       // 76 eq3Bw
+    "MS Low Velocity",        // 77 lowVelocity
+    "MS High Velocity",       // 78 highVelocity
 };
 
 static juce::String getSlotParameterName (int fieldId)

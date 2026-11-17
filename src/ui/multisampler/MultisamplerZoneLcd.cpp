@@ -87,6 +87,9 @@ void MultisamplerZoneLcd::setZoneForDisplay (const SampleZone* zone, int display
     snapshot.sustainLevel   = zone->sustainLevel;
     snapshot.releaseSeconds = zone->releaseSeconds;
     snapshot.loopOn         = zone->loopMode != LoopMode::noLoop;
+    snapshot.loopModeIdx    = (int) zone->loopMode;
+    snapshot.lowVelocity    = zone->lowVelocity;
+    snapshot.highVelocity   = zone->highVelocity;
     snapshot.filterCutoffHz = zone->filterCutoffHz;
     snapshot.filterResonance = zone->filterResonance;
     snapshot.eq1Freq = zone->eq1Freq;
@@ -164,6 +167,8 @@ juce::String MultisamplerZoneLcd::labelFor (MultisamplerZoneField field) const
         case MultisamplerZoneField::eq3Freq:     return "FREQ";
         case MultisamplerZoneField::eq3Gain:     return "GAIN";
         case MultisamplerZoneField::eq3Bw:       return "BW";
+        case MultisamplerZoneField::lowVelocity:  return "V LO";
+        case MultisamplerZoneField::highVelocity: return "V HI";
         case MultisamplerZoneField::kCount:      break;   // sentinel, never a real field
     }
     return {};
@@ -180,7 +185,7 @@ float MultisamplerZoneLcd::getFieldValue (MultisamplerZoneField field) const
         case MultisamplerZoneField::tune:        return snapshot.tuneCents;
         case MultisamplerZoneField::pan:         return snapshot.pan;
         case MultisamplerZoneField::gain:        return snapshot.gainDb;
-        case MultisamplerZoneField::loopEnabled: return snapshot.loopOn ? 1.0f : 0.0f;
+        case MultisamplerZoneField::loopEnabled: return (float) snapshot.loopModeIdx;
         case MultisamplerZoneField::attack:      return snapshot.attackSeconds;
         case MultisamplerZoneField::decay:       return snapshot.decaySeconds;
         case MultisamplerZoneField::sustain:     return snapshot.sustainLevel;
@@ -198,6 +203,8 @@ float MultisamplerZoneLcd::getFieldValue (MultisamplerZoneField field) const
         case MultisamplerZoneField::eq3Freq:     return snapshot.eq3Freq;
         case MultisamplerZoneField::eq3Gain:     return snapshot.eq3Gain;
         case MultisamplerZoneField::eq3Bw:       return snapshot.eq3Bw;
+        case MultisamplerZoneField::lowVelocity:  return (float) snapshot.lowVelocity;
+        case MultisamplerZoneField::highVelocity: return (float) snapshot.highVelocity;
         case MultisamplerZoneField::kCount:      break;   // sentinel, never a real field
     }
     return 0.0f;
@@ -259,6 +266,8 @@ float MultisamplerZoneLcd::normForField (MultisamplerZoneField field) const
         case MultisamplerZoneField::eq2Bw:
         case MultisamplerZoneField::eq3Bw:
             return juce::jlimit (0.0f, 1.0f, (v - 0.1f) / 3.9f);
+        case MultisamplerZoneField::lowVelocity:
+        case MultisamplerZoneField::highVelocity: return juce::jlimit (0.0f, 1.0f, (v - 1.0f) / 126.0f);
         case MultisamplerZoneField::kCount:
             break;   // sentinel, never a real field
     }
@@ -310,6 +319,8 @@ float MultisamplerZoneLcd::nativeFromNorm (MultisamplerZoneField field, float no
         case MultisamplerZoneField::eq2Bw:
         case MultisamplerZoneField::eq3Bw:
             return norm * 3.9f + 0.1f;
+        case MultisamplerZoneField::lowVelocity:
+        case MultisamplerZoneField::highVelocity: return 1.0f + norm * 126.0f;
         case MultisamplerZoneField::kCount: break;   // sentinel, never a real field
     }
     return norm;
@@ -347,6 +358,8 @@ float MultisamplerZoneLcd::defaultValueFor (MultisamplerZoneField field) const
         case MultisamplerZoneField::eq3Freq:     return 8000.0f;
         case MultisamplerZoneField::eq3Gain:     return 0.0f;
         case MultisamplerZoneField::eq3Bw:       return 1.0f;
+        case MultisamplerZoneField::lowVelocity:  return 1.0f;
+        case MultisamplerZoneField::highVelocity: return 127.0f;
         case MultisamplerZoneField::kCount:      break;   // sentinel, never a real field
     }
     return 0.0f;
@@ -389,6 +402,8 @@ float MultisamplerZoneLcd::dragScaleFor (MultisamplerZoneField field, bool fineM
         case MultisamplerZoneField::eq1Bw:
         case MultisamplerZoneField::eq2Bw:
         case MultisamplerZoneField::eq3Bw:       scale = 0.03f;  break; // 0.1..4.0 octaves
+        case MultisamplerZoneField::lowVelocity:
+        case MultisamplerZoneField::highVelocity: scale = 0.5f;  break; // ~2px per velocity step
         case MultisamplerZoneField::kCount:      break;   // sentinel, never a real field
     }
     return fineMode ? scale * kFineModeScale : scale;
@@ -412,7 +427,14 @@ juce::String MultisamplerZoneLcd::formatFieldValue (MultisamplerZoneField field)
             if (snapshot.pan == 0.0f) return "C";
             return (snapshot.pan < 0.0f ? "L" : "R") + juce::String (juce::roundToInt (std::abs (snapshot.pan) * 100.0f));
         case MultisamplerZoneField::gain:      return juce::String (snapshot.gainDb, 1) + "dB";
-        case MultisamplerZoneField::loopEnabled: return snapshot.loopOn ? "ON" : "OFF";
+        case MultisamplerZoneField::loopEnabled:
+            switch (snapshot.loopModeIdx)
+            {
+                case 1:  return "1-SHOT";
+                case 2:  return "LOOP";
+                case 3:  return "SUSTAIN";
+                default: return "OFF";
+            }
         case MultisamplerZoneField::attack:    return EnvDisplay::formatTime (snapshot.attackSeconds);
         case MultisamplerZoneField::decay:     return EnvDisplay::formatTime (snapshot.decaySeconds);
         case MultisamplerZoneField::sustain:   return juce::String (juce::roundToInt (snapshot.sustainLevel * 100.0f)) + "%";
@@ -447,6 +469,8 @@ juce::String MultisamplerZoneLcd::formatFieldValue (MultisamplerZoneField field)
         case MultisamplerZoneField::eq1Bw: return juce::String (snapshot.eq1Bw, 2);
         case MultisamplerZoneField::eq2Bw: return juce::String (snapshot.eq2Bw, 2);
         case MultisamplerZoneField::eq3Bw: return juce::String (snapshot.eq3Bw, 2);
+        case MultisamplerZoneField::lowVelocity:  return juce::String (snapshot.lowVelocity);
+        case MultisamplerZoneField::highVelocity: return juce::String (snapshot.highVelocity);
         case MultisamplerZoneField::kCount: break;   // sentinel, never a real field
     }
     return {};
@@ -519,8 +543,9 @@ void MultisamplerZoneLcd::paint (juce::Graphics& g)
         playback.push_back (MultisamplerZoneField::outputBus);
     playback.push_back (MultisamplerZoneField::showInMixer);
 
-    addModule ("KEY RANGE",    { Fields { MultisamplerZoneField::lowKey, MultisamplerZoneField::highKey,
-                                          MultisamplerZoneField::rootKey } });
+    addModule ("KEY / VELOCITY", { Fields { MultisamplerZoneField::lowKey, MultisamplerZoneField::highKey,
+                                            MultisamplerZoneField::rootKey },
+                                   Fields { MultisamplerZoneField::lowVelocity, MultisamplerZoneField::highVelocity } });
     addModule ("TUNE / LEVEL", { Fields { MultisamplerZoneField::tune, MultisamplerZoneField::pan,
                                           MultisamplerZoneField::gain } });
     addModule ("ENVELOPE",     { Fields { MultisamplerZoneField::attack, MultisamplerZoneField::decay,
@@ -1011,7 +1036,7 @@ void MultisamplerZoneLcd::mouseDown (const juce::MouseEvent& e)
         if (cell.field == MultisamplerZoneField::loopEnabled)
         {
             // Click toggles immediately — no drag gesture for a boolean.
-            applyDrag (cell.field, snapshot.loopOn ? 0.0f : 1.0f, /*commit=*/true);
+            applyDrag (cell.field, (float) ((snapshot.loopModeIdx + 1) % 4), /*commit=*/true);   // OFF > 1-SHOT > LOOP > SUSTAIN
             return;
         }
 
@@ -1110,7 +1135,10 @@ void MultisamplerZoneLcd::applyDrag (MultisamplerZoneField field, float rawValue
         case MultisamplerZoneField::tune:        snapshot.tuneCents = rawValue; break;
         case MultisamplerZoneField::pan:         snapshot.pan = rawValue; break;
         case MultisamplerZoneField::gain:        snapshot.gainDb = rawValue; break;
-        case MultisamplerZoneField::loopEnabled: snapshot.loopOn = rawValue > 0.5f; break;
+        case MultisamplerZoneField::loopEnabled:
+            snapshot.loopModeIdx = juce::jlimit (0, 3, juce::roundToInt (rawValue));
+            snapshot.loopOn = snapshot.loopModeIdx != 0;
+            break;
         case MultisamplerZoneField::attack:      snapshot.attackSeconds = rawValue; break;
         case MultisamplerZoneField::decay:       snapshot.decaySeconds = rawValue; break;
         case MultisamplerZoneField::sustain:     snapshot.sustainLevel = rawValue; break;
@@ -1128,6 +1156,8 @@ void MultisamplerZoneLcd::applyDrag (MultisamplerZoneField field, float rawValue
         case MultisamplerZoneField::eq3Freq:     snapshot.eq3Freq = rawValue; break;
         case MultisamplerZoneField::eq3Gain:     snapshot.eq3Gain = rawValue; break;
         case MultisamplerZoneField::eq3Bw:       snapshot.eq3Bw   = rawValue; break;
+        case MultisamplerZoneField::lowVelocity:  snapshot.lowVelocity  = juce::roundToInt (rawValue); break;
+        case MultisamplerZoneField::highVelocity: snapshot.highVelocity = juce::roundToInt (rawValue); break;
         case MultisamplerZoneField::kCount:      break;   // sentinel, never a real field
     }
 

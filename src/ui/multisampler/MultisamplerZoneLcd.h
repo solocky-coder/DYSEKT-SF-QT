@@ -178,6 +178,8 @@ private:
         juce::String name;
         int displayIndex = -1;
         int lowKey = 0, highKey = 127, rootKey = 60, group = 0, outputBus = 0;
+        int lowVelocity = 1, highVelocity = 127;
+        int loopModeIdx = 0;   // 0 off, 1 one-shot, 2 loop, 3 sustain loop
         float tuneCents = 0.0f, pan = 0.0f, gainDb = 0.0f;
         float attackSeconds = 0.005f, decaySeconds = 0.1f, sustainLevel = 1.0f, releaseSeconds = 0.1f;
         bool loopOn = false;

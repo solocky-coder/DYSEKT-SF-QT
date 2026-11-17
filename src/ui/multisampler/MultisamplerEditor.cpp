@@ -1,3 +1,7 @@
+        case MultisamplerZoneField::loopEnabled:
+            // 0 off, 1 one-shot, 2 loop, 3 sustain loop (matches the LoopMode enum order).
+            z.loopMode = (LoopMode) juce::jlimit (0, 3, juce::roundToInt (value));
+
 #include "MultisamplerEditor.h"
 #include "../../PluginProcessor.h"
 #include "../../PluginEditor.h"   // XivaEditor — needed for findParentComponentOfClass<XivaEditor>()
@@ -1065,7 +1069,8 @@ void MultisamplerEditor::applySliceControlBarFieldEdit (int zoneIndex, int field
             // no loop-point editor here for the user to set explicit
             // points, so auto-fill the whole sample the first time LOOP is
             // turned on. Never overwrites an already-set range.
-            if (z.loopMode == LoopMode::loopContinuous && (z.loopStart < 0 || z.loopEnd < 0))
+            if ((z.loopMode == LoopMode::loopContinuous || z.loopMode == LoopMode::loopSustain)
+                && (z.loopStart < 0 || z.loopEnd < 0))
             {
                 juce::AudioFormatManager fm;
                 fm.registerBasicFormats();
@@ -1120,7 +1125,27 @@ void MultisamplerEditor::applyZoneFieldEdit (MultisamplerZoneField field, float 
         if (z.id == inspectedZoneId) { zonePtr = &z; break; }
     if (zonePtr == nullptr)
         return;
-    auto& z = *zonePtr;
+
+    // With 2+ zones selected, edit them all (the panel shows the top layer, but silently
+    // changing only that one was confusing). Key-range fields stay per-zone: giving several
+    // zones the same low/high/root key would collapse their mapping.
+    std::vector<SampleZone*> targets { zonePtr };
+    const bool perZoneOnly = field == MultisamplerZoneField::lowKey
+                          || field == MultisamplerZoneField::highKey
+                          || field == MultisamplerZoneField::rootKey;
+    const auto& sel = zoneMapView.getSelectedZoneIds();
+    if (! perZoneOnly && sel.size() >= 2
+        && std::find (sel.begin(), sel.end(), inspectedZoneId) != sel.end())
+    {
+        targets.clear();
+        for (auto& zz : instrument.zones)
+            if (std::find (sel.begin(), sel.end(), zz.id) != sel.end())
+                targets.push_back (&zz);
+    }
+
+    for (SampleZone* targetZone : targets)
+    {
+    auto& z = *targetZone;
 
     switch (field)
     {
@@ -1246,9 +1271,16 @@ void MultisamplerEditor::applyZoneFieldEdit (MultisamplerZoneField field, float 
                 }
             }
             break;
+        case MultisamplerZoneField::lowVelocity:
+            z.lowVelocity  = juce::jmin (z.highVelocity, juce::jlimit (1, 127, juce::roundToInt (value)));
+            break;
+        case MultisamplerZoneField::highVelocity:
+            z.highVelocity = juce::jmax (z.lowVelocity,  juce::jlimit (1, 127, juce::roundToInt (value)));
+            break;
         case MultisamplerZoneField::kCount:
             break;   // sentinel, never a real field — see its doc comment
     }
+    }   // end for (targets)
 
     // Live-drag frames (isCommit == false) update the model so the zone map
     // and LCD repaint with the live value, matching MultisamplerZoneLcd::
@@ -1569,7 +1601,9 @@ void MultisamplerEditor::applyMidiLearnCc (MultisamplerZoneField field, float cc
         // for a direct click on these two cells.
         const bool newState = isRelative ? ! (getLiveFieldValue (field) > 0.5f)
                                           : (ccValue > 0.5f);
-        applyZoneFieldEdit (field, newState ? 1.0f : 0.0f, /*isCommit=*/true);
+        // LOOP is a 4-way mode now: a CC toggle switches between OFF and plain LOOP (index 2).
+        const float on = (field == MultisamplerZoneField::loopEnabled) ? 2.0f : 1.0f;
+        applyZoneFieldEdit (field, newState ? on : 0.0f, /*isCommit=*/true);
         return;
     }
 
@@ -1628,7 +1662,7 @@ float MultisamplerEditor::getLiveFieldValue (MultisamplerZoneField field) const
         case MultisamplerZoneField::decay:       return z.decaySeconds;
         case MultisamplerZoneField::sustain:     return z.sustainLevel;
         case MultisamplerZoneField::release:     return z.releaseSeconds;
-        case MultisamplerZoneField::loopEnabled: return z.loopMode != LoopMode::noLoop ? 1.0f : 0.0f;
+        case MultisamplerZoneField::loopEnabled: return (float) (int) z.loopMode;
         case MultisamplerZoneField::cutoff:      return z.filterCutoffHz;
         case MultisamplerZoneField::resonance:   return z.filterResonance;
         case MultisamplerZoneField::group:       return (float) z.group;
@@ -1643,6 +1677,8 @@ float MultisamplerEditor::getLiveFieldValue (MultisamplerZoneField field) const
         case MultisamplerZoneField::eq3Freq:     return z.eq3Freq;
         case MultisamplerZoneField::eq3Gain:     return z.eq3Gain;
         case MultisamplerZoneField::eq3Bw:       return z.eq3Bw;
+        case MultisamplerZoneField::lowVelocity:  return (float) z.lowVelocity;
+        case MultisamplerZoneField::highVelocity: return (float) z.highVelocity;
         case MultisamplerZoneField::kCount:      break;   // sentinel, never a real field
     }
     return 0.0f;
