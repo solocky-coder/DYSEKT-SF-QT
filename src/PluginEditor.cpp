@@ -648,6 +648,14 @@ XivaEditor::XivaEditor (XivaProcessor& p)
  addChildComponent (slicerLoadButton);
  slicerLoadButton.onClick = [this] { openBrowserForTab(); };
  sliceHeader.onLoad = [this] { openBrowserForTab(); };
+ addChildComponent (slicerRecButton);
+ addChildComponent (recordPanel);
+ {
+     auto openRec = [this] { recordPanelOpen = true; resized(); repaint(); };
+     slicerRecButton.onClick = openRec;
+     sliceHeader.onRecord    = openRec;
+     recordPanel.onClose     = [this] { recordPanelOpen = false; resized(); repaint(); };
+ }
  multisamplerEditor.onRequestBrowser = [this] (bool addZone) { openBrowserForTab (addZone); };
  sfzDropdown.onRequestBrowser = [this] { openBrowserForTab(); };
  navRail.onItem = [this] (NavRail::Item item)
@@ -787,6 +795,7 @@ XivaEditor::XivaEditor (XivaProcessor& p)
 
 XivaEditor::~XivaEditor()
 {
+ recordPanel.discardIfRecording();
  juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
  setLookAndFeel (nullptr);
 }
@@ -1775,10 +1784,19 @@ void XivaEditor::resized()
      const bool showLoad = bench && uiMode == 0 && trimDialog == nullptr && ! benchInspector
                            && ! initBrowserOpen && activeSlot == SlotContent::None;
      slicerLoadButton.setVisible (showLoad);
+     slicerRecButton.setVisible (showLoad && ! recordPanelOpen);
      if (showLoad)
-         slicerLoadButton.setBounds (actionArea.withTrimmedLeft (si (kMargin)).removeFromLeft (si (120)));
+     {
+         auto row = actionArea.withTrimmedLeft (si (kMargin));
+         slicerLoadButton.setBounds (row.removeFromLeft (si (120)));
+         row.removeFromLeft (si (8));
+         slicerRecButton.setBounds (row.removeFromLeft (si (100)));
+     }
      else
+     {
          slicerLoadButton.setBounds ({});
+         slicerRecButton.setBounds ({});
+     }
  }
 
  // ── Bench slicer inspector ────────────────────────────────────────────────
@@ -2019,6 +2037,8 @@ void XivaEditor::resized()
  // Trim mode always requires the waveform view, regardless of uiMode.
  const bool trimActive = (trimDialog != nullptr || (trimSession != nullptr && trimSession->active));
 
+ recordPanel.setVisible (false);   // shown again by the Slicer branch while it is open
+
  if (slotCoveringFrame)
  {
      // Mixer or normal browser is open — hide all main views
@@ -2041,6 +2061,12 @@ void XivaEditor::resized()
      // Slicer mode — WaveformView
      waveformView.setVisible (true);
      waveformView.setBounds (juce::Rectangle<int> (screenX, y, screenW, waveH));
+     if (recordPanelOpen && trimDialog == nullptr)
+     {
+         recordPanel.setBounds (waveformView.getBounds());
+         recordPanel.setVisible (true);
+         recordPanel.toFront (false);
+     }
 
      sfzDropdown.setVisible (false);
      sfzDropdown.setBounds ({});

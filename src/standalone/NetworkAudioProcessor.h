@@ -237,6 +237,14 @@ public:
         } blockTimer { networkAudio != nullptr ? networkAudio : activeNetworkAudio.load (std::memory_order_acquire),
                        &buffer, buffer.getNumSamples() };
 
+        // Master-out recording for the Slicer: tap the final mix when this block ends,
+        // whichever early return the block takes.
+        struct SliceOutTap
+        {
+            SliceRecorder& r; juce::AudioBuffer<float>& b;
+            ~SliceOutTap() { r.pushOutput (b); }
+        } sliceOutTap { sliceRecorder, buffer };
+
         XivaProcessor::processBlock (buffer, midi);
 
         // Solo convention shared with the sequencer: while any track is soloed, only

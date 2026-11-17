@@ -1,3 +1,5 @@
+#include "util/AppDataDir.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "audio/GrainEngine.h"
@@ -387,8 +389,10 @@ SampleData::SnapshotPtr XivaProcessor::exchangeCompletedLoadData3 (SampleData::S
 #endif
 }
 
-void XivaProcessor::requestSampleLoad (const juce::File& file, LoadKind kind)
+void XivaProcessor::requestSampleLoad (const juce::File& file, LoadKind kind, bool keepRecMarkers)
 {
+    if (! keepRecMarkers)
+        pendingRecMarkerCount.store (0, std::memory_order_release);
     const int token = nextLoadToken.fetch_add (1, std::memory_order_relaxed) + 1;
     latestLoadToken.store (token, std::memory_order_release);
     latestLoadKind.store ((int) kind, std::memory_order_release);
@@ -450,6 +454,40 @@ void XivaProcessor::requestSampleLoad (const juce::File& file, LoadKind kind)
 void XivaProcessor::loadFileAsync (const juce::File& file)
 {
     requestSampleLoad (file, LoadKindReplace);
+}
+
+juce::File XivaProcessor::commitRecordedTake (SliceRecorder::Take&& take)
+{
+    if (take.getNumFrames() < 64 || take.sampleRate <= 0.0)
+        return {};
+
+    auto dir = XivaPaths::appDataDir().getChildFile ("Recordings");
+    if (! dir.createDirectory())
+        return {};
+
+    const auto file = dir.getNonexistentChildFile ("Take_" + juce::Time::getCurrentTime().formatted ("%Y%m%d_%H%M%S"),
+                                                   ".wav");
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::FileOutputStream> out (file.createOutputStream());
+        if (out == nullptr)
+            return {};
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            wav.createWriterFor (out.get(), take.sampleRate, 2, 24, {}, 0));
+        if (writer == nullptr)
+            return {};
+        out.release();   // the writer owns the stream now
+        if (! writer->writeFromAudioSampleBuffer (take.audio, 0, take.getNumFrames()))
+            return {};
+    }
+
+    const int n = juce::jmin ((int) take.markers.size(), (int) pendingRecMarkers.size());
+    for (int i = 0; i < n; ++i)
+        pendingRecMarkers[(size_t) i] = take.markers[(size_t) i];
+    pendingRecMarkerCount.store (n, std::memory_order_release);
+
+    requestSampleLoad (file, LoadKindReplace, true);
+    return file;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3125,6 +3163,32 @@ void XivaProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     }
 
+#if ! XIVA_STANDALONE
+    // Plugin builds: "master out" recording taps this block's final output. (The
+    // standalone processor taps after the arranger/network mix instead.)
+    struct SliceOutTap
+    {
+        SliceRecorder& r; juce::AudioBuffer<float>& b;
+        ~SliceOutTap() { r.pushOutput (b); }
+    } sliceOutTap { sliceRecorder, buffer };
+#endif
+
+    // While a take is recording, every note-on drops a slice marker at its exact
+    // position and is consumed (it must not also play voices into the take).
+    if (sliceRecorder.isRecording())
+    {
+        const int blockN = buffer.getNumSamples();
+        recMidiFiltered.clear();
+        for (const auto meta : midi)
+        {
+            const auto m = meta.getMessage();
+            if (m.isNoteOn())  { sliceRecorder.markNow (meta.samplePosition, blockN); continue; }
+            if (m.isNoteOff()) continue;
+            recMidiFiltered.addEvent (m, meta.samplePosition);
+        }
+        midi.swapWith (recMidiFiltered);
+    }
+
     // NOTE: a prior "TEMP diagnostic" here built a juce::String per MIDI
     // event and wrote it to disk via crashLogger.log() on every block that
     // had any MIDI at all. Both the String concatenation (heap allocation)
@@ -3247,6 +3311,24 @@ void XivaProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 // No auto-slice: sample is immediately playable chromatically
                 // via the unsliced path. User adds slices explicitly via ADD SLICE.
                 sliceManager.selectedSlice.store (isDefault ? -1 : -1, std::memory_order_relaxed);
+
+                // Recorded take: its MIDI-key markers become slices.
+                const int nm = pendingRecMarkerCount.exchange (0, std::memory_order_acq_rel);
+                const int total = sampleData.getNumFrames();
+                if (nm > 0 && finishedKind == (int) LoadKindReplace && total > 128)
+                {
+                    int prev = 0;
+                    for (int i = 0; i <= nm; ++i)
+                    {
+                        const int b = (i < nm) ? pendingRecMarkers[(size_t) i] : total;
+                        if (b - prev >= 64 && b <= total)
+                        {
+                            sliceManager.createSlice (prev, b);
+                            prev = b;
+                        }
+                    }
+                    sliceManager.rebuildMidiMap();
+                }
             }
             else
             {

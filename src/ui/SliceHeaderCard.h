@@ -20,6 +20,7 @@ public:
 
     /** Fired by the LOAD button: the editor opens the in-app browser for this tab. */
     std::function<void()> onLoad;
+    std::function<void()> onRecord;   // opens the record panel
 
     /** Trim mode: the card shows the file being trimmed and how much is kept instead of the slicing controls. */
     void setTrimMode (bool on) { if (trimMode != on) { trimMode = on; repaint(); } }
@@ -101,7 +102,7 @@ public:
         const int segY = (getHeight() - segH) / 2;
         int right = getWidth() - pad;
 
-        right = segmented (g, right, segY, segH, sf, { { "Load", 200 } }, -1);
+        right = segmented (g, right, segY, segH, sf, { { "Load", 200 }, { "Rec", 201 } }, -1);
         right -= juce::roundToInt (8.0f * sf);
         right = segmented (g, right, segY, segH, sf, { { "Hard", 100 }, { "Soft", 101 }, { "Outline", 102 }, { "Bars", 105 }, { "RMS", 106 } },
                            waveform.getWaveformMode() + 100);
@@ -195,6 +196,7 @@ private:
     void activate (int id)
     {
         if (id == 200) { if (onLoad) onLoad(); return; }
+        if (id == 201) { if (onRecord) onRecord(); return; }
         if (id >= 100) { waveform.setWaveformMode (id - 100); return; }
 
         if (id == 50)   // MIDI slice (same flow as the waveform's context menu)

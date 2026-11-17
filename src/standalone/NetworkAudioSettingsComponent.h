@@ -18,7 +18,7 @@ public:
     explicit NetworkAudioSettingsComponent (juce::AudioDeviceManager& deviceManager,
                                              MetroNetworkAudio* networkAudioIn,
                                              bool showDeviceSelectorIn = false)
-        : audioSelector (deviceManager, 0, 0, 1, 2, false, false, false, false),
+        : audioSelector (deviceManager, 0, 2, 1, 2, false, false, false, false),
           networkAudio (networkAudioIn),
           sourceModel (networkAudioIn),
           directUsbProgress (directUsbProgressValue)

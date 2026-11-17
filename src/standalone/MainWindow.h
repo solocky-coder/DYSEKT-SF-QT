@@ -34,7 +34,7 @@ public:
 
         // Restores the configuration saved from Audio Settings (if any); falls back to the
         // default device when nothing is saved or the saved state is missing/corrupt.
-        AudioDeviceSettingsStore::initialiseDeviceManager (deviceManager, 0, 2);
+        AudioDeviceSettingsStore::initialiseDeviceManager (deviceManager, 2, 2);
         deviceManager.addChangeListener (this);
         XivaSharedAudio::manager() = &deviceManager;   // file-browser preview plays through this device
 
@@ -52,6 +52,10 @@ public:
         RecordOffsetStore::load (processor->sequencer);
         updateDeviceLatency();
         player.setProcessor (processor.get());
+        // Input tap for Slicer recording: registered BEFORE the player so each block's input
+        // is captured before the processor handles that block's MIDI (marker timing).
+        sliceInputTap = std::make_unique<SliceInputTap> (processor->sliceRecorder);
+        deviceManager.addAudioCallback (sliceInputTap.get());
         deviceManager.addAudioCallback (&player);
         midiRouter = std::make_unique<MidiRouter>();
         networkMidiManager = std::make_unique<NetworkMidiManager>();
@@ -148,6 +152,8 @@ public:
             editor->setWindowMenuBar (nullptr, 0);
         setMenuBar (nullptr);
         deviceManager.removeAudioCallback (&player);
+        if (sliceInputTap != nullptr)
+            deviceManager.removeAudioCallback (sliceInputTap.get());
 
         if (midiRouter != nullptr) midiRouter->setLiveEngine (nullptr);
         processor->sequencer.setLiveDirectForward (false);
@@ -346,7 +352,7 @@ private:
     public:
         explicit AudioOnlySettingsComponent (juce::AudioDeviceManager& dm)
             : deviceManager (dm),
-              audioSelector (dm, 0, 0, 1, 2, false, false, false, false)
+              audioSelector (dm, 0, 2, 1, 2, false, false, false, false)
         {
             // Same reasoning as NetworkAudioSettingsComponent: this is launched as its own
             // top-level DialogWindow, so it never inherits METRO's app-wide LookAndFeel.
@@ -661,6 +667,7 @@ private:
     juce::AudioProcessorPlayer player;
     juce::StringArray registeredMidiInputIds;
     std::unique_ptr<MidiRouter> midiRouter;
+    std::unique_ptr<SliceInputTap> sliceInputTap;
     std::unique_ptr<MetroNetworkAudio> networkAudio;
     std::unique_ptr<NetworkMidiManager> networkMidiManager;
     std::unique_ptr<NetworkAudioAutoTrack> autoTrack;

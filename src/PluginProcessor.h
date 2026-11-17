@@ -10,6 +10,7 @@
 #include "audio/CharacterFx.h"
 #include "audio/SampleData.h"
 #include "audio/SliceManager.h"
+#include "audio/SliceRecorder.h"
 #include "audio/VoicePool.h"
 // SequencerEngine has no XIVA_STANDALONE dependency of its own and is now
 // a member of XivaProcessor in every build (see the `sequencer` member
@@ -431,6 +432,14 @@ public:
     void setMidiRouteMode (MidiRouteMode mode);
 
     void loadFileAsync      (const juce::File& file);
+
+    /** Slicer recording (audio input or master output) with MIDI-key slice markers. */
+    SliceRecorder sliceRecorder;
+
+    /** Writes a finished take to <appdata>/Recordings/Take_*.wav, loads it as the Slicer
+     *  sample and turns the recorded markers into slices. Message thread. Returns the file
+     *  (empty File on failure). */
+    juce::File commitRecordedTake (SliceRecorder::Take&& take);
     void loadDefaultSampleIfNeeded();   // loads Empty.wav on first launch
 
     // ADSR param pointers — read by SliceWaveformLcd for envelope display
@@ -1101,7 +1110,12 @@ private:
     // =========================================================================
     // Private helpers
     // =========================================================================
-    void requestSampleLoad (const juce::File& file, LoadKind kind);
+    void requestSampleLoad (const juce::File& file, LoadKind kind, bool keepRecMarkers = false);
+
+    // Slice markers from a recorded take, applied when that take's load lands.
+    std::array<int, SliceRecorder::kMaxMarkers> pendingRecMarkers {};
+    std::atomic<int> pendingRecMarkerCount { 0 };
+    juce::MidiBuffer recMidiFiltered;
 
     /** Atomically swaps completedLoadData for newValue and returns the
      *  previous contents. Non-allocating either way -- safe to call from

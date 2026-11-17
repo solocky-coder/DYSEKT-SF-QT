@@ -12,6 +12,7 @@
 #include "ui/TopBar.h"
 #include "ui/SliceTable.h"
 #include "ui/SliceHeaderCard.h"
+#include "ui/SliceRecordPanel.h"
 #include "ui/SliceStrip.h"
 #include "params/ParamIds.h"
 #include "ui/SliceLane.h"
@@ -145,6 +146,9 @@ private:
     /// Mutually exclusive.
     enum class SlotContent { None, Browser, Mixer, Eq, Seq };
     SlotContent activeSlot   = SlotContent::None;
+    juce::TextButton slicerRecButton { "RECORD" };
+    SliceRecordPanel recordPanel { processor };
+    bool recordPanelOpen = false;
     juce::TextButton slicerLoadButton { "LOAD SAMPLE" };   // Bench Slicer with no sample yet (the header card carries Load otherwise)
     bool browserAddZone      = false;  // Multi tab: browser was opened by ADD ZONE (audio) rather than IMPORT SFZ
     void openBrowserForTab (bool addZone = false);
