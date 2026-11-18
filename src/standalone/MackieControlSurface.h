@@ -63,6 +63,7 @@ public:
     ~MackieControlSurface() override
     {
         stopTimer();
+        shuttingDown = true;
         closePorts (true);
     }
 
@@ -112,6 +113,8 @@ public:
     /** MainWindow supplies this so the surface can take its port away from the host's own
         MIDI input callbacks before opening it (Windows MIDI inputs are exclusive). */
     std::function<void (const juce::String& identifier)> releaseInputFromHost;
+    /** Called when the surface lets go of a port again, so the host can hand it back to the instrument. */
+    std::function<void (const juce::String& identifier)> returnInputToHost;
 
     //==========================================================================
     //  Status / log (message thread)
@@ -137,6 +140,12 @@ private:
             midiIn->stop();
             midiIn.reset();
         }
+        if (claimedId.isNotEmpty())
+        {
+            const auto id = claimedId;
+            claimedId.clear();
+            if (returnInputToHost && ! shuttingDown) returnInputToHost (id);
+        }
         {
             const juce::ScopedLock sl (inboxLock);
             inbox.clear();
@@ -156,7 +165,8 @@ private:
                 {
                     if (releaseInputFromHost) releaseInputFromHost (d.identifier);
                     midiIn = juce::MidiInput::openDevice (d.identifier, this);
-                    if (midiIn != nullptr) midiIn->start();
+                    if (midiIn != nullptr) { midiIn->start(); claimedId = d.identifier; }
+                    else if (returnInputToHost) returnInputToHost (d.identifier);   // could not open: keep it with the instrument
                     break;
                 }
 
@@ -612,6 +622,8 @@ private:
     Mode mode = Mode::Tracks;
     int  bankBase = 0;
     int  feedbackDivider = 0;
+    juce::String claimedId;
+    bool shuttingDown = false;
 
     std::unique_ptr<juce::MidiInput>  midiIn;
     std::unique_ptr<juce::MidiOutput> midiOut;

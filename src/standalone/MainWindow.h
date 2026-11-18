@@ -75,6 +75,7 @@ public:
 
         controlSurface = std::make_unique<MackieControlSurface>(*processor);
         controlSurface->releaseInputFromHost = [this] (const juce::String& id) { releaseMidiInputFromHost (id); };
+        controlSurface->returnInputToHost    = [this] (const juce::String& id) { returnMidiInputToHost (id); };
 
         for (const auto& input : juce::MidiInput::getAvailableDevices())
         {
@@ -549,7 +550,15 @@ private:
             {
                 for (const auto& dev : devices)
                 {
-                    if (isClaimed && isClaimed (dev)) continue;   // used by the control surface
+                    if (isClaimed && isClaimed (dev))
+                    {
+                        auto* lbl = new juce::Label();
+                        lbl->setText (dev.name + "  (used by Control Surface)", juce::dontSendNotification);
+                        lbl->setColour (juce::Label::textColourId, juce::Colours::grey);
+                        addAndMakeVisible (lbl);
+                        rows.add (lbl);
+                        continue;
+                    }
                     auto* btn = new juce::ToggleButton (dev.name);
                     btn->setToggleState (deviceManager.isMidiInputDeviceEnabled (dev.identifier), juce::dontSendNotification);
                     btn->setColour (juce::ToggleButton::textColourId, juce::Colours::white);
@@ -616,6 +625,17 @@ private:
             deviceManager.removeMidiInputDeviceCallback (id, midiRouter.get());
         registeredMidiInputIds.removeString (id);
         deviceManager.setMidiInputDeviceEnabled (id, false);
+    }
+
+    void returnMidiInputToHost (const juce::String& id)
+    {
+        if (registeredMidiInputIds.contains (id)) return;
+        deviceManager.setMidiInputDeviceEnabled (id, true);
+        deviceManager.addMidiInputDeviceCallback (id, &player);
+        if (midiRouter != nullptr)
+            deviceManager.addMidiInputDeviceCallback (id, midiRouter.get());
+        deviceManager.addMidiInputDeviceCallback (id, &RtpMidiInputForwarder::instance());
+        registeredMidiInputIds.add (id);
     }
 
     void showControlSurface()
