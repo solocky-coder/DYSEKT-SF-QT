@@ -27,12 +27,16 @@ public:
         NetworkAudioProcessor::setActiveNetworkAudio (networkAudioIn);
         setLookAndFeel (&settingsLookAndFeel);
 
-        constexpr int kDeviceCardHeight = 2 * 10 + 260;
+        constexpr int kDeviceCardHeight = 2 * 10 + 380;   // taller: input device/channel rows now show too
         constexpr int kSectionGapOuter = 14;
         // +38: the Connection card now has room for its progress bar and connect-info row;
         // +24: the Sources list shows two full 64 px rows instead of about 1.6.
         constexpr int kExtraH = 38 + 24;
-        setSize (980, (showDeviceSelector ? 980 : 980 - kDeviceCardHeight - kSectionGapOuter) + kExtraH);
+        // 980 was laid out around a 260 px device card; the card is now 120 px taller, which only
+        // matters when it is shown (the card-less variant subtracts the ORIGINAL card height).
+        constexpr int kOriginalDeviceCardHeight = 2 * 10 + 260;
+        setSize (980, (showDeviceSelector ? 980 + (kDeviceCardHeight - kOriginalDeviceCardHeight)
+                                          : 980 - kOriginalDeviceCardHeight - kSectionGapOuter) + kExtraH);
 
         if (showDeviceSelector)
             addAndMakeVisible (audioSelector);
@@ -443,7 +447,7 @@ public:
 
         if (showDeviceSelector)
         {
-            auto deviceCardArea = area.removeFromTop (2 * kCardPad + 260);
+            auto deviceCardArea = area.removeFromTop (2 * kCardPad + 380);
             devicePanelBounds = deviceCardArea;
             audioSelector.setBounds (deviceCardArea.reduced (kCardPad));
             area.removeFromTop (kSectionGap);

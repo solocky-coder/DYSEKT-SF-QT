@@ -375,7 +375,7 @@ private:
                                  juce::dontSendNotification);
             addAndMakeVisible (statusLabel);
 
-            setSize (700, 320 + kFooterH);
+            setSize (700, 460 + kFooterH);   // room for the input device / channel rows
         }
 
         ~AudioOnlySettingsComponent() override { setLookAndFeel (nullptr); }
