@@ -7,6 +7,8 @@
 #include "../PluginEditor.h"
 #include "../sequencer/MidiClip.h"
 #include "MidiRouter.h"
+#include "MackieControlSurface.h"
+#include "ControlSurfaceSettings.h"
 #include "../ui/ClickMenus.h"
 #include "NetworkAudioProcessor.h"
 #include "NetworkAudioAutoTrack.h"
@@ -71,8 +73,13 @@ public:
         RtpMidiInputForwarder::instance().setManager (nullptr);
         RtpMidiInputForwarder::instance().setEngine (nullptr);
 
+        controlSurface = std::make_unique<MackieControlSurface>(*processor);
+        controlSurface->releaseInputFromHost = [this] (const juce::String& id) { releaseMidiInputFromHost (id); };
+
         for (const auto& input : juce::MidiInput::getAvailableDevices())
         {
+            if (controlSurface->claimsInput (input))
+                continue;   // reserved for the control surface: never reaches the instrument
             deviceManager.setMidiInputDeviceEnabled (input.identifier, true);
             deviceManager.addMidiInputDeviceCallback (input.identifier, &player);
             deviceManager.addMidiInputDeviceCallback (input.identifier, midiRouter.get());
@@ -155,6 +162,7 @@ public:
         if (sliceInputTap != nullptr)
             deviceManager.removeAudioCallback (sliceInputTap.get());
 
+        controlSurface.reset();
         if (midiRouter != nullptr) midiRouter->setLiveEngine (nullptr);
         processor->sequencer.setLiveDirectForward (false);
         for (const auto& id : registeredMidiInputIds)
@@ -206,6 +214,7 @@ public:
             menu.addItem (13, "Network Audio...");
             menu.addItem (14, "Network MIDI...");
             menu.addItem (11, "MIDI Settings...");
+            menu.addItem (15, "Control Surface...");
             menu.addSeparator();
             menu.addItem (12, "MIDI Routing...");
         }
@@ -231,6 +240,7 @@ public:
             case 14: showNetworkMidiSettings(); break;
             case 11: showMidiSettings(); break;
             case 12: showMidiRouting(); break;
+            case 15: showControlSurface(); break;
             case 20: showAbout(); break;
             default: break;
         }
@@ -487,8 +497,9 @@ private:
     public:
         explicit MidiOnlySettingsComponent (juce::AudioDeviceManager& dm,
                                              juce::AudioProcessorPlayer& pl,
-                                             juce::StringArray& registeredIds)
-            : deviceManager (dm), player (pl), registeredMidiInputIds (registeredIds)
+                                             juce::StringArray& registeredIds,
+                                             std::function<bool (const juce::MidiDeviceInfo&)> claimed)
+            : deviceManager (dm), player (pl), registeredMidiInputIds (registeredIds), isClaimed (std::move (claimed))
         {
             setSize (480, 320);
             titleLabel.setText ("MIDI Input Devices", juce::dontSendNotification);
@@ -538,6 +549,7 @@ private:
             {
                 for (const auto& dev : devices)
                 {
+                    if (isClaimed && isClaimed (dev)) continue;   // used by the control surface
                     auto* btn = new juce::ToggleButton (dev.name);
                     btn->setToggleState (deviceManager.isMidiInputDeviceEnabled (dev.identifier), juce::dontSendNotification);
                     btn->setColour (juce::ToggleButton::textColourId, juce::Colours::white);
@@ -575,6 +587,7 @@ private:
         juce::AudioDeviceManager& deviceManager;
         juce::AudioProcessorPlayer& player;
         juce::StringArray& registeredMidiInputIds;
+        std::function<bool (const juce::MidiDeviceInfo&)> isClaimed;
         juce::Label titleLabel;
         juce::OwnedArray<juce::Component> rows;
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiOnlySettingsComponent)
@@ -582,10 +595,35 @@ private:
 
     void showMidiSettings()
     {
-        auto* comp = new MidiOnlySettingsComponent (deviceManager, player, registeredMidiInputIds);
+        auto* comp = new MidiOnlySettingsComponent (deviceManager, player, registeredMidiInputIds,
+            [this] (const juce::MidiDeviceInfo& d) { return controlSurface != nullptr && controlSurface->claimsInput (d); });
         juce::DialogWindow::LaunchOptions opts;
         opts.content.setOwned (comp);
         opts.dialogTitle = "MIDI Settings";
+        opts.dialogBackgroundColour = juce::Colour (0xFF0D0D14);
+        opts.escapeKeyTriggersCloseButton = true;
+        opts.useNativeTitleBar = true;
+        opts.resizable = false;
+        opts.launchAsync();
+    }
+
+    /** Takes a MIDI input away from the instrument/thru/RTP callbacks (control surface). */
+    void releaseMidiInputFromHost (const juce::String& id)
+    {
+        deviceManager.removeMidiInputDeviceCallback (id, &player);
+        deviceManager.removeMidiInputDeviceCallback (id, &RtpMidiInputForwarder::instance());
+        if (midiRouter != nullptr)
+            deviceManager.removeMidiInputDeviceCallback (id, midiRouter.get());
+        registeredMidiInputIds.removeString (id);
+        deviceManager.setMidiInputDeviceEnabled (id, false);
+    }
+
+    void showControlSurface()
+    {
+        if (controlSurface == nullptr) return;
+        juce::DialogWindow::LaunchOptions opts;
+        opts.content.setOwned (new ControlSurfaceSettingsComponent (*controlSurface));
+        opts.dialogTitle = "Control Surface";
         opts.dialogBackgroundColour = juce::Colour (0xFF0D0D14);
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar = true;
@@ -667,6 +705,7 @@ private:
     juce::AudioProcessorPlayer player;
     juce::StringArray registeredMidiInputIds;
     std::unique_ptr<MidiRouter> midiRouter;
+    std::unique_ptr<MackieControlSurface> controlSurface;
     std::unique_ptr<SliceInputTap> sliceInputTap;
     std::unique_ptr<MetroNetworkAudio> networkAudio;
     std::unique_ptr<NetworkMidiManager> networkMidiManager;
