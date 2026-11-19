@@ -611,7 +611,76 @@ void RtpMidiSession::handlePacket (bool onDataSocket, const uint8_t* p, int n,
                 break;                                // receiver feedback: not needed without a journal
         }
     }
-    // RTP data packets from the peer (it sending MIDI to us) are not used yet.
+    else if (onDataSocket && role != Role::None && n > 13 && (p[0] & 0xC0) == 0x80)
+    {
+        handleRtpData (p, n);                         // RTP-MIDI payload: the peer is sending MIDI to us
+    }
+}
+
+//==============================================================================
+//  RTP-MIDI payload (RFC 6295): 12-byte RTP header, command-section header,
+//  then a delta-time-prefixed command list with running status.
+//==============================================================================
+void RtpMidiSession::handleRtpData (const uint8_t* p, int n)
+{
+    if (! onMidiReceived)
+        return;
+
+    int pos = 12;
+    const uint8_t hdr = p[pos++];
+    int len = hdr & 0x0F;
+    if (hdr & 0x80)
+    {
+        if (pos >= n) return;
+        len = (len << 8) | p[pos++];
+    }
+    const bool firstHasDelta = (hdr & 0x20) != 0;      // Z flag
+    const int end = juce::jmin (n, pos + len);
+
+    auto skipDelta = [&]
+    {
+        for (int i = 0; i < 4 && pos < end; ++i)
+            if ((p[pos++] & 0x80) == 0)
+                break;
+    };
+
+    if (firstHasDelta)
+        skipDelta();
+
+    uint8_t running = 0;
+    while (pos < end)
+    {
+        uint8_t status = p[pos];
+        if (status >= 0x80) { ++pos; if (status < 0xF0) running = status; }
+        else                { status = running; if (status == 0) return; }
+
+        int dataBytes = 0;
+        if (status >= 0xF0)
+        {
+            if (status == 0xF0)                         // SysEx: skip to F7
+            {
+                while (pos < end && p[pos] != 0xF7) ++pos;
+                if (pos < end) ++pos;
+                dataBytes = -1;
+            }
+            else if (status == 0xF1 || status == 0xF3) dataBytes = 1;
+            else if (status == 0xF2)                   dataBytes = 2;
+            else                                       dataBytes = 0;
+        }
+        else
+            dataBytes = ((status & 0xF0) == 0xC0 || (status & 0xF0) == 0xD0) ? 1 : 2;
+
+        if (dataBytes >= 0)
+        {
+            if (pos + dataBytes > end) return;
+            uint8_t bytes[3] = { status, 0, 0 };
+            for (int i = 0; i < dataBytes; ++i) bytes[1 + i] = p[pos++];
+            onMidiReceived (juce::MidiMessage (bytes, 1 + dataBytes));
+        }
+
+        if (pos < end)
+            skipDelta();
+    }
 }
 
 void RtpMidiSession::handleInvitation (bool onDataSocket, const uint8_t* p, int n, const juce::String& senderIp, int senderPort)

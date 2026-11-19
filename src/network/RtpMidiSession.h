@@ -28,6 +28,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 class WifiMidiAdvertiser;
@@ -98,6 +99,10 @@ public:
         Silently ignored unless the session is Connected. */
     void sendMessage (const juce::MidiMessage& message) noexcept;
 
+    /** Called on the session thread for every MIDI message the peer sends us (channel
+        messages and realtime; SysEx is skipped). Set before start()/startAsHost(). */
+    std::function<void (const juce::MidiMessage&)> onMidiReceived;
+
     /** Total messages handed to the network so far (for an activity indicator). */
     uint32_t getMessagesSent() const noexcept { return sentCount.load(); }
 
@@ -128,6 +133,7 @@ private:
 
     void serviceSession (uint32_t nowMs);
     void pumpOutgoing();
+    void handleRtpData (const uint8_t* p, int n);
     void pumpIncoming();
     void handlePacket (bool onDataSocket, const uint8_t* p, int n,
                        const juce::String& senderIp, int senderPort);

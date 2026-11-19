@@ -12,7 +12,7 @@ class ControlSurfaceSettingsComponent : public juce::Component,
 public:
     explicit ControlSurfaceSettingsComponent (MackieControlSurface& s) : surface (s)
     {
-        setSize (560, 440);
+        setSize (560, 500);
 
         title.setText ("Control Surface (Mackie Control)", juce::dontSendNotification);
         title.setFont (juce::Font (16.0f, juce::Font::bold));
@@ -43,6 +43,13 @@ public:
 
         status.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
         addAndMakeVisible (status);
+
+        network.setButtonText ("Network surface (phone / tablet app) - XIVA hosts a session on port 5006");
+        network.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+        network.setToggleState (surface.getSettings().network, juce::dontSendNotification);
+        addAndMakeVisible (network);
+        netStatus.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+        addAndMakeVisible (netStatus);
 
         log.setMultiLine (true);
         log.setReadOnly (true);
@@ -80,9 +87,12 @@ public:
             s.enabled = enable.getToggleState();
             s.inName  = inBox.getSelectedId()  > 1 ? inBox.getText()  : juce::String();
             s.outName = outBox.getSelectedId() > 1 ? outBox.getText() : juce::String();
+            s.network = network.getToggleState();
+            s.networkPort = surface.getSettings().networkPort;
             surface.applySettings (s);
         };
         enable.onClick = apply;
+        network.onClick = apply;
         inBox.onChange = apply;
         outBox.onChange = apply;
 
@@ -105,6 +115,9 @@ public:
         a.removeFromTop (6);
         auto r2 = a.removeFromTop (28); outLabel.setBounds (r2.removeFromLeft (100)); outBox.setBounds (r2);
         a.removeFromTop (8);
+        network.setBounds (a.removeFromTop (26));
+        netStatus.setBounds (a.removeFromTop (22));
+        a.removeFromTop (4);
         status.setBounds (a.removeFromTop (22));
         log.setBounds (a);
     }
@@ -119,6 +132,7 @@ private:
         s += juce::String ("   Mode: ") + (surface.getMode() == MackieControlSurface::Mode::Tracks ? "TRACKS" : "SLICES")
              + "   Bank starts at " + juce::String (surface.getBankStart() + 1);
         status.setText (s, juce::dontSendNotification);
+        netStatus.setText ("Network: " + surface.getNetworkStatus(), juce::dontSendNotification);
 
         const auto text = surface.getLog().joinIntoString ("\n");
         if (text != lastLog)
@@ -130,8 +144,8 @@ private:
     }
 
     MackieControlSurface& surface;
-    juce::Label title, help, inLabel, outLabel, status;
-    juce::ToggleButton enable;
+    juce::Label title, help, inLabel, outLabel, status, netStatus;
+    juce::ToggleButton enable, network;
     juce::ComboBox inBox, outBox;
     juce::TextEditor log;
     juce::String lastLog;

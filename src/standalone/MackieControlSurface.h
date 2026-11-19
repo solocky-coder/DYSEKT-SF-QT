@@ -37,6 +37,7 @@
 #include <vector>
 #include "../PluginProcessor.h"
 #include "../params/ParamIds.h"
+#include "../network/RtpMidiSession.h"
 #include "../util/AppDataDir.h"
 
 class MackieControlSurface : private juce::MidiInputCallback,
@@ -48,6 +49,8 @@ public:
         bool         enabled = false;
         juce::String inName;    // MIDI input port name  ("" = none)
         juce::String outName;   // MIDI output port name ("" = none: no motor/LED feedback)
+        bool         network = false;   // also host a network MIDI session for a phone/tablet surface
+        int          networkPort = 5006;
     };
 
     enum class Mode { Tracks, Slices };
@@ -63,6 +66,8 @@ public:
     ~MackieControlSurface() override
     {
         stopTimer();
+        netSession.onMidiReceived = nullptr;
+        netSession.stop();
         shuttingDown = true;
         closePorts (true);
     }
@@ -81,6 +86,9 @@ public:
             s.enabled = (bool) o->getProperty ("enabled");
             s.inName  = o->getProperty ("in").toString();
             s.outName = o->getProperty ("out").toString();
+            s.network = (bool) o->getProperty ("network");
+            if (o->hasProperty ("networkPort"))
+                s.networkPort = juce::jlimit (1, 65533, (int) o->getProperty ("networkPort"));
         }
         return s;
     }
@@ -91,6 +99,8 @@ public:
         o->setProperty ("enabled", s.enabled);
         o->setProperty ("in", s.inName);
         o->setProperty ("out", s.outName);
+        o->setProperty ("network", s.network);
+        o->setProperty ("networkPort", s.networkPort);
         settingsFile().replaceWithText (juce::JSON::toString (juce::var (o)));
     }
 
@@ -121,6 +131,7 @@ public:
     //==========================================================================
     bool isInputOpen()  const noexcept { return midiIn  != nullptr; }
     bool isOutputOpen() const noexcept { return midiOut != nullptr; }
+    juce::String getNetworkStatus() const { return settings.network ? netSession.getStatusText() : juce::String ("Off"); }
     Mode getMode()      const noexcept { return mode; }
     int  getBankStart() const noexcept { return bankBase; }
 
@@ -153,6 +164,14 @@ private:
         midiOut.reset();
     }
 
+    bool canSend() const { return midiOut != nullptr || (settings.network && netSession.getState() == RtpMidiSession::State::Connected); }
+
+    void sendOut (const juce::MidiMessage& m)
+    {
+        if (midiOut != nullptr) midiOut->sendMessageNow (m);
+        if (settings.network)   netSession.sendMessage (m);   // channel messages only; SysEx text stays on the cable
+    }
+
     void reopenPorts()
     {
         closePorts (true);
@@ -177,6 +196,13 @@ private:
                     midiOut = juce::MidiOutput::openDevice (d.identifier);
                     break;
                 }
+
+        netSession.stop();
+        if (settings.network)
+        {
+            netSession.onMidiReceived = [this] (const juce::MidiMessage& m) { handleIncomingMidiMessage (nullptr, m); };
+            netSession.startAsHost (settings.networkPort);
+        }
 
         resetFeedbackCaches();
         addLog (juce::String ("Control surface: input ") + (midiIn ? "open" : "NOT open")
@@ -203,7 +229,7 @@ private:
         for (const auto& m : msgs)
             handle (m);
 
-        if (settings.enabled && midiOut != nullptr && ++feedbackDivider >= 3)
+        if (settings.enabled && canSend() && ++feedbackDivider >= 3)
         {
             feedbackDivider = 0;
             updateFeedback();
@@ -485,8 +511,7 @@ private:
                                   (uint8_t) (0x7F & ((c3 >> 4) ^ (c1 + c4))),
                                   (uint8_t) (0x7F & ((c4 - (c3 << 2)) ^ (c1 | c2))),
                                   (uint8_t) (0x7F & (c2 - c3 + (0xF0 ^ (c4 << 4)))) };
-            if (midiOut != nullptr)
-                midiOut->sendMessageNow (juce::MidiMessage::createSysExMessage (reply, 16));
+            sendOut (juce::MidiMessage::createSysExMessage (reply, 16));
         }
     }
 
@@ -507,7 +532,7 @@ private:
         const int v = on ? 1 : 0;
         if (lastLed[(size_t) note] == v) return;
         lastLed[(size_t) note] = v;
-        midiOut->sendMessageNow (juce::MidiMessage::noteOn (1, note, (juce::uint8) (on ? 127 : 0)));
+        sendOut (juce::MidiMessage::noteOn (1, note, (juce::uint8) (on ? 127 : 0)));
     }
 
     void sendPitch (int ch, float pos01)
@@ -515,7 +540,7 @@ private:
         const int value = juce::jlimit (0, 16383, juce::roundToInt (pos01 * 16383.0f));
         if (std::abs (value - lastPb[(size_t) ch]) < 48) return;
         lastPb[(size_t) ch] = value;
-        midiOut->sendMessageNow (juce::MidiMessage::pitchWheel (ch + 1, value));
+        sendOut (juce::MidiMessage::pitchWheel (ch + 1, value));
     }
 
     void sendText (int offset, const juce::String& text)
@@ -526,7 +551,7 @@ private:
             const auto c = text[i];
             data.push_back ((uint8_t) ((c >= 32 && c < 127) ? c : '?'));
         }
-        midiOut->sendMessageNow (juce::MidiMessage::createSysExMessage (data.data(), (int) data.size()));
+        sendOut (juce::MidiMessage::createSysExMessage (data.data(), (int) data.size()));
     }
 
     static juce::String fit (const juce::String& s, int w)
@@ -564,7 +589,7 @@ private:
             if (lastRing[(size_t) n] != ring)
             {
                 lastRing[(size_t) n] = ring;
-                midiOut->sendMessageNow (juce::MidiMessage::controllerEvent (1, 0x30 + n, ring));
+                sendOut (juce::MidiMessage::controllerEvent (1, 0x30 + n, ring));
             }
 
             top    += fit (st.valid ? st.name : juce::String(), 6) + " ";
@@ -627,6 +652,7 @@ private:
 
     std::unique_ptr<juce::MidiInput>  midiIn;
     std::unique_ptr<juce::MidiOutput> midiOut;
+    RtpMidiSession netSession;
 
     juce::CriticalSection              inboxLock;
     std::vector<juce::MidiMessage>     inbox;
