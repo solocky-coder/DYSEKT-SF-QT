@@ -66,6 +66,8 @@ public:
         networkMidiManager->setIncomingHandler ([this] (const juce::MidiMessage& m)
         {
             player.handleIncomingMidiMessage (nullptr, m);
+            if (midiRouter != nullptr)
+                midiRouter->handleIncomingMidiMessage (nullptr, m);   // live forward to the selected network track + MIDI thru
         });
         processor->sequencer.setNetworkMidiSink (&NetworkMidiManager::engineSink, networkMidiManager.get());
         processor->sequencer.setMidiPortSink (&MidiRouter::enginePortSink, midiRouter.get());
