@@ -61,6 +61,12 @@ public:
         deviceManager.addAudioCallback (&player);
         midiRouter = std::make_unique<MidiRouter>();
         networkMidiManager = std::make_unique<NetworkMidiManager>();
+        // Network MIDI is two-way: what a connected phone/tablet plays reaches the instrument
+        // exactly like a local MIDI keyboard.
+        networkMidiManager->setIncomingHandler ([this] (const juce::MidiMessage& m)
+        {
+            player.handleIncomingMidiMessage (nullptr, m);
+        });
         processor->sequencer.setNetworkMidiSink (&NetworkMidiManager::engineSink, networkMidiManager.get());
         processor->sequencer.setMidiPortSink (&MidiRouter::enginePortSink, midiRouter.get());
         midiRouter->setLiveEngine (&processor->sequencer);          // live input -> selected network track, off the audio thread

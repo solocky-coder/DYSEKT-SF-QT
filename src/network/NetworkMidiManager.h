@@ -2,6 +2,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../network/RtpMidiSession.h"
 #include <array>
+#include <functional>
 #include <atomic>
 
 class NetworkMidiManager final
@@ -141,6 +142,14 @@ public:
     {
         for (auto& slot : devices)
             slot.session.stop();
+    }
+
+    /** MIDI the network peers send us (a phone/tablet keyboard, pads ...). Call before any session
+        is started; the handler runs on the session threads and must be thread-safe. */
+    void setIncomingHandler (std::function<void (const juce::MidiMessage&)> handler)
+    {
+        for (auto& slot : devices)
+            slot.session.onMidiReceived = handler;
     }
 
     void setSelectedDevice (int id) noexcept
