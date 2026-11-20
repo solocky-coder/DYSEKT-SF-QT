@@ -118,8 +118,16 @@ public:
 
     void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& msg) override
     {
-        if (auto* e = liveEngine.load (std::memory_order_acquire))
-            e->forwardLiveMidi (msg);
+        route (msg, true);
+    }
+
+    /** Same as a normal MIDI input, but `forwardToNetworkTrack` = false keeps the message
+        out of the selected Network MIDI track (used so a device never gets its own notes back). */
+    void route (const juce::MidiMessage& msg, bool forwardToNetworkTrack)
+    {
+        if (forwardToNetworkTrack)
+            if (auto* e = liveEngine.load (std::memory_order_acquire))
+                e->forwardLiveMidi (msg);
 
         const juce::ScopedTryLock stl (routeLock);
         if (! stl.isLocked() || thruPort.isEmpty()) return;
