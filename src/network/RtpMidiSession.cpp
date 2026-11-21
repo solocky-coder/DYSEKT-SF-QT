@@ -716,12 +716,21 @@ void RtpMidiSession::handleInvitation (bool onDataSocket, const uint8_t* p, int 
         }
 
         ctrl->write (senderIp, senderPort, reply, 16 + nameLen);
-        setStatus (State::Inviting, "Invitation from " + (name.isNotEmpty() ? name : peerIp) + " ...");
+        setStatus (State::Inviting, "Invitation from " + (name.isNotEmpty() ? name : peerIp)
+                   + ": control port answered, waiting for its data port (UDP " + juce::String (baseCtrlPort + 1)
+                   + "). If this stays here, allow XIVA on UDP " + juce::String (baseCtrlPort) + "-"
+                   + juce::String (baseCtrlPort + 1) + " in the firewall.");
     }
     else
     {
         if (token != sessionToken)
-            return;
+        {
+            // The spec uses one token for both ports, but some apps send a fresh one for the data
+            // port. A host talks to one peer from one IP, so follow it.
+            if (! hostMode.load())
+                return;
+            sessionToken = token;
+        }
 
         peerDataPort = senderPort;
         data->write (senderIp, senderPort, reply, 16 + nameLen);
