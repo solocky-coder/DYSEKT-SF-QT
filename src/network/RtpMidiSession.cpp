@@ -541,6 +541,12 @@ void RtpMidiSession::pumpIncoming()
 void RtpMidiSession::handlePacket (bool onDataSocket, const uint8_t* p, int n,
                                    const juce::String& senderIp, int senderPort)
 {
+    packetsSeen.fetch_add (1);
+    {
+        const juce::ScopedLock sl (textLock);
+        lastSender = senderIp + ":" + juce::String (senderPort) + (onDataSocket ? " (data port)" : " (control port)");
+    }
+
     const bool isCommand = n >= 4 && p[0] == 0xFF && p[1] == 0xFF;
     const uint16_t command = isCommand ? (uint16_t) ((p[2] << 8) | p[3]) : 0;
 

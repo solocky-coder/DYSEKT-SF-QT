@@ -74,6 +74,10 @@ public:
     State getState()  const noexcept { return (State) state.load(); }
 
     juce::String getStatusText() const;     // human-readable, thread-safe copy
+
+    /** Diagnostics: every UDP datagram that reached either socket, and who sent the last one. */
+    int          getPacketsSeen() const noexcept { return packetsSeen.load(); }
+    juce::String getLastSender() const { const juce::ScopedLock sl (textLock); return lastSender; }
     juce::String getPeerName() const;       // session name reported by the peer ("" until known)
     juce::String getPeerAddress() const;    // address passed to start()
     int          getPeerPort() const;       // control port passed to start()
@@ -187,6 +191,8 @@ private:
     uint32_t clockDueMs = 0;
     int      clockCount = 0;
     uint32_t lastRxMs = 0;
+    std::atomic<int> packetsSeen { 0 };
+    juce::String lastSender;     // guarded by textLock
     uint32_t sessionToken = 0;        // initiator token of the current session
     uint32_t ssrc = 0;
     uint16_t sequence = 0;

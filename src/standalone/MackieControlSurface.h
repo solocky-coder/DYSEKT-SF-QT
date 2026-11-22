@@ -131,7 +131,13 @@ public:
     //==========================================================================
     bool isInputOpen()  const noexcept { return midiIn  != nullptr; }
     bool isOutputOpen() const noexcept { return midiOut != nullptr; }
-    juce::String getNetworkStatus() const { return settings.network ? netSession.getStatusText() : juce::String ("Off"); }
+    juce::String getNetworkStatus() const
+    {
+        if (! settings.network) return "Off";
+        const int n = netSession.getPacketsSeen();
+        return netSession.getStatusText() + "  [packets received: " + juce::String (n)
+               + (n > 0 ? ", last from " + netSession.getLastSender() : juce::String (" - nothing has reached this PC")) + "]";
+    }
     Mode getMode()      const noexcept { return mode; }
     int  getBankStart() const noexcept { return bankBase; }
 
