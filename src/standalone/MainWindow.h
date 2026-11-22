@@ -8,7 +8,7 @@
 #include "../sequencer/MidiClip.h"
 #include "MidiRouter.h"
 #include "MackieControlSurface.h"
-#include "ControlSurfaceSettings.h"
+#include "MidiHub.h"
 #include "../ui/ClickMenus.h"
 #include "NetworkAudioProcessor.h"
 #include "NetworkAudioAutoTrack.h"
@@ -94,6 +94,8 @@ public:
         {
             if (controlSurface->claimsInput (input))
                 continue;   // reserved for the control surface: never reaches the instrument
+            if (MidiInputRoles::isOff (input.name))
+                continue;   // switched Off in the MIDI window
             deviceManager.setMidiInputDeviceEnabled (input.identifier, true);
             deviceManager.addMidiInputDeviceCallback (input.identifier, &player);
             deviceManager.addMidiInputDeviceCallback (input.identifier, midiRouter.get());
@@ -226,9 +228,7 @@ public:
         {
             menu.addItem (10, "Audio Settings...");
             menu.addItem (13, "Network Audio...");
-            menu.addItem (14, "Network MIDI...");
-            menu.addItem (11, "MIDI Settings...");
-            menu.addItem (15, "Control Surface...");
+            menu.addItem (11, "MIDI...");
             menu.addSeparator();
             menu.addItem (12, "MIDI Routing...");
         }
@@ -251,10 +251,7 @@ public:
             case 6:  juce::JUCEApplication::getInstance()->systemRequestedQuit(); break;
             case 10: showAudioSettings(); break;
             case 13: showNetworkAudioSettings(); break;
-            case 14: showNetworkMidiSettings(); break;
-            case 11: showMidiSettings(); break;
-            case 12: showMidiRouting(); break;
-            case 15: showControlSurface(); break;
+            case 11: showMidiHub(); break;
             case 20: showAbout(); break;
             default: break;
         }
@@ -505,130 +502,6 @@ private:
         launchScrollableSettingsDialog (panel, "Network MIDI", true);
     }
 
-    class MidiOnlySettingsComponent : public juce::Component,
-                                      private juce::Timer
-    {
-    public:
-        explicit MidiOnlySettingsComponent (juce::AudioDeviceManager& dm,
-                                             juce::AudioProcessorPlayer& pl,
-                                             juce::StringArray& registeredIds,
-                                             std::function<bool (const juce::MidiDeviceInfo&)> claimed)
-            : deviceManager (dm), player (pl), registeredMidiInputIds (registeredIds), isClaimed (std::move (claimed))
-        {
-            setSize (480, 320);
-            titleLabel.setText ("MIDI Input Devices", juce::dontSendNotification);
-            titleLabel.setFont (juce::Font (16.0f, juce::Font::bold));
-            titleLabel.setColour (juce::Label::textColourId, juce::Colours::white);
-            addAndMakeVisible (titleLabel);
-            refreshDeviceList();
-            startTimerHz (1);   // follow plug / unplug while the window is open
-        }
-
-        ~MidiOnlySettingsComponent() override { stopTimer(); }
-
-        void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0xFF0D0D14)); }
-
-        void resized() override
-        {
-            auto area = getLocalBounds().reduced (16);
-            titleLabel.setBounds (area.removeFromTop (28));
-            area.removeFromTop (8);
-            for (auto* row : rows) row->setBounds (area.removeFromTop (28));
-        }
-
-    private:
-        void timerCallback() override
-        {
-            juce::StringArray ids;
-            for (const auto& d : juce::MidiInput::getAvailableDevices()) ids.add (d.identifier);
-            if (ids != lastDeviceIds)
-                refreshDeviceList();
-        }
-
-        void refreshDeviceList()
-        {
-            rows.clear();
-            const auto devices = juce::MidiInput::getAvailableDevices();
-            lastDeviceIds.clear();
-            for (const auto& d : devices) lastDeviceIds.add (d.identifier);
-            if (devices.isEmpty())
-            {
-                auto* lbl = new juce::Label();
-                lbl->setText ("No MIDI input devices found.", juce::dontSendNotification);
-                lbl->setColour (juce::Label::textColourId, juce::Colours::grey);
-                addAndMakeVisible (lbl);
-                rows.add (lbl);
-            }
-            else
-            {
-                for (const auto& dev : devices)
-                {
-                    if (isClaimed && isClaimed (dev))
-                    {
-                        auto* lbl = new juce::Label();
-                        lbl->setText (dev.name + "  (used by Control Surface)", juce::dontSendNotification);
-                        lbl->setColour (juce::Label::textColourId, juce::Colours::grey);
-                        addAndMakeVisible (lbl);
-                        rows.add (lbl);
-                        continue;
-                    }
-                    auto* btn = new juce::ToggleButton (dev.name);
-                    btn->setToggleState (deviceManager.isMidiInputDeviceEnabled (dev.identifier), juce::dontSendNotification);
-                    btn->setColour (juce::ToggleButton::textColourId, juce::Colours::white);
-                    const juce::String id = dev.identifier;
-                    btn->onClick = [this, id, btn]
-                    {
-                        const bool enable = btn->getToggleState();
-                        if (enable)
-                        {
-                            deviceManager.setMidiInputDeviceEnabled (id, true);
-                            if (! registeredMidiInputIds.contains (id))
-                            {
-                                deviceManager.addMidiInputDeviceCallback (id, &player);
-                                deviceManager.addMidiInputDeviceCallback (id, &RtpMidiInputForwarder::instance());
-                                registeredMidiInputIds.add (id);
-                            }
-                        }
-                        else
-                        {
-                            deviceManager.removeMidiInputDeviceCallback (id, &player);
-                            deviceManager.removeMidiInputDeviceCallback (id, &RtpMidiInputForwarder::instance());
-                            registeredMidiInputIds.removeString (id);
-                            deviceManager.setMidiInputDeviceEnabled (id, false);
-                        }
-                    };
-                    addAndMakeVisible (btn);
-                    rows.add (btn);
-                }
-            }
-            setSize (480, juce::jmax (120, 28 + 8 + (int) rows.size() * 28 + 16));
-            resized();
-        }
-
-        juce::StringArray lastDeviceIds;
-        juce::AudioDeviceManager& deviceManager;
-        juce::AudioProcessorPlayer& player;
-        juce::StringArray& registeredMidiInputIds;
-        std::function<bool (const juce::MidiDeviceInfo&)> isClaimed;
-        juce::Label titleLabel;
-        juce::OwnedArray<juce::Component> rows;
-        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiOnlySettingsComponent)
-    };
-
-    void showMidiSettings()
-    {
-        auto* comp = new MidiOnlySettingsComponent (deviceManager, player, registeredMidiInputIds,
-            [this] (const juce::MidiDeviceInfo& d) { return controlSurface != nullptr && controlSurface->claimsInput (d); });
-        juce::DialogWindow::LaunchOptions opts;
-        opts.content.setOwned (comp);
-        opts.dialogTitle = "MIDI Settings";
-        opts.dialogBackgroundColour = juce::Colour (0xFF0D0D14);
-        opts.escapeKeyTriggersCloseButton = true;
-        opts.useNativeTitleBar = true;
-        opts.resizable = false;
-        opts.launchAsync();
-    }
-
     /** Takes a MIDI input away from the instrument/thru/RTP callbacks (control surface). */
     void releaseMidiInputFromHost (const juce::String& id)
     {
@@ -651,17 +524,18 @@ private:
         registeredMidiInputIds.add (id);
     }
 
-    void showControlSurface()
+    void showMidiHub()
     {
-        if (controlSurface == nullptr) return;
-        juce::DialogWindow::LaunchOptions opts;
-        opts.content.setOwned (new ControlSurfaceSettingsComponent (*controlSurface));
-        opts.dialogTitle = "Control Surface";
-        opts.dialogBackgroundColour = juce::Colour (0xFF0D0D14);
-        opts.escapeKeyTriggersCloseButton = true;
-        opts.useNativeTitleBar = true;
-        opts.resizable = false;
-        opts.launchAsync();
+        if (controlSurface == nullptr || midiRouter == nullptr || networkMidiManager == nullptr)
+            return;
+
+        MidiHubHost h { deviceManager, *controlSurface, *midiRouter, *networkMidiManager,
+                        [this] (const juce::String& id) { return registeredMidiInputIds.contains (id); },
+                        [this] (const juce::String& id) { returnMidiInputToHost (id); },
+                        [this] (const juce::String& id) { releaseMidiInputFromHost (id); },
+                        [this] { showNetworkMidiSettings(); },
+                        [this] { showMidiRouting(); } };
+        launchScrollableSettingsDialog (new MidiHubComponent (std::move (h)), "MIDI", true);
     }
 
     void showMidiRouting()
