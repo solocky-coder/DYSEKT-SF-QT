@@ -36,12 +36,21 @@ namespace MidiInputRoles
         return out;
     }
 
-    inline bool isOff (const juce::String& portName) { return loadOff().contains (portName); }
+    inline bool isOff (const juce::String& portName)
+    {
+        const auto key = MackieControlSurface::portKey (portName);
+        for (const auto& n : loadOff())
+            if (MackieControlSurface::portKey (n) == key) return true;
+        return false;
+    }
 
     inline void setOff (const juce::String& portName, bool off)
     {
         auto names = loadOff();
-        if (off) names.addIfNotAlreadyThere (portName); else names.removeString (portName);
+        const auto key = MackieControlSurface::portKey (portName);
+        for (int i = names.size(); --i >= 0;)
+            if (MackieControlSurface::portKey (names[i]) == key) names.remove (i);
+        if (off) names.add (portName);
         juce::Array<juce::var> a;
         for (const auto& n : names) a.add (n);
         file().replaceWithText (juce::JSON::toString (juce::var (a)));
@@ -215,7 +224,7 @@ private:
         surfaceInBox.addItem ("(None)", 1);
         for (int i = 0; i < inputs.size(); ++i) surfaceInBox.addItem (inputs[i].name, i + 2);
         int sel = 1;
-        for (int i = 0; i < inputs.size(); ++i) if (inputs[i].name == cur.inName) sel = i + 2;
+        for (int i = 0; i < inputs.size(); ++i) if (MackieControlSurface::portKey (inputs[i].name) == MackieControlSurface::portKey (cur.inName)) sel = i + 2;
         surfaceInBox.setSelectedId (sel, juce::dontSendNotification);
         styleCombo (surfaceInBox);
         surfaceInBox.setBounds (170, y, W - 170 - pad, 24);
@@ -227,7 +236,9 @@ private:
         surfaceOutBox.clear (juce::dontSendNotification);
         surfaceOutBox.addItem ("(None)", 1);
         for (int i = 0; i < outPorts.size(); ++i) surfaceOutBox.addItem (outPorts[i], i + 2);
-        const int si = outPorts.indexOf (cur.outName);
+        int si = -1;
+        for (int i = 0; i < outPorts.size(); ++i)
+            if (MackieControlSurface::portKey (outPorts[i]) == MackieControlSurface::portKey (cur.outName)) si = i;
         surfaceOutBox.setSelectedId (si >= 0 ? si + 2 : 1, juce::dontSendNotification);
         styleCombo (surfaceOutBox);
         surfaceOutBox.setBounds (170, y, W - 170 - pad, 24);

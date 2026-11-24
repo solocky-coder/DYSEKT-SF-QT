@@ -44,6 +44,18 @@ class MackieControlSurface : private juce::MidiInputCallback,
                              private juce::Timer
 {
 public:
+    /** Windows numbers MIDI ports ("3- Axiom AIR 25") and the number changes when a device is
+        replugged or the PC restarts, so ports are matched without that prefix. */
+    static juce::String portKey (const juce::String& name)
+    {
+        auto s = name.trim();
+        int i = 0;
+        while (i < s.length() && juce::CharacterFunctions::isDigit (s[i])) ++i;
+        if (i > 0 && s.substring (i).startsWith ("- "))
+            s = s.substring (i + 2);
+        return s.trim();
+    }
+
     struct Settings
     {
         bool         enabled = false;
@@ -117,7 +129,7 @@ public:
         instrument / thru / RTP forwarder. */
     bool claimsInput (const juce::MidiDeviceInfo& d) const
     {
-        return settings.enabled && settings.inName.isNotEmpty() && d.name == settings.inName;
+        return settings.enabled && settings.inName.isNotEmpty() && portKey (d.name) == portKey (settings.inName);
     }
 
     /** MainWindow supplies this so the surface can take its port away from the host's own
@@ -186,7 +198,7 @@ private:
 
         if (settings.inName.isNotEmpty())
             for (const auto& d : juce::MidiInput::getAvailableDevices())
-                if (d.name == settings.inName)
+                if (portKey (d.name) == portKey (settings.inName))
                 {
                     if (releaseInputFromHost) releaseInputFromHost (d.identifier);
                     midiIn = juce::MidiInput::openDevice (d.identifier, this);
@@ -197,7 +209,7 @@ private:
 
         if (settings.outName.isNotEmpty())
             for (const auto& d : juce::MidiOutput::getAvailableDevices())
-                if (d.name == settings.outName)
+                if (portKey (d.name) == portKey (settings.outName))
                 {
                     midiOut = juce::MidiOutput::openDevice (d.identifier);
                     break;
@@ -211,8 +223,24 @@ private:
         }
 
         resetFeedbackCaches();
-        addLog (juce::String ("Control surface: input ") + (midiIn ? "open" : "NOT open")
-                + ", output " + (midiOut ? "open" : "not open"));
+        if (settings.inName.isNotEmpty() && midiIn == nullptr)
+        {
+            bool found = false;
+            for (const auto& d : juce::MidiInput::getAvailableDevices())
+                if (portKey (d.name) == portKey (settings.inName)) found = true;
+            addLog (found ? "Input '" + settings.inName + "' exists but could not be opened - another program may be using it (close it and re-select the port)."
+                          : "Input '" + settings.inName + "' was not found - is the device plugged in?");
+        }
+        if (settings.outName.isNotEmpty() && midiOut == nullptr)
+        {
+            bool found = false;
+            for (const auto& d : juce::MidiOutput::getAvailableDevices())
+                if (portKey (d.name) == portKey (settings.outName)) found = true;
+            addLog (found ? "Output '" + settings.outName + "' exists but could not be opened - another program may be using it."
+                          : "Output '" + settings.outName + "' was not found - is the device plugged in?");
+        }
+        addLog (juce::String ("Control surface: cable input ") + (midiIn ? "open" : "not open")
+                + ", cable output " + (midiOut ? "open" : "not open"));
     }
 
     void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m) override
