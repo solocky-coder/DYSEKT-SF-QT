@@ -143,6 +143,8 @@ public:
     //==========================================================================
     bool isInputOpen()  const noexcept { return midiIn  != nullptr; }
     bool isOutputOpen() const noexcept { return midiOut != nullptr; }
+    bool isNetworkConnected() const { return settings.network && netSession.getState() == RtpMidiSession::State::Connected; }
+    int  getNetworkPackets() const { return settings.network ? netSession.getPacketsSeen() : 0; }
     juce::String getNetworkStatus() const
     {
         if (! settings.network) return "Off";
