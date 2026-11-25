@@ -66,7 +66,6 @@ struct MidiHubHost
     std::function<void (const juce::String& id)> instrumentOn;
     std::function<void (const juce::String& id)> instrumentOff;
     std::function<void()> openNetworkAdvanced;                      // USB device, channels, clock
-    std::function<void()> openTrackOutputs;                         // track output overview
 };
 
 class MidiHubComponent final : public juce::Component,
@@ -121,8 +120,7 @@ private:
     juce::ToggleButton wifiOn;
     juce::ComboBox wifiRole;
     juce::Label wifiAddr, wifiStatus;
-    juce::TextButton advancedBtn { "Advanced network options..." }, trackOutBtn { "Track outputs..." },
-                     logBtn { "Show log" };
+    juce::TextButton advancedBtn { "Advanced network options..." }, logBtn { "Show log" };
     juce::TextEditor monitor;
     juce::String lastMonitor;
 
@@ -283,9 +281,6 @@ private:
         advancedBtn.setBounds (pad, y, 210, 26);
         advancedBtn.onClick = [this] { if (host.openNetworkAdvanced) host.openNetworkAdvanced(); };
         addAndMakeVisible (advancedBtn);
-        trackOutBtn.setBounds (pad + 220, y, 150, 26);
-        trackOutBtn.onClick = [this] { if (host.openTrackOutputs) host.openTrackOutputs(); };
-        addAndMakeVisible (trackOutBtn);
         logBtn.setButtonText (showLog ? "Hide log" : "Show log");
         logBtn.setBounds (W - pad - 110, y, 110, 26);
         logBtn.onClick = [this] { showLog = ! showLog; juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MidiHubComponent> (this)] { if (safe) safe->build(); }); };

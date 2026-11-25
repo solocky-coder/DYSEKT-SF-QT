@@ -533,24 +533,8 @@ private:
                         [this] (const juce::String& id) { return registeredMidiInputIds.contains (id); },
                         [this] (const juce::String& id) { returnMidiInputToHost (id); },
                         [this] (const juce::String& id) { releaseMidiInputFromHost (id); },
-                        [this] { showNetworkMidiSettings(); },
-                        [this] { showMidiRouting(); } };
+                        [this] { showNetworkMidiSettings(); } };
         launchScrollableSettingsDialog (new MidiHubComponent (std::move (h)), "MIDI", true);
-    }
-
-    void showMidiRouting()
-    {
-        if (midiRouter == nullptr) return;
-        std::vector<MidiRoutingDialog::TrackOut> outs;
-        for (int i = 0; i < processor->sequencer.getNumTracks(); ++i)
-        {
-            const auto info = processor->sequencer.getTrackInfo (i);
-            if (info.type != TrackType::NetworkMidi) continue;
-            outs.push_back ({ info.name, info.midiChannel + 1, info.midiOutPort, info.networkMidiPeer });
-        }
-        auto* dlg = new MidiRoutingDialog (*midiRouter, std::move (outs));
-        // Scrolls when many tracks make the dialog taller than the screen.
-        launchScrollableSettingsDialog (dlg, "MIDI Routing", true);
     }
 
     void showAbout()
