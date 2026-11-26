@@ -68,6 +68,66 @@ struct MidiHubHost
     std::function<void()> openNetworkAdvanced;                      // USB device, channels, clock
 };
 
+//==============================================================================
+//  Finds other programs that already use the Wi-Fi MIDI ports. Windows lets two programs
+//  listen on the same UDP port without any error, so the phone's packets then go to the
+//  other program and XIVA never sees them.
+//==============================================================================
+struct WifiPortCheck
+{
+    static juce::CriticalSection& lock() { static juce::CriticalSection l; return l; }
+    static juce::String& result()        { static juce::String r; return r; }
+    static std::atomic<bool>& busy()     { static std::atomic<bool> b { false }; return b; }
+
+    static juce::String get() { const juce::ScopedLock sl (lock()); return result(); }
+
+    /** Starts a background scan (Windows only). */
+    static void scanAsync (int port)
+    {
+#if JUCE_WINDOWS
+        if (busy().exchange (true)) return;
+        juce::Thread::launch ([port]
+        {
+            juce::String found;
+            juce::ChildProcess p;
+            if (p.start ("netstat -ano -p UDP", juce::ChildProcess::wantStdOut))
+            {
+                const auto out = p.readAllProcessOutput();
+                const int me = (int) ::GetCurrentProcessId();
+                juce::StringArray pids;
+                for (const auto& line : juce::StringArray::fromLines (out))
+                {
+                    auto t = juce::StringArray::fromTokens (line.trim(), " \t", "");
+                    t.removeEmptyStrings();
+                    if (t.size() < 4 || t[0] != "UDP") continue;
+                    const auto local = t[1];
+                    if (! (local.endsWith (":" + juce::String (port)) || local.endsWith (":" + juce::String (port + 1)))) continue;
+                    const int pid = t[t.size() - 1].getIntValue();
+                    if (pid != me && pid > 4) pids.addIfNotAlreadyThere (juce::String (pid));
+                }
+                for (const auto& pid : pids)
+                {
+                    juce::String name = "PID " + pid;
+                    juce::ChildProcess tl;
+                    if (tl.start ("tasklist /FI \"PID eq " + pid + "\" /FO CSV /NH", juce::ChildProcess::wantStdOut))
+                    {
+                        const auto line = tl.readAllProcessOutput().trim();
+                        if (line.startsWithChar ('"'))
+                            name = line.fromFirstOccurrenceOf ("\"", false, false).upToFirstOccurrenceOf ("\"", false, false)
+                                   + " (PID " + pid + ")";
+                    }
+                    found += (found.isEmpty() ? "" : ", ") + name;
+                }
+            }
+            { const juce::ScopedLock sl (lock()); result() = found; }
+            busy().store (false);
+        });
+#else
+        juce::ignoreUnused (port);
+#endif
+    }
+};
+
 class MidiHubComponent final : public juce::Component,
                                private juce::Timer
 {
@@ -374,6 +434,7 @@ private:
         s.enabled = s.network || s.inName.isNotEmpty();
         host.surface.applySettings (s);
 
+        if (on) WifiPortCheck::scanAsync (kWifiPort);
         refreshStatus();
     }
 
@@ -403,6 +464,15 @@ private:
             msg = connected ? "Connected." : unconnectedHelp (sess != nullptr ? sess->getPacketsSeen() : 0);
         }
 
+        if (on && ! connected)
+        {
+            const auto other = WifiPortCheck::get();
+            if (other.isNotEmpty())
+                msg = "Another program is already using port " + juce::String (kWifiPort) + ": " + other
+                      + ". Only one program can receive on it, so the phone's data goes there instead of XIVA. "
+                        "Quit or stop that program (a network-MIDI driver or service keeps running after its window is closed), "
+                        "then switch Wi-Fi off and on here.";
+        }
         wifiStatus.setText (msg, juce::dontSendNotification);
         dotColour = ! on ? dim : (connected ? juce::Colour (0xFF55D87A) : juce::Colour (0xFFE0B030));
         repaint();
@@ -436,8 +506,12 @@ private:
             build();
             return;
         }
+        if (wifiOn.getToggleState() && ++scanTick % 4 == 1)
+            WifiPortCheck::scanAsync (kWifiPort);
         refreshStatus();
     }
+
+    int scanTick = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiHubComponent)
 };
