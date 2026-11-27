@@ -102,6 +102,7 @@ struct SequencerEngine::Impl
     int64_t countInElapsedTicks = 0;
     int     countInNextBeat = 0;
     std::atomic<bool>    looping      { true  };
+    std::atomic<uint64_t> blocksProcessed { 0 };
     std::atomic<bool>    pendingPlay  { false };
     std::atomic<bool>    pendingStop  { false };
     std::atomic<bool>    pendingRewind{ false };
@@ -370,6 +371,7 @@ SequencerEngine::SequencerEngine()  : impl (std::make_unique<Impl>()) {}
 SequencerEngine::~SequencerEngine() = default;
 
 //==============================================================================
+uint64_t SequencerEngine::getBlocksProcessed() const noexcept { return impl->blocksProcessed.load (std::memory_order_relaxed); }
 bool    SequencerEngine::isPlaying()        const noexcept { return impl->playing.load   (std::memory_order_relaxed); }
 bool    SequencerEngine::isLooping()        const noexcept { return impl->looping.load   (std::memory_order_relaxed); }
 bool    SequencerEngine::isRecording()      const noexcept { return impl->recording.load (std::memory_order_relaxed); }
@@ -1548,6 +1550,8 @@ bool SequencerEngine::getMidiActivityAndClear (int trackIndex) noexcept
 void SequencerEngine::processBlock (juce::MidiBuffer& outMidi, const juce::MidiBuffer& inMidi,
                                     int numSamples, double sampleRate)
 {
+    impl->blocksProcessed.fetch_add (1, std::memory_order_relaxed);
+
     const float fallbackBpm = impl->syncToHost.load (std::memory_order_relaxed)
                                 ? impl->hostBpm.load     (std::memory_order_relaxed)
                                 : impl->internalBpm.load (std::memory_order_relaxed);

@@ -10,6 +10,7 @@
 #include "MackieControlSurface.h"
 #include "MidiHub.h"
 #include "../ui/ClickMenus.h"
+#include "../ui/TransportBar.h"
 #include "NetworkAudioProcessor.h"
 #include "NetworkAudioAutoTrack.h"
 #include "NetworkAudioLabels.h"
@@ -53,6 +54,7 @@ public:
 
         RecordOffsetStore::load (processor->sequencer);
         updateDeviceLatency();
+        TransportBar::audioSetupRequest() = [this] { showAudioSettings(); };
         player.setProcessor (processor.get());
         // Input tap for Slicer recording: registered BEFORE the player so each block's input
         // is captured before the processor handles that block's MIDI (marker timing).
@@ -202,6 +204,7 @@ public:
             networkAudio->stop();
 
         deviceManager.removeChangeListener (this);
+        TransportBar::audioSetupRequest() = nullptr;
         player.setProcessor (nullptr);
     }
 

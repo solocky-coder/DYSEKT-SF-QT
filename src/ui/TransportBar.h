@@ -51,6 +51,11 @@ public:
      *  "floating" means — see ArrangeView::showFloatingTransport(). */
     std::function<void()> onFloatRequested;
 
+    /** Standalone sets this: opens the audio settings. While set, the bar shows an
+     *  "Audio engine off" button whenever no audio blocks are being processed
+     *  (transport, play and stop all run inside the audio callback). */
+    static std::function<void()>& audioSetupRequest() { static std::function<void()> f; return f; }
+
     TransportBar (SequencerEngine& seq, AbletonLink* link = nullptr)
         : engine (seq), linkPtr (link)
     {
@@ -182,6 +187,11 @@ public:
             addAndMakeVisible (linkBtn);
         }
 
+        audioOffBtn.setButtonText ("Audio engine off - click to set up");
+        audioOffBtn.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffb3261e));
+        audioOffBtn.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+        audioOffBtn.onClick = [] { if (auto& f = audioSetupRequest()) f(); };
+        addChildComponent (audioOffBtn);
         startTimerHz (20);
     }
 
@@ -226,6 +236,7 @@ public:
     //==========================================================================
     void resized() override
     {
+        audioOffBtn.setBounds (getLocalBounds().withSizeKeepingCentre (240, juce::jmax (1, getHeight() - 6)));
         auto b = getLocalBounds().reduced (4, 0);
         const int contentH = juce::jmax (1, b.getHeight() - 4);
         const int contentY = (getHeight() - contentH) / 2;
@@ -379,6 +390,9 @@ private:
 
     // Wheel-scrollable like the locator fields below — see MusicalPositionLabel;
     // scrolling over the bar/beat/tick digits nudges the playhead by that unit.
+    juce::TextButton audioOffBtn;
+    uint64_t lastBlocks = 0;
+    int      idleTicks  = 0;
     MusicalPositionLabel posLabel;
     MusicalPositionLabel leftLocatorLabel, rightLocatorLabel;
     int64_t leftLocatorTick  = 0;
@@ -493,6 +507,18 @@ private:
 
     void timerCallback() override
     {
+        {
+            const auto blocks = engine.getBlocksProcessed();
+            idleTicks = (blocks == lastBlocks) ? idleTicks + 1 : 0;
+            lastBlocks = blocks;
+            const bool off = idleTicks >= 10 && static_cast<bool> (audioSetupRequest());   // ~0.5 s without audio
+            if (off != audioOffBtn.isVisible())
+            {
+                audioOffBtn.setVisible (off);
+                if (off) audioOffBtn.toFront (false);
+            }
+        }
+
         const bool playing = engine.isPlaying();
         if (playBtn.getToggleState() != playing)
             playBtn.setToggleState (playing, juce::dontSendNotification);

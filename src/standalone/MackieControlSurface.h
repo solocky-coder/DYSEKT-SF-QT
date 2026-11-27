@@ -537,22 +537,6 @@ private:
     {
         const auto* d = m.getSysExData();
         const int   n = m.getSysExDataSize();
-        // MIDI Machine Control (7F <device> 06 <command>): many controller apps send transport this way
-        if (n >= 4 && d[0] == 0x7F && d[2] == 0x06)
-        {
-            auto& seq = processor.sequencer;
-            switch (d[3])
-            {
-                case 0x01: case 0x09: seq.stop(); break;
-                case 0x02: case 0x03: seq.play(); break;
-                case 0x04: seq.seekToTick (seq.getPlayheadTick() + 4 * 960); break;
-                case 0x05: seq.seekToTick (juce::jmax<int64_t> (0, seq.getPlayheadTick() - 4 * 960)); break;
-                case 0x06: seq.setRecording (true);  break;
-                case 0x07: seq.setRecording (false); break;
-                default: break;
-            }
-            return;
-        }
         // 00 00 66 <id> 01 <serial x7> <challenge x4>   ->   reply 02 with the response
         if (n >= 16 && d[0] == 0x00 && d[1] == 0x00 && d[2] == 0x66 && d[4] == 0x01)
         {

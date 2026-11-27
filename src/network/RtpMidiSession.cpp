@@ -665,14 +665,8 @@ void RtpMidiSession::handleRtpData (const uint8_t* p, int n)
         {
             if (status == 0xF0)                         // SysEx: skip to F7
             {
-                const int sysStart = pos;
                 while (pos < end && p[pos] != 0xF7) ++pos;
-                if (pos < end)
-                {
-                    // Complete SysEx (e.g. MMC transport): forward it. Segmented ones are dropped.
-                    onMidiReceived (juce::MidiMessage::createSysExMessage (p + sysStart, pos - sysStart));
-                    ++pos;
-                }
+                if (pos < end) ++pos;
                 dataBytes = -1;
             }
             else if (status == 0xF1 || status == 0xF3) dataBytes = 1;

@@ -45,6 +45,7 @@ class SequencerEngine
 {
 public:
     SequencerEngine(); ~SequencerEngine();
+    /** Number of audio blocks processed so far (0 until the audio engine runs). Any thread. */ uint64_t getBlocksProcessed() const noexcept;
     bool isPlaying() const noexcept; bool isLooping() const noexcept; bool isRecording() const noexcept;
     int getCountInBars() const noexcept; void setCountInBars (int bars) noexcept;
     /** Record latency compensation. Recorded notes / audio takes are moved earlier by
