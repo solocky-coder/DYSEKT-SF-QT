@@ -1005,7 +1005,7 @@ void SliceControlBar::paint (juce::Graphics& g)
  {
  g.setFont (XivaLookAndFeel::makeFont (15.0f * paintSf));
  g.setColour (getTheme().foreground.withAlpha (0.35f));
- g.drawText ("No slice selected", si (8), si (24), si (220), si (18), juce::Justification::centredLeft);
+ g.drawText ("No slice selected", si (8), si (inspectorMode ? 62 : 24), si (220), si (18), juce::Justification::centredLeft);   // inspector: below the flag pills
  return;
  }
 
