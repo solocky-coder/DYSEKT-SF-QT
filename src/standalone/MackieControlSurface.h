@@ -257,6 +257,18 @@ private:
     //==========================================================================
     void timerCallback() override
     {
+        // Until TRACK or INSTRUMENT is pressed, follow what is loaded: sliced sample -> the
+        // faders drive the slices (as in the mixer), otherwise the arranger tracks.
+        if (! modeChosenByUser && ++autoModeDivider >= 6)
+        {
+            autoModeDivider = 0;
+            const auto& snap = processor.getUiSliceSnapshot();
+            const bool hasSlices = snap.numSlices > 0;
+            processor.releaseUiSliceSnapshot();
+            const Mode want = hasSlices ? Mode::Slices : Mode::Tracks;
+            if (want != mode) { mode = want; bankBase = 0; resetFeedbackCaches(); }
+        }
+
         std::vector<juce::MidiMessage> msgs;
         {
             const juce::ScopedLock sl (inboxLock);
@@ -493,8 +505,8 @@ private:
             auto& seq = processor.sequencer;
             switch (note)
             {
-                case 0x28: mode = Mode::Tracks;  bankBase = 0; resetFeedbackCaches(); break;   // TRACK
-                case 0x2D: mode = Mode::Slices;  bankBase = 0; resetFeedbackCaches(); break;   // INSTRUMENT
+                case 0x28: modeChosenByUser = true; mode = Mode::Tracks;  bankBase = 0; resetFeedbackCaches(); break;   // TRACK
+                case 0x2D: modeChosenByUser = true; mode = Mode::Slices;  bankBase = 0; resetFeedbackCaches(); break;   // INSTRUMENT
                 case 0x2E: moveBank (-8); break;
                 case 0x2F: moveBank (+8); break;
                 case 0x30: moveBank (-1); break;
@@ -681,6 +693,8 @@ private:
     XivaProcessor& processor;
     Settings settings;
     Mode mode = Mode::Tracks;
+    bool modeChosenByUser = false;
+    int  autoModeDivider = 0;
     int  bankBase = 0;
     int  feedbackDivider = 0;
     juce::String claimedId;
