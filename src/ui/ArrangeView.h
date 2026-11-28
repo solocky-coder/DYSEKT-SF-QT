@@ -2854,20 +2854,32 @@ private:
             g.setFont (juce::Font (11.5f, juce::Font::bold));
             g.setColour (getTheme().accent.brighter (0.2f));
 
+            // Solid flags with dark text, so they stay readable on top of the bar lines.
+            // The line is kept 2 px inside the edge: at bar 1 it used to sit exactly on
+            // the grid card's border and disappear.
+            const auto flagColour = getTheme().accent.brighter (0.2f);
+            auto drawFlag = [&] (const char* txt, int flagX)
+            {
+                const juce::Rectangle<int> r (flagX, loopLabelY + 1, 16, juce::jmax (8, loopLabelH - 2));
+                g.setColour (flagColour);
+                g.fillRoundedRectangle (r.toFloat(), 2.0f);
+                g.setColour (juce::Colours::black.withAlpha (0.85f));
+                g.drawText (txt, r, juce::Justification::centred, false);
+            };
+
             if (rulerBounds.contains ((int)lx, rulerBounds.getCentreY()))
             {
-                g.drawText ("L", (int)lx + 2, loopLabelY,
-                            14, loopLabelH, juce::Justification::centredLeft);
-                g.drawVerticalLine ((int)lx, (float)rulerBounds.getY(),
-                                    (float)rulerBounds.getBottom());
+                const int lineX = juce::jmax ((int) lx, rulerBounds.getX() + 2);
+                g.setColour (flagColour);
+                g.fillRect (lineX, rulerBounds.getY(), 2, rulerBounds.getHeight());
+                drawFlag ("L", lineX + 2);
             }
 
             if (rulerBounds.contains ((int)rx, rulerBounds.getCentreY()))
             {
-                g.drawText ("R", (int)rx - 16, loopLabelY,
-                            14, loopLabelH, juce::Justification::centredRight);
-                g.drawVerticalLine ((int)rx, (float)rulerBounds.getY(),
-                                    (float)rulerBounds.getBottom());
+                g.setColour (flagColour);
+                g.fillRect ((int) rx, rulerBounds.getY(), 2, rulerBounds.getHeight());
+                drawFlag ("R", (int) rx - 17);
             }
         }
 
@@ -2931,7 +2943,7 @@ private:
         // start/end, rather than a colour tint over the whole timeline.
         const auto& theme = getTheme();
         g.setColour (theme.accent);
-        g.drawVerticalLine ((int)lx,
+        g.drawVerticalLine (juce::jmax ((int) lx, clipGridBounds.getX() + 2),
                             (float)clipGridBounds.getY(),
                             (float)clipGridBounds.getBottom());
         g.drawVerticalLine ((int)rx,

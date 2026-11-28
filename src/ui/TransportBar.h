@@ -249,7 +249,9 @@ public:
         const int bpmW    = 56;
         const int snapW   = 58;
         const int posW    = 92;     // fits "NNN.NN.NNN" at 14pt mono
-        const int locW    = 78;     // fits "L NNN.NN.NNN" at 11pt mono
+        // Width comes from the real font so the right locator is never cut to "005…".
+        const int locW    = juce::jmax (78, juce::GlyphArrangement::getStringWidthInt (XivaLookAndFeel::makeMonoFont (11.0f), "000.00.000") + 22);
+        const int locCap  = 16;     // room for the "L" / "R" caption left of each field
         const int linkW   = 48;
         const int gap     = 3;
 
@@ -295,8 +297,9 @@ public:
         x += gap * 2;
         posLabel.setBounds (x, y, posW, btnH);
         x += posW + gap * 3;
+        x += locCap;
         leftLocatorLabel.setBounds (x, y, locW, btnH);
-        x += locW + gap;
+        x += locW + gap + locCap;
         rightLocatorLabel.setBounds (x, y, locW, btnH);
     }
 
@@ -316,9 +319,9 @@ public:
         // numeric value inside stays centred.
         g.setColour (Text::Muted);
         g.setFont (BenchTypography::caption());
-        g.drawText ("L", leftLocatorLabel.getBounds().translated (-14, 0).withWidth (14),
+        g.drawText ("L", leftLocatorLabel.getBounds().translated (-16, 0).withWidth (14),
                     juce::Justification::centred);
-        g.drawText ("R", rightLocatorLabel.getBounds().translated (-14, 0).withWidth (14),
+        g.drawText ("R", rightLocatorLabel.getBounds().translated (-16, 0).withWidth (14),
                     juce::Justification::centred);
     }
 
